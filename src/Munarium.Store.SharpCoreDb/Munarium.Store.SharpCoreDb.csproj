@@ -5,12 +5,16 @@
     <AssemblyName>Munarium.Store.SharpCoreDb</AssemblyName>
     <PackageId>Munarium.Store.SharpCoreDb</PackageId>
     <Description>SharpCoreDB storage backend for the Munarium kernel: the append-only fact ledger mapped onto SharpCoreDB.EventSourcing, including the optimistic-concurrency conditional append.</Description>
-    <PackageTags>munarium;ledger;sharpcoredb;storage;event-sourcing</PackageTags>
+    <PackageTags>munarium;ledger;sharpcoredb;storage;event-sourcing;retrieval;vector-search</PackageTags>
+    <!-- CA1859 is a micro-optimization that recommends concrete types over deliberate seams. This
+         project exists to hold seams (IVectorIndex, IEventStore) that must stay substitutable. -->
+    <NoWarn>$(NoWarn);CA1859</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="SharpCoreDB" />
     <PackageReference Include="SharpCoreDB.EventSourcing" />
+    <PackageReference Include="SharpCoreDB.VectorSearch" />
   </ItemGroup>
 
   <ItemGroup>

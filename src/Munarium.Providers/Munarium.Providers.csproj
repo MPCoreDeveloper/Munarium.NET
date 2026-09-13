@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Munarium.Providers</RootNamespace>
+    <AssemblyName>Munarium.Providers</AssemblyName>
+    <PackageId>Munarium.Providers</PackageId>
+    <Description>Model provider implementations for Munarium.NET. The deterministic embedding provider runs in-process with no network, no key and no state, so retrieval is reproducible offline and under NativeAOT.</Description>
+    <PackageTags>munarium;providers;embeddings;deterministic;aot</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Munarium.Core\Munarium.Core.csproj" />
+  </ItemGroup>
+
+</Project>

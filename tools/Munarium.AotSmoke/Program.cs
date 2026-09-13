@@ -5,6 +5,8 @@
 // publish would have failed before this ever ran.
 
 using Munarium.Ledger;
+using Munarium.Providers;
+using Munarium.Retrieval;
 using Munarium.Store.SharpCoreDb;
 using SharpCoreDB.EventSourcing;
 
@@ -32,8 +34,31 @@ if (head != new SequenceNumber(1))
     return 1;
 }
 
+// The retrieval path too: SharpCoreDB's vector index has to survive AOT as well.
+var embedder = new DeterministicEmbeddingProvider(64);
+using var retriever = new SharpCoreDbRetriever(64, "aot-index@1", head);
+retriever.Index(
+    new SourceReference("chunk-1", "source-1", "docs/policy.pdf", "sha256:policy", ChunkOrdinal: 0),
+    "the supplier is north",
+    embedder.Embed("the supplier is north"));
+
+var retrieval = await retriever.SearchAsync(new RetrievalQuery
+{
+    Text = "supplier north",
+    Embedding = embedder.Embed("supplier north"),
+    TopK = 1,
+});
+
+if (retrieval.Chunks.Count != 1 || retrieval.Envelope.Sources.Count != 1)
+{
+    await Console.Error.WriteLineAsync(
+        $"FAIL: retrieval returned {retrieval.Chunks.Count} chunks / {retrieval.Envelope.Sources.Count} sources");
+    return 1;
+}
+
 await Console.Out.WriteLineAsync(
-    $"Munarium NativeAOT smoke OK ({System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}) - head={head}");
+    $"Munarium NativeAOT smoke OK ({System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}) "
+    + $"- head={head}, retrieval={retrieval.Envelope.Sources[0].SourcePath} @ {retrieval.Envelope.IndexVersion}");
 return 0;
 
 static string Describe(AppendOutcome outcome) => outcome switch

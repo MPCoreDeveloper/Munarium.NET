@@ -12,6 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Munarium.Providers\Munarium.Providers.csproj" />
     <ProjectReference Include="..\..\src\Munarium.Store.SharpCoreDb\Munarium.Store.SharpCoreDb.csproj" />
   </ItemGroup>
 

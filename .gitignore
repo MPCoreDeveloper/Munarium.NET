@@ -502,3 +502,7 @@ test.txt
 # Keep the local RC feed folder tracked (git does not track empty folders).
 !artifacts/packages/
 !artifacts/packages/.gitkeep
+
+# AOT smoke publish output
+artifacts/aot-*/
+artifacts/nugetout/
