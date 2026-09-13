@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="MunariumSCDBClean.jpg" alt="Munarium.NET" width="180" height="268" />
+</div>
+
 # Munarium.NET
 
 **Governed memory and traceable evidence for AI applications — the C# port.**
@@ -33,6 +37,8 @@ the upstream repository. Full credit is recorded permanently in [CREDITS.md](CRE
 
 ```
 Munarium.NET/
+├── assets/
+│   └── icon.png              NuGet package icon (from MunariumSCDBClean.jpg)
 ├── src/
 │   └── Munarium.Core/        the pure kernel (ledger, gates, composition)
 ├── tests/
