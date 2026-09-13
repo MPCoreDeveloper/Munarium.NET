@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="MunariumSCDBClean.jpg" alt="Munarium.NET" width="180" height="268" />
+  <img src="https://raw.githubusercontent.com/MPCoreDeveloper/Munarium.NET/main/MunariumSCDBClean.jpg" alt="Munarium.NET" width="180" height="268" />
 </div>
 
 # Munarium.NET
