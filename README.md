@@ -1,6 +1,6 @@
 <div align="center">
-  <a href="https://github.com/MPCoreDeveloper/Munarium.NET/blob/main/MunariumPromo.mp4" title="Watch the Munarium.NET promo">
-    <img src="https://raw.githubusercontent.com/MPCoreDeveloper/Munarium.NET/main/MunariumSCDBClean.jpg" alt="Munarium.NET - click to watch the promo" width="180" height="268" />
+  <a href="https://github.com/MPCoreDeveloper/Munarium.NET/blob/main/MunariumPromo.mp4" title="Watch the Munarium.NET promo (10 seconds)">
+    <img src="https://raw.githubusercontent.com/MPCoreDeveloper/Munarium.NET/main/assets/promo.gif" alt="Munarium.NET - animated promo (click to watch the full video)" width="300" />
   </a>
   <br />
   <b>&#9654; <a href="https://github.com/MPCoreDeveloper/Munarium.NET/blob/main/MunariumPromo.mp4">Watch the promo</a></b>
