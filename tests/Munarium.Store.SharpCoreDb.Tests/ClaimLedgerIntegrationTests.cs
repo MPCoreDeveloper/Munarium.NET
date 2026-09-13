@@ -5,6 +5,7 @@ using Munarium.Commands;
 using Munarium.Facts;
 using Munarium.Governance;
 using Munarium.Ledger;
+using Munarium.Shapes;
 using SharpCoreDB;
 using SharpCoreDB.EventSourcing;
 
@@ -15,7 +16,7 @@ using SharpCoreDB.EventSourcing;
 public class ClaimLedgerIntegrationTests
 {
     [Fact]
-    public async Task AnAssertedClaimAndADisputedClaimBothLandInTheLedger()
+    public async Task AnAssertedADisputedAndAMalformedClaimAllLandInTheLedger()
     {
         var services = new ServiceCollection();
         services.AddSharpCoreDB();
@@ -24,30 +25,38 @@ public class ClaimLedgerIntegrationTests
         var databasePath = Path.Combine(Path.GetTempPath(), $"Munarium_{Guid.NewGuid():N}");
         await using var database = factory.Create(databasePath, "munarium-test");
 
+        var shapes = Registry();
         var backend = new SharpCoreDbStorageBackend(new SharpCoreDbEventStore(database));
-        var ledger = new ClaimLedger(backend, [new SanctionsGate()]);
+        var ledger = new ClaimLedger(backend, shapes, [new ShapeGate(shapes), new SanctionsGate()]);
         var facts = new FactLedger(backend);
         var stream = StreamId.From("claims/eu");
 
-        var permitted = await ledger.RecordAsync(Command("vendor/north", "Northern Supplies Ltd is an approved vendor"));
-        var blocked = await ledger.RecordAsync(Command("vendor/south", "Northern Supplies Ltd trades with a sanctioned entity"));
+        var permitted = await ledger.RecordAsync(Command("north", "Northern Supplies Ltd is an approved vendor"));
+        var blocked = await ledger.RecordAsync(Command("south", "Northern Supplies Ltd trades with a sanctioned entity"));
+        var malformed = await ledger.RecordAsync(
+            Command("east", "Eastern Supplies Ltd is an approved vendor") with { Body = """{"vendor_id":"east"}""" });
 
         Assert.Equal("asserted:1", Describe(permitted));
         Assert.Equal("disputed:sanctions:listed party:2", Describe(blocked));
+        Assert.Equal("disputed:shape:$: required property 'status' is missing.:3", Describe(malformed));
 
         var written = await backend.ReadAsync(stream, SequenceNumber.Zero);
-        Assert.Equal(2, written.Count);
+        Assert.Equal(3, written.Count);
         Assert.Equal(FactCodec.AssertedEventType, written[0].Event.Type);
         Assert.Equal(FactCodec.DisputedEventType, written[1].Event.Type);
+        Assert.Equal(FactCodec.DisputedEventType, written[2].Event.Type);
 
         // Pin on the last write, so the test does not assume where the store's global feed starts.
         var pin = written[^1].GlobalSequence;
         var slice = await facts.SliceAsync(pin);
 
-        Assert.Equal(2, slice.Facts.Count);
+        Assert.Equal(3, slice.Facts.Count);
         Assert.Equal(64, slice.Digest.Length);
-        Assert.Equal("permitted", Describe(slice.Facts[0].Verdict));
-        Assert.Equal("blocked:sanctions:listed party", Describe(slice.Facts[1].Verdict));
+
+        // A slice is ordered by lineage, so: east, north, south.
+        Assert.Equal("blocked:shape:$: required property 'status' is missing.", Describe(slice.Facts[0].Verdict));
+        Assert.Equal("permitted", Describe(slice.Facts[1].Verdict));
+        Assert.Equal("blocked:sanctions:listed party", Describe(slice.Facts[2].Verdict));
     }
 
     private static string Describe(ClaimVerdict verdict) => verdict switch
@@ -56,11 +65,32 @@ public class ClaimLedgerIntegrationTests
         Blocked blocked => $"blocked:{blocked.Gate}:{blocked.Reason}",
     };
 
-    private static RecordClaimCommand Command(string lineage, string statement) => new()
+    private static ShapeRegistry Registry() => new([
+        new FactShape
+        {
+            Name = "vendor",
+            Version = 1,
+            Identity = ["vendor_id"],
+            Schema = """
+                {
+                  "type": "object",
+                  "required": ["vendor_id", "status"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "vendor_id": { "type": "string", "minLength": 1 },
+                    "status": { "type": "string", "enum": ["approved", "sanctioned"] }
+                  }
+                }
+                """,
+        },
+    ]);
+
+    private static RecordClaimCommand Command(string vendorId, string statement) => new()
     {
         Stream = "claims/eu",
-        ClaimId = $"claim-{lineage.Replace('/', '-')}",
-        Lineage = lineage,
+        ClaimId = $"claim-{vendorId}",
+        Shape = "vendor",
+        Body = $$"""{"vendor_id":"{{vendorId}}","status":"approved"}""",
         Statement = statement,
         Actor = "compliance",
     };

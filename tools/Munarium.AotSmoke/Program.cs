@@ -4,9 +4,12 @@
 // stale write, read the head. If any of it needs runtime code generation or reflection, the AOT
 // publish would have failed before this ever ran.
 
+using Munarium.Commands;
+using Munarium.Governance;
 using Munarium.Ledger;
 using Munarium.Providers;
 using Munarium.Retrieval;
+using Munarium.Shapes;
 using Munarium.Store.SharpCoreDb;
 using SharpCoreDB.EventSourcing;
 
@@ -56,10 +59,55 @@ if (retrieval.Chunks.Count != 1 || retrieval.Envelope.Sources.Count != 1)
     return 1;
 }
 
+// The shape path: schema validation and lineage derivation have to survive AOT as well.
+var shapes = new ShapeRegistry([
+    new FactShape
+    {
+        Name = "vendor",
+        Version = 1,
+        Identity = ["vendor_id"],
+        Schema = """
+            {
+              "type": "object",
+              "required": ["vendor_id"],
+              "properties": { "vendor_id": { "type": "string", "pattern": "^v-[0-9]+$" } }
+            }
+            """,
+    },
+]);
+
+var claims = new ClaimLedger(backend, shapes, [new ShapeGate(shapes)]);
+var asserted = DescribeClaim(await claims.RecordAsync(Claim("v-1")));
+var refused = DescribeClaim(await claims.RecordAsync(Claim("north")));
+
+if (asserted != "asserted" || refused != "disputed:shape")
+{
+    await Console.Error.WriteLineAsync($"FAIL: expected asserted/disputed:shape, got {asserted}/{refused}");
+    return 1;
+}
+
 await Console.Out.WriteLineAsync(
     $"Munarium NativeAOT smoke OK ({System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}) "
-    + $"- head={head}, retrieval={retrieval.Envelope.Sources[0].SourcePath} @ {retrieval.Envelope.IndexVersion}");
+    + $"- head={head}, retrieval={retrieval.Envelope.Sources[0].SourcePath} @ {retrieval.Envelope.IndexVersion}, "
+    + $"shapes={shapes.Count} ({asserted}, {refused})");
 return 0;
+
+static RecordClaimCommand Claim(string vendorId) => new()
+{
+    Stream = "aot/shape",
+    ClaimId = $"claim-{vendorId}",
+    Shape = "vendor",
+    Body = $$"""{"vendor_id":"{{vendorId}}"}""",
+    Statement = "the supplier is north",
+    Actor = "aot",
+};
+
+static string DescribeClaim(ClaimOutcome outcome) => outcome switch
+{
+    ClaimAsserted => "asserted",
+    ClaimRecordedAsDisputed disputed => $"disputed:{disputed.Gate}",
+    ClaimContended contended => $"contended:{contended.Expected.Value}->{contended.Actual.Value}",
+};
 
 static string Describe(AppendOutcome outcome) => outcome switch
 {

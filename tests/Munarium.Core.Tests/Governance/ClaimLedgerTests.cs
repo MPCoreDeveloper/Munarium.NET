@@ -17,7 +17,7 @@ public class ClaimLedgerTests
     public async Task APermittedClaimIsRecordedAsAsserted()
     {
         var storage = new FakeStorageBackend();
-        var ledger = new ClaimLedger(storage, [new AlwaysPermitted()]);
+        var ledger = new ClaimLedger(storage, VendorShape.Registry(), [new AlwaysPermitted()]);
 
         var outcome = await ledger.RecordAsync(Claim("the supplier is north"));
 
@@ -31,7 +31,7 @@ public class ClaimLedgerTests
     public async Task ABlockedClaimIsRecordedAsDisputedRatherThanDropped()
     {
         var storage = new FakeStorageBackend();
-        var ledger = new ClaimLedger(storage, [new AlwaysPermitted(), new BlocksEverything()]);
+        var ledger = new ClaimLedger(storage, VendorShape.Registry(), [new AlwaysPermitted(), new BlocksEverything()]);
 
         var outcome = await ledger.RecordAsync(Claim("the supplier is south"));
 
@@ -48,7 +48,7 @@ public class ClaimLedgerTests
     {
         var storage = new FakeStorageBackend();
         storage.FailNextAppendsWithConflict(1);
-        var ledger = new ClaimLedger(storage, [new AlwaysPermitted()]);
+        var ledger = new ClaimLedger(storage, VendorShape.Registry(), [new AlwaysPermitted()]);
 
         var outcome = await ledger.RecordAsync(Claim("the supplier is north"));
 
@@ -61,7 +61,7 @@ public class ClaimLedgerTests
     {
         var storage = new FakeStorageBackend();
         storage.FailNextAppendsWithConflict(10);
-        var ledger = new ClaimLedger(storage, [new AlwaysPermitted()], maxAttempts: 2);
+        var ledger = new ClaimLedger(storage, VendorShape.Registry(), [new AlwaysPermitted()], maxAttempts: 2);
 
         var outcome = await ledger.RecordAsync(Claim("the supplier is north"));
 
@@ -73,7 +73,7 @@ public class ClaimLedgerTests
     public async Task TheDispatcherReportsABlockedClaimAsASuccessBecauseItWasRecorded()
     {
         var storage = new FakeStorageBackend();
-        var ledger = new ClaimLedger(storage, [new BlocksEverything()]);
+        var ledger = new ClaimLedger(storage, VendorShape.Registry(), [new BlocksEverything()]);
         var dispatcher = new InMemoryCommandDispatcher();
         dispatcher.RegisterHandler<RecordClaimCommand>(new RecordClaimCommandHandler(ledger));
 
@@ -88,13 +88,28 @@ public class ClaimLedgerTests
         Assert.Equal(FactCodec.DisputedEventType, written[0].Event.Type);
     }
 
+    [Fact]
+    public async Task TheLineageIsDerivedFromTheShapeNotSuppliedByTheCaller()
+    {
+        var storage = new FakeStorageBackend();
+        var ledger = new ClaimLedger(storage, VendorShape.Registry(), [new AlwaysPermitted()]);
+
+        await ledger.RecordAsync(Claim("the supplier is north"));
+
+        // Supersession is a property of the shape, so the caller cannot get the lineage wrong.
+        var written = await storage.ReadAsync(Stream("claims/1"), SequenceNumber.Zero);
+        var fact = FactCodec.Decode(written[0].Event.Payload.Span);
+        Assert.Equal("vendor@1|vendor_id=north", fact.Lineage);
+    }
+
     private static StreamId Stream(string value) => StreamId.From(value);
 
     private static RecordClaimCommand Claim(string statement) => new()
     {
         Stream = "claims/1",
         ClaimId = "claim-1",
-        Lineage = "vendor/north",
+        Shape = VendorShape.Name,
+        Body = VendorShape.Body("north"),
         Statement = statement,
         Actor = "tester",
     };

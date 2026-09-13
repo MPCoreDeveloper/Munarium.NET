@@ -16,11 +16,11 @@ public class FactLedgerTests
     public async Task APinShowsTheFactThatWasCurrentAtThatPin()
     {
         var storage = new FakeStorageBackend();
-        var claims = new ClaimLedger(storage, [new AlwaysPermitted()]);
+        var claims = new ClaimLedger(storage, VendorShape.Registry(), [new AlwaysPermitted()]);
         var facts = new FactLedger(storage);
 
-        await claims.RecordAsync(Claim("vendor/north", "the supplier is north"));
-        await claims.RecordAsync(Claim("vendor/north", "the supplier is north (revised)"));
+        await claims.RecordAsync(Claim("north", "the supplier is north"));
+        await claims.RecordAsync(Claim("north", "the supplier is north (revised)"));
 
         var atOne = await facts.SliceAsync(new SequenceNumber(1));
         var atTwo = await facts.SliceAsync(new SequenceNumber(2));
@@ -33,17 +33,19 @@ public class FactLedgerTests
     public async Task OneFactPerLineageSurvivesSupersession()
     {
         var storage = new FakeStorageBackend();
-        var claims = new ClaimLedger(storage, [new AlwaysPermitted()]);
+        var claims = new ClaimLedger(storage, VendorShape.Registry(), [new AlwaysPermitted()]);
         var facts = new FactLedger(storage);
 
-        await claims.RecordAsync(Claim("vendor/north", "v1"));
-        await claims.RecordAsync(Claim("vendor/south", "s1"));
-        await claims.RecordAsync(Claim("vendor/north", "v2"));
+        await claims.RecordAsync(Claim("north", "v1"));
+        await claims.RecordAsync(Claim("south", "s1"));
+        await claims.RecordAsync(Claim("north", "v2"));
 
         var slice = await facts.SliceAsync(new SequenceNumber(3));
 
         Assert.Equal(2, slice.Facts.Count);
-        Assert.Equal(["vendor/north", "vendor/south"], slice.Facts.Select(fact => fact.Fact.Lineage));
+        Assert.Equal(
+            [VendorShape.Lineage("north"), VendorShape.Lineage("south")],
+            slice.Facts.Select(fact => fact.Fact.Lineage));
         Assert.Equal("v2", slice.Facts[0].Fact.Statement);
     }
 
@@ -51,17 +53,17 @@ public class FactLedgerTests
     public async Task TheDigestIsStableForAPinAndALaterFactDoesNotChangeIt()
     {
         var storage = new FakeStorageBackend();
-        var claims = new ClaimLedger(storage, [new AlwaysPermitted()]);
+        var claims = new ClaimLedger(storage, VendorShape.Registry(), [new AlwaysPermitted()]);
         var facts = new FactLedger(storage);
 
-        await claims.RecordAsync(Claim("vendor/north", "v1"));
+        await claims.RecordAsync(Claim("north", "v1"));
 
         var first = await facts.SliceAsync(new SequenceNumber(1));
         var again = await facts.SliceAsync(new SequenceNumber(1));
 
         Assert.Equal(first.Digest, again.Digest);
 
-        await claims.RecordAsync(Claim("vendor/north", "v2"));
+        await claims.RecordAsync(Claim("north", "v2"));
 
         var stillPinned = await facts.SliceAsync(new SequenceNumber(1));
         var atTwo = await facts.SliceAsync(new SequenceNumber(2));
@@ -81,10 +83,10 @@ public class FactLedgerTests
     public async Task ABlockedFactCarriesItsVerdictIntoTheSlice()
     {
         var storage = new FakeStorageBackend();
-        var claims = new ClaimLedger(storage, [new BlocksEverything()]);
+        var claims = new ClaimLedger(storage, VendorShape.Registry(), [new BlocksEverything()]);
         var facts = new FactLedger(storage);
 
-        await claims.RecordAsync(Claim("vendor/north", "the supplier is sanctioned"));
+        await claims.RecordAsync(Claim("north", "the supplier is sanctioned"));
 
         var sliced = Assert.Single((await facts.SliceAsync(new SequenceNumber(1))).Facts);
 
@@ -95,21 +97,22 @@ public class FactLedgerTests
     private static async Task<string> DigestOfRebuildAsync()
     {
         var storage = new FakeStorageBackend();
-        var claims = new ClaimLedger(storage, [new AlwaysPermitted()]);
+        var claims = new ClaimLedger(storage, VendorShape.Registry(), [new AlwaysPermitted()]);
         var facts = new FactLedger(storage);
 
-        await claims.RecordAsync(Claim("vendor/north", "v1"));
-        await claims.RecordAsync(Claim("vendor/south", "s1"));
-        await claims.RecordAsync(Claim("vendor/north", "v2"));
+        await claims.RecordAsync(Claim("north", "v1"));
+        await claims.RecordAsync(Claim("south", "s1"));
+        await claims.RecordAsync(Claim("north", "v2"));
 
         return (await facts.SliceAsync(new SequenceNumber(3))).Digest;
     }
 
-    private static RecordClaimCommand Claim(string lineage, string statement) => new()
+    private static RecordClaimCommand Claim(string vendorId, string statement) => new()
     {
         Stream = "claims/1",
-        ClaimId = $"claim-{lineage.Replace('/', '-')}",
-        Lineage = lineage,
+        ClaimId = $"claim-{vendorId}",
+        Shape = VendorShape.Name,
+        Body = VendorShape.Body(vendorId),
         Statement = statement,
         Actor = "tester",
     };

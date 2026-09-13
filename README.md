@@ -58,6 +58,22 @@ Munarium.NET is dogfooded end to end on the author's own .NET 11 libraries:
 - Package versions live in one place (Central Package Management), and the whole stack is dogfooded
   rather than merely described.
 
+## What is in the kernel so far
+
+`src/Munarium.Core` holds the seams and the kernel types; the adapters live beside it.
+
+| Piece | What it does |
+| --- | --- |
+| **Ledger** | `IStorageBackend`: a head read, an optimistic-concurrency append, a stream read and a global read. |
+| **Governance** | The write path judges before it writes. A gate returns `Permitted` or `Blocked`, and a blocked claim is recorded as *disputed* rather than dropped — a refusal that cannot be recorded is not governance. |
+| **Shapes** | Versioned, declarative shapes: a JSON Schema for the fact body, and the identity fields that decide supersession. A schema violation is a verdict, so the claim lands in the ledger with its reason attached. Validation is a documented, deterministic subset of JSON Schema implemented in the kernel — no parser library and no reflection, so the errors are stable enough to hash. |
+| **Facts and pins** | Canonical fact encoding, supersession along a lineage, and an `as_of` pin that rebuilds the same slice — and the same SHA-256 digest — every time. |
+| **Retrieval** | A retrieval seam that returns a `ProvenanceEnvelope` rather than bare similarity, and reciprocal rank fusion for combining a vector leg with a lexical one. |
+| **Providers** | The model-provider seam, and a deterministic in-process embedding provider for tests and smoke runs. |
+
+`src/Munarium.Store.SharpCoreDb` is the storage and retrieval adapter over SharpCoreDB, and
+`src/Munarium.Providers` holds the providers.
+
 ## Status
 
 Early days: this repository is the C# port in progress, and the kernel (`src/Munarium.Core`) is the

@@ -3,6 +3,7 @@ namespace Munarium.Governance;
 using Munarium.Commands;
 using Munarium.Facts;
 using Munarium.Ledger;
+using Munarium.Shapes;
 
 /// <summary>
 /// The kernel's write path for claims: judge first, then one atomic conditional append, retried
@@ -11,10 +12,16 @@ using Munarium.Ledger;
 /// <remarks>
 /// Governance is a property of this path, not a service a caller can skip. A blocked claim is still
 /// written - as disputed - so the ledger carries both the claim and the refusal.
+/// <para>
+/// The claim's lineage is derived here, from the shape's identity fields over the body, rather than
+/// being accepted from the caller: supersession is a property of the shape, so it cannot be got
+/// wrong by whoever writes the claim.
+/// </para>
 /// </remarks>
 public sealed class ClaimLedger
 {
     private readonly IStorageBackend _storage;
+    private readonly ShapeRegistry _shapes;
     private readonly IReadOnlyList<IClaimGate> _gates;
     private readonly int _maxAttempts;
 
@@ -22,13 +29,19 @@ public sealed class ClaimLedger
     /// Initializes a new instance of the <see cref="ClaimLedger"/> class.
     /// </summary>
     /// <param name="storage">The ledger's storage seam.</param>
+    /// <param name="shapes">The shapes claim lineage and validation are read from.</param>
     /// <param name="gates">The governance gates, evaluated in order.</param>
     /// <param name="maxAttempts">How many times a contended append is retried against the fresh head.</param>
-    public ClaimLedger(IStorageBackend storage, IEnumerable<IClaimGate> gates, int maxAttempts = 3)
+    public ClaimLedger(
+        IStorageBackend storage,
+        ShapeRegistry shapes,
+        IEnumerable<IClaimGate> gates,
+        int maxAttempts = 3)
     {
         ArgumentNullException.ThrowIfNull(gates);
 
         _storage = storage ?? throw new ArgumentNullException(nameof(storage));
+        _shapes = shapes ?? throw new ArgumentNullException(nameof(shapes));
         _gates = [.. gates];
         _maxAttempts = maxAttempts > 0
             ? maxAttempts
@@ -70,7 +83,7 @@ public sealed class ClaimLedger
 
         var verdict = await JudgeAsync(command, cancellationToken).ConfigureAwait(false);
         var stream = StreamId.From(command.Stream);
-        var entry = EntryFor(command, verdict);
+        var entry = EntryFor(command, verdict, _shapes.LineageOf(command.Shape, command.Body));
         var expected = await _storage.HeadAsync(stream, cancellationToken).ConfigureAwait(false);
         var lastExpected = expected;
         var lastActual = expected;
@@ -99,7 +112,7 @@ public sealed class ClaimLedger
         return new ClaimContended(lastExpected, lastActual);
     }
 
-    private static LedgerEvent EntryFor(RecordClaimCommand command, ClaimVerdict verdict)
+    private static LedgerEvent EntryFor(RecordClaimCommand command, ClaimVerdict verdict, string lineage)
     {
         var (gate, reason) = verdict switch
         {
@@ -110,7 +123,7 @@ public sealed class ClaimLedger
         var fact = new FactRecord
         {
             ClaimId = command.ClaimId,
-            Lineage = command.Lineage,
+            Lineage = lineage,
             Statement = command.Statement,
             Actor = command.Actor,
             Gate = gate,
