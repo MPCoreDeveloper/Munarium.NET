@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Munarium.Store.SharpCoreDb.Tests</RootNamespace>
+    <!-- Run xunit.v3 through Microsoft.Testing.Platform via `dotnet test`. -->
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="SharpCoreDB" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Munarium.Store.SharpCoreDb\Munarium.Store.SharpCoreDb.csproj" />
+  </ItemGroup>
+
+</Project>

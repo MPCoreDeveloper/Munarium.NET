@@ -22,7 +22,9 @@ csharp_using_directive_placement = outside_namespace:suggestion
 dotnet_sort_system_directives_first = true
 
 # Modern C# (C# 15)
+csharp_style_var_for_built_in_types = true:suggestion
 csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = true:suggestion
 csharp_style_expression_bodied_methods = when_on_single_line:suggestion
 csharp_style_expression_bodied_properties = when_on_single_line:suggestion
 csharp_style_expression_bodied_operators = when_on_single_line:suggestion
@@ -55,3 +57,6 @@ dotnet_naming_style.begins_with_i.capitalization = pascal_case
 # Analyzer tuning: keep library-design rules that clash with a public SDK out of the way.
 dotnet_diagnostic.CA1515.severity = none
 dotnet_diagnostic.CA1062.severity = none
+# `var` is preferred here (matching the MPCoreDeveloper house style above), so the
+# "use explicit type" rule is silenced rather than left to fight the preference.
+dotnet_diagnostic.IDE0008.severity = none

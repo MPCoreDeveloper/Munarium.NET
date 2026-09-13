@@ -11,6 +11,9 @@
   <PropertyGroup>
     <TargetFramework>net11.0</TargetFramework>
     <LangVersion>preview</LangVersion>
+    <!-- .NET 11 runtime async: async methods compile to runtime-provided async instead of a
+         compiler-generated state machine. -->
+    <Features Condition="'$(TargetFramework)' == 'net11.0'">$(Features);runtime-async=on</Features>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
 

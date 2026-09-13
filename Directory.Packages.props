@@ -19,6 +19,10 @@
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.11.2" />
   </ItemGroup>
 
+  <ItemGroup Label="Hosting">
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
+  </ItemGroup>
+
   <!--
     MPCoreDeveloper stack (net11 RCs). These are declared centrally so a project only
     has to say <PackageReference Include="SharpCoreDB" />. Versions are pinned to the

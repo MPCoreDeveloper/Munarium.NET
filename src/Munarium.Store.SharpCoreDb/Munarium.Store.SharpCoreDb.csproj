@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Munarium.Store.SharpCoreDb</RootNamespace>
+    <AssemblyName>Munarium.Store.SharpCoreDb</AssemblyName>
+    <PackageId>Munarium.Store.SharpCoreDb</PackageId>
+    <Description>SharpCoreDB storage backend for the Munarium kernel: the append-only fact ledger mapped onto SharpCoreDB.EventSourcing, including the optimistic-concurrency conditional append.</Description>
+    <PackageTags>munarium;ledger;sharpcoredb;storage;event-sourcing</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpCoreDB" />
+    <PackageReference Include="SharpCoreDB.EventSourcing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Munarium.Core\Munarium.Core.csproj" />
+  </ItemGroup>
+
+</Project>
