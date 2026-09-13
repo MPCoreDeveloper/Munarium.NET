@@ -63,7 +63,13 @@ BenchmarkDotNet.Artifacts/
 # .NET
 project.lock.json
 project.fragment.lock.json
-artifacts/
+# NOTE: the generic `artifacts/` rule is intentionally narrowed for Munarium.NET. The
+# local RC feed folder `artifacts/packages/` is tracked (it carries a .gitkeep so NuGet
+# can resolve it on a fresh clone); only its package binaries and the pack output are
+# ignored - see the end of this file.
+artifacts/nugetout/
+artifacts/packages/*.nupkg
+artifacts/packages/*.snupkg
 
 # Tye
 .tye/
