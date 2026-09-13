@@ -32,6 +32,12 @@
              CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- The gRPC surface of the same contract: Grpc.AspNetCore hosts the service base SharpPortico
+       generated, which is what makes MapGrpcService find it. -->
+  <ItemGroup>
+    <PackageReference Include="Grpc.AspNetCore" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Munarium.Core\Munarium.Core.csproj" />
     <ProjectReference Include="..\Munarium.Providers\Munarium.Providers.csproj" />

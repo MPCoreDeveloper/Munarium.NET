@@ -19,6 +19,10 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, WireJson.Default);
 });
 
+// The gRPC surface of the same contract: the service base SharpPortico generated from
+// openapi/munarium.v1.yaml is served here, over the same MunariumOperations the JSON surface uses.
+builder.Services.AddGrpc();
+
 var shapes = MunariumShapeBundles.Load(
     builder.Configuration["Munarium:ShapesDirectory"] ?? Path.Combine(AppContext.BaseDirectory, "shapes"));
 
@@ -29,10 +33,12 @@ var kernel = MunariumKernel.Create(
 
 builder.Services.AddSingleton(kernel);
 builder.Services.AddSingleton(kernel.Operations);
+builder.Services.AddSingleton<MunariumGrpcService>();
 
 var app = builder.Build();
 
 app.MapMunarium();
+app.MapGrpcService<MunariumGrpcService>();
 
 await app.RunAsync();
 

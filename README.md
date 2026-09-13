@@ -71,12 +71,12 @@ Munarium.NET is dogfooded end to end on the author's own .NET 11 libraries:
 | **Facts and pins** | Canonical fact encoding, supersession along a lineage, and an `as_of` pin that rebuilds the same slice — and the same SHA-256 digest — every time. |
 | **Retrieval** | A retrieval seam that returns a `ProvenanceEnvelope` rather than bare similarity, and reciprocal rank fusion for combining a vector leg with a lexical one. |
 | **Providers** | The model-provider seam, and a deterministic in-process embedding provider for tests and smoke runs. |
-| **Wire** | One OpenAPI specification as the contract, one transport-agnostic operation surface behind it, and the JSON/HTTP surface in `Munarium.Server`. The gRPC/protobuf contract is generated from that same specification, so the two surfaces cannot drift on names, shapes or enum values. |
+| **Wire** | One OpenAPI specification as the contract, one transport-agnostic operation surface behind it, and both surfaces served from it: JSON/HTTP by `Munarium.Server`, and gRPC/protobuf by the service base SharpPortico generates from that same specification - so the two cannot drift on names, shapes or enum values. |
 
 `src/Munarium.Store.SharpCoreDb` is the storage and retrieval adapter over SharpCoreDB, and
-`src/Munarium.Providers` holds the providers. `src/Munarium.Server` exposes the wire surface over
-HTTP/JSON, and its tests drive the real application - a real kernel, a real database, and the
-contract's own shapes - rather than a stand-in.
+`src/Munarium.Providers` holds the providers. `src/Munarium.Server` serves the wire surface over both
+HTTP/JSON and gRPC, and its tests drive the real application - a real kernel, a real database, the
+contract's own shapes, and the generated gRPC client - rather than a stand-in.
 
 ## Known limitations
 
@@ -88,14 +88,15 @@ Each of these is an upstream finding with the evidence that produced it, not a p
   `JsonSerializer`, which ILC reports as `IL2026`/`IL3050`. The kernel, the wire contract and the
   event-sourcing storage path are clean, which is what the AOT smoke proves on all three platforms; a
   `JsonSerializerContext` inside SharpCoreDB is what would close the gap.
-- **The gRPC surface is generated but not hosted yet.** SharpPortico 0.3.0-rc.1 emits a
-  `Grpc.Core`-shaped service - `BindService(base)` returning a `ServerServiceDefinition`, over a base
-  class that takes `Grpc.Core.ServerCallContext`. That is the deprecated C-core shape, whereas
-  `Grpc.AspNetCore`'s `MapGrpcService` expects the `BindService(ServiceBinderBase, TService)` overload
-  the .NET gRPC server tooling generates. The additive upstream fix is to emit that overload too.
-- **SharpPortico rejects OpenAPI 3.1.** It documents 3.0/3.1, but a 3.1 document is refused with
-  "OpenAPI specification version '3.1.0' is not supported", so this contract is declared as 3.0.3.
-  Nothing in it needs a 3.1-only keyword.
+- **The gRPC surface is served, but is not itself an AOT target.** grpc-dotnet's binder looks up the
+  binder method and each handler by reflection at startup (`BinderServiceModelFinder`,
+  `ProviderServiceBinder`), so an ASP.NET Core gRPC server is not AOT-compilable. The messages, the
+  contract and the generated client are reflection-free. Making this host AOT-clean needs the method
+  discovery to be source-generated, which is grpc-dotnet's to do.
+- **OpenAPI 3.1 is parsed as 3.0.** SharpPortico 0.4.0 accepts a 3.1 document by declaring it 3.0
+  before parsing - its bundled parser (`Microsoft.OpenApi` 1.6.x) refuses 3.1 outright - and reports
+  `SP1002` to say so. This contract stays at 3.0.3 anyway: it needs nothing from 3.1, and 3.0.3 is what
+  every tool reads.
 - **A stream has to be one URL path segment.** Stream names travel in a path
   (`/v1/streams/{stream}/claims`), so a name containing `/` cannot be addressed. Either stream names
   stay segment-safe or the parameter moves to a query string.

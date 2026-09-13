@@ -8,10 +8,9 @@
 # Discipline: additive only within v1 - new fields, new operations, new enum values after
 # "unspecified". A breaking change becomes v2 and is served side by side.
 #
-# Declared as OpenAPI 3.0.3, not 3.1: SharpPortico 0.3.0-rc.1 (over Microsoft.OpenApi 1.6.x)
-# rejects a 3.1 document outright with "OpenAPI specification version '3.1.0' is not supported",
-# even though the project documents 3.0/3.1 support. Nothing in this contract needs a 3.1-only
-# keyword, so it stays at 3.0 until the generator accepts 3.1.
+# Declared as OpenAPI 3.0.3 rather than 3.1: the generator now accepts a 3.1 document (it declares it
+# 3.0 before parsing, because the bundled Microsoft.OpenApi 1.6.x refuses 3.1, and reports SP1002 to say
+# so), but nothing in this contract needs a 3.1-only keyword and 3.0.3 is what every tool reads.
 #
 # Naming rules this contract has to respect, learned the hard way against SharpPortico 0.3.0-rc.1:
 #   * a schema must not share a name with an operation's derived messages, because the generator
