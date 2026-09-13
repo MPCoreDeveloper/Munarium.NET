@@ -109,6 +109,14 @@ jobs:
         shell: bash
         run: |
           cd artifacts/aot-smoke
-          binary=$(ls Munarium.AotSmoke Munarium.AotSmoke.exe 2>/dev/null | head -n 1)
+          if [ -f Munarium.AotSmoke ]; then
+            binary=Munarium.AotSmoke
+          elif [ -f Munarium.AotSmoke.exe ]; then
+            binary=Munarium.AotSmoke.exe
+          else
+            echo "::error::AOT binary not found; publish output was:"
+            ls -la
+            exit 1
+          fi
           echo "Running ./$binary on ${{ matrix.rid }}"
           ./$binary
