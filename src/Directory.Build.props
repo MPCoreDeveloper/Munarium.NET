@@ -1,0 +1,15 @@
+<Project>
+
+  <!--
+    Settings for shipping libraries under src/. These inherit the repository-wide
+    Directory.Build.props and stay strict: warnings are errors, analyzers on.
+  -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <IsTestProject>false</IsTestProject>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

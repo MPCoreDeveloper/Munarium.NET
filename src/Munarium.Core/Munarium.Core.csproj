@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Munarium</RootNamespace>
+    <AssemblyName>Munarium.Core</AssemblyName>
+    <PackageId>Munarium.Core</PackageId>
+    <Description>Munarium pure kernel: the append-only fact ledger, governance gates and context composition, with storage, retrieval and model providers behind interfaces. No HTTP, no provider calls, no database.</Description>
+    <PackageTags>munarium;governed-memory;ledger;provenance;rag;ai</PackageTags>
+  </PropertyGroup>
+
+</Project>

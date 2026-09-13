@@ -1,0 +1,40 @@
+<Project>
+
+  <!--
+    Central Package Management: one source of truth for every package version.
+    The MPCoreDeveloper net11 RC versions are consumed either from nuget.org (once
+    published) or from the local `mpcore-rc` feed declared in NuGet.config.
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup Label="Static analysis">
+    <PackageVersion Include="SonarAnalyzer.CSharp" Version="10.34.0.3385" />
+  </ItemGroup>
+
+  <ItemGroup Label="Testing">
+    <PackageVersion Include="xunit.v3" Version="3.2.2" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.11.2" />
+  </ItemGroup>
+
+  <!--
+    MPCoreDeveloper stack (net11 RCs). These are declared centrally so a project only
+    has to say <PackageReference Include="SharpCoreDB" />. Versions are pinned to the
+    RC cut for this port; they are bumped as each RC is promoted.
+  -->
+  <ItemGroup Label="MPCoreDeveloper net11 RCs">
+    <PackageVersion Include="SharpCoreDB" Version="2.1.0-RC.1" />
+    <PackageVersion Include="SharpCoreDB.EventSourcing" Version="2.1.0-RC.2" />
+    <PackageVersion Include="SharpCoreDB.CQRS" Version="2.1.0-RC.1" />
+    <PackageVersion Include="SharpCoreDB.VectorSearch" Version="2.1.0-RC.1" />
+    <PackageVersion Include="SharpCoreDB.Graph" Version="2.1.0-RC.1" />
+    <PackageVersion Include="SharpCoreDB.Graph.Advanced" Version="2.1.0-RC.1" />
+    <PackageVersion Include="SharpDispatch" Version="1.1.0-RC.1" />
+    <PackageVersion Include="Posseth.UlidFactory" Version="2.1.0-RC.1" />
+    <PackageVersion Include="SharpPortico.Runtime" Version="0.3.0-RC.1" />
+    <PackageVersion Include="SharpPortico.Abstractions" Version="0.3.0-RC.1" />
+  </ItemGroup>
+
+</Project>

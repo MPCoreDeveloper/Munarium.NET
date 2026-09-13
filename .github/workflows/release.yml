@@ -1,0 +1,94 @@
+name: Release
+
+# Publishes the packable Munarium.NET packages to NuGet.org.
+# The API key is read from the NUGET_API_KEY repository secret - never from a file.
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      version-suffix:
+        description: 'Optional pre-release suffix, e.g. preview.1 or rc.1'
+        required: false
+        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  CONFIGURATION: Release
+  PACKAGE_OUTPUT: artifacts/nugetout
+
+jobs:
+  pack-push:
+    name: Pack and push to NuGet
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 11.0.100-rc.1.26425.128
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore local tools
+        run: dotnet tool restore
+
+      - name: Restore
+        run: dotnet restore Munarium.slnx
+
+      - name: Build
+        run: dotnet build Munarium.slnx -c $CONFIGURATION --no-restore
+
+      - name: Test
+        run: dotnet test Munarium.slnx -c $CONFIGURATION --no-build
+
+      - name: Pack
+        shell: bash
+        run: |
+          ARGS=(-c "$CONFIGURATION" --no-build -o "$PACKAGE_OUTPUT")
+          if [[ -n "${{ steps.version.outputs.value }}" ]]; then
+            ARGS+=("-p:Version=${{ steps.version.outputs.value }}")
+          elif [[ -n "${{ inputs.version-suffix }}" ]]; then
+            ARGS+=("-p:VersionSuffix=${{ inputs.version-suffix }}")
+          fi
+          dotnet pack Munarium.slnx "${ARGS[@]}"
+
+      - name: Push to NuGet.org
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [[ -z "$NUGET_API_KEY" ]]; then
+            echo "::error::NUGET_API_KEY secret is not configured."
+            exit 1
+          fi
+          shopt -s nullglob
+          for pkg in "$PACKAGE_OUTPUT"/*.nupkg "$PACKAGE_OUTPUT"/*.snupkg; do
+            echo "Pushing $pkg"
+            dotnet nuget push "$pkg" \
+              --api-key "$NUGET_API_KEY" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate
+          done

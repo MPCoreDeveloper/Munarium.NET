@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Munarium.Core/Munarium.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Munarium.Core.Tests/Munarium.Core.Tests.csproj" />
+  </Folder>
+</Solution>

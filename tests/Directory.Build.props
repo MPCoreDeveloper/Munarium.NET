@@ -1,0 +1,17 @@
+<Project>
+
+  <!--
+    Settings for test projects under tests/. These inherit the repository-wide
+    Directory.Build.props but relax rules that fight test conventions (underscored
+    test names, non-sealed test classes).
+  -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CA1707;CA1515;CA1861;CA2007;xUnit1051</NoWarn>
+  </PropertyGroup>
+
+</Project>
