@@ -11,7 +11,7 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
-    <NoWarn>$(NoWarn);CA1707;CA1515;CA1861;CA2007;xUnit1051</NoWarn>
+    <NoWarn>$(NoWarn);CA1707;CA1515;CA1861;CA2007;CA1859;xUnit1051</NoWarn>
   </PropertyGroup>
 
 </Project>

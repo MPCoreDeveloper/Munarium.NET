@@ -77,3 +77,38 @@ jobs:
       - name: SonarScanner end
         if: env.SONAR_TOKEN != ''
         run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+  # NativeAOT and platform independence, proven per platform: publish the smoke tool as a fully
+  # AOT-compiled native binary and run it. A reflection or codegen hazard fails this job.
+  aot-smoke:
+    name: NativeAOT smoke (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-latest
+            rid: osx-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 11.0.100-rc.1.26425.128
+
+      - name: Publish NativeAOT
+        run: dotnet publish tools/Munarium.AotSmoke/Munarium.AotSmoke.csproj -c Release -r ${{ matrix.rid }} -o artifacts/aot-smoke
+
+      - name: Run the AOT smoke test
+        shell: bash
+        run: |
+          cd artifacts/aot-smoke
+          binary=$(ls Munarium.AotSmoke Munarium.AotSmoke.exe 2>/dev/null | head -n 1)
+          echo "Running ./$binary on ${{ matrix.rid }}"
+          ./$binary

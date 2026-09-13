@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Munarium.AotSmoke</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- A real NativeAOT publish, for every supported platform. CI publishes and runs this
+         per RID (linux-x64, win-x64, osx-arm64) so AOT compatibility cannot regress silently. -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <StripSymbols>true</StripSymbols>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Munarium.Store.SharpCoreDb\Munarium.Store.SharpCoreDb.csproj" />
+  </ItemGroup>
+
+</Project>

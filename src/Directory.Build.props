@@ -10,6 +10,9 @@
     <IsPackable>true</IsPackable>
     <IsTestProject>false</IsTestProject>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- NativeAOT / trimming: turns on the AOT and trim analyzers so reflection-based code is
+         caught at build time. Combined with warnings-as-errors, an AOT hazard fails the build. -->
+    <IsAotCompatible>true</IsAotCompatible>
     <!-- NuGet package metadata: the Munarium.NET icon and the repository README. -->
     <PackageIcon>icon.png</PackageIcon>
     <PackageReadmeFile>README.md</PackageReadmeFile>
