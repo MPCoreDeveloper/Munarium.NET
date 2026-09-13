@@ -25,24 +25,69 @@ public static class MunariumEndpoints
 
         app.MapGet("/healthz", () => TypedResults.Ok(MunariumOperations.Health()));
 
-        app.MapGet(
-            "/v1/streams/{stream}/head",
+        app.MapPost(
+            "/v1/versions",
             async (
-                string stream,
+                WireVersionRequest request,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
-                await operations.GetHeadAsync(stream, cancellationToken).ConfigureAwait(false));
+            {
+                var result = await operations.CreateVersionAsync(request, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireVersion version => TypedResults.Json(version, WireJson.Default.WireVersion),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet(
+            "/v1/versions/{version_id}/head",
+            async (
+                [FromRoute(Name = "version_id")] string versionId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+                await operations.GetHeadAsync(versionId, cancellationToken).ConfigureAwait(false));
+
+        app.MapGet(
+            "/v1/versions/{version_id}/lineage",
+            async (
+                [FromRoute(Name = "version_id")] string versionId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var lineage = await operations.GetLineageAsync(versionId, cancellationToken).ConfigureAwait(false);
+
+                // An empty lineage means no such version, because a version that exists always has itself
+                // in its own lineage. Answering 404 keeps "unknown" out of the data it would contaminate.
+                IResult answer = lineage.Versions.Count == 0
+                    ? TypedResults.Json(
+                        new WireProblem(
+                            "https://munarium.dev/problems/unknown-version",
+                            $"no version '{versionId}' exists.",
+                            Status: 404,
+                            ExpectedHead: 0,
+                            ActualHead: 0),
+                        WireJson.Default.WireProblem,
+                        statusCode: 404)
+                    : TypedResults.Json(lineage, WireJson.Default.WireVersionLineage);
+
+                return answer;
+            });
 
         app.MapPost(
-            "/v1/streams/{stream}/claims",
+            "/v1/versions/{version_id}/claims",
             async (
-                string stream,
+                [FromRoute(Name = "version_id")] string versionId,
                 WireClaimProposal proposal,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
                 var result = await operations
-                    .ProposeClaimAsync(stream, proposal, cancellationToken)
+                    .ProposeClaimAsync(versionId, proposal, cancellationToken)
                     .ConfigureAwait(false);
 
                 // Contention is a transport-level answer rather than a recorded outcome: 409 with the
@@ -61,9 +106,31 @@ public static class MunariumEndpoints
             "/v1/facts",
             async (
                 [FromQuery(Name = "as_of")] long? asOf,
+                [FromQuery(Name = "version_id")] string? versionId,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
-                await operations.SliceFactsAsync(asOf ?? 0, cancellationToken).ConfigureAwait(false));
+                await operations
+                    .SliceFactsAsync(asOf ?? 0, versionId ?? string.Empty, cancellationToken)
+                    .ConfigureAwait(false));
+
+        app.MapPost(
+            "/v1/context",
+            async (
+                WireContextRequest request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.ComposeContextAsync(request, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireComposedContext context => TypedResults.Json(context, WireJson.Default.WireComposedContext),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
 
         app.MapPost(
             "/v1/search",

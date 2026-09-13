@@ -4,6 +4,10 @@ using Grpc.Core;
 using Munarium.Wire;
 using Munarium.Wire.Generated;
 
+// The generated "Version" message and System.Version are both in scope, so the message gets a name of its
+// own here rather than an ambiguity at every use.
+using GeneratedVersion = Munarium.Wire.Generated.Version;
+
 /// <summary>
 /// The gRPC surface of the wire contract: the service base SharpPortico generated from the same
 /// specification the JSON surface implements, over the same <see cref="MunariumOperations"/>.
@@ -23,11 +27,55 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         Task.FromResult(new GetHealthResponse { Data = ToMessage(MunariumOperations.Health()) });
 
     /// <inheritdoc />
+    public override async Task<CreateVersionResponse> CreateVersionAsync(
+        CreateVersionRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .CreateVersionAsync(
+                new WireVersionRequest(
+                    request.Body?.VersionId ?? string.Empty,
+                    request.Body?.ParentVersionId ?? string.Empty,
+                    request.Body?.AsOfDate ?? string.Empty,
+                    request.Body?.Label ?? string.Empty,
+                    request.Body?.Actor ?? string.Empty),
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireVersion version => new CreateVersionResponse { Data = ToMessage(version) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
     public override async Task<GetHeadResponse> GetHeadAsync(GetHeadRequest request, ServerCallContext context)
     {
-        var head = await _operations.GetHeadAsync(request.Stream, context.CancellationToken).ConfigureAwait(false);
+        var head = await _operations
+            .GetHeadAsync(request.VersionId, context.CancellationToken)
+            .ConfigureAwait(false);
 
-        return new GetHeadResponse { Data = new StreamHead { Stream = head.Stream, Head = head.Head } };
+        return new GetHeadResponse
+        {
+            Data = new VersionHead { VersionId = head.VersionId, Head = head.Head },
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<GetLineageResponse> GetLineageAsync(
+        GetLineageRequest request,
+        ServerCallContext context)
+    {
+        var lineage = await _operations
+            .GetLineageAsync(request.VersionId, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        // An empty lineage means no such version, which the JSON surface answers as a 404: a version that
+        // exists always has itself in its own lineage.
+        return lineage.Versions.Count == 0
+            ? throw new RpcException(new Status(StatusCode.NotFound, $"no version '{request.VersionId}' exists."))
+            : new GetLineageResponse { Data = ToMessage(lineage) };
     }
 
     /// <inheritdoc />
@@ -36,16 +84,16 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         ServerCallContext context)
     {
         var result = await _operations
-            .ProposeClaimAsync(request.Stream, ToWire(request.Body), context.CancellationToken)
+            .ProposeClaimAsync(request.VersionId, ToWire(request.Body), context.CancellationToken)
             .ConfigureAwait(false);
 
         return result switch
         {
             WireClaimOutcome outcome => new ProposeClaimResponse { Data = ToMessage(outcome) },
 
-            // The JSON surface answers 409 with the problem; gRPC's twin of that is ABORTED, which is
-            // the retryable answer the specification describes.
-            WireProblem problem => throw new RpcException(new Status(StatusCode.Aborted, problem.Detail)),
+            // Contention is ABORTED here and 409 there, which is the retryable answer the specification
+            // describes; a proposal that was not understood is INVALID_ARGUMENT and 400.
+            WireProblem problem => throw Problem(problem),
         };
     }
 
@@ -54,9 +102,35 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         SliceFactsRequest request,
         ServerCallContext context)
     {
-        var slice = await _operations.SliceFactsAsync(request.AsOf, context.CancellationToken).ConfigureAwait(false);
+        var slice = await _operations
+            .SliceFactsAsync(request.AsOf, request.VersionId ?? string.Empty, context.CancellationToken)
+            .ConfigureAwait(false);
 
         return new SliceFactsResponse { Data = ToMessage(slice) };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ComposeContextResponse> ComposeContextAsync(
+        ComposeContextRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .ComposeContextAsync(
+                new WireContextRequest(
+                    request.Body?.VersionId ?? string.Empty,
+                    request.Body?.Shape ?? string.Empty,
+                    request.Body?.AsOf ?? 0,
+                    request.Body?.AsOfDate ?? string.Empty,
+                    request.Body?.BudgetTokens ?? 0,
+                    request.Body?.FactLimit ?? 0),
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireComposedContext composed => new ComposeContextResponse { Data = ToMessage(composed) },
+            WireProblem problem => throw Problem(problem),
+        };
     }
 
     /// <inheritdoc />
@@ -77,18 +151,71 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
     // anything - and a field added to the specification shows up as a compile error in both directions
     // rather than as a silent omission.
 
+    // A failure is one failure: the problem's own status decides the gRPC code, so the two surfaces answer
+    // the same failure the same way instead of each inventing a mapping.
+    private static RpcException Problem(WireProblem problem) =>
+        new(new Status(CodeOf(problem.Status), problem.Detail));
+
+    private static StatusCode CodeOf(int status) => status switch
+    {
+        400 => StatusCode.InvalidArgument,
+        404 => StatusCode.NotFound,
+        409 => StatusCode.Aborted,
+        _ => StatusCode.Unknown,
+    };
+
     private static Health ToMessage(WireHealth health) => new()
     {
         Status = health.Status,
         Contract = health.Contract,
     };
 
+    private static GeneratedVersion ToMessage(WireVersion version) => new()
+    {
+        VersionId = version.VersionId,
+        ParentVersionId = version.ParentVersionId,
+        AsOfDate = version.AsOfDate,
+        Label = version.Label,
+        Head = version.Head,
+    };
+
+    private static VersionLineage ToMessage(WireVersionLineage lineage)
+    {
+        var message = new VersionLineage();
+
+        foreach (var version in lineage.Versions)
+        {
+            message.Versions.Add(ToMessage(version));
+        }
+
+        return message;
+    }
+
+    private static ComposedContext ToMessage(WireComposedContext composed)
+    {
+        var message = new ComposedContext
+        {
+            Text = composed.Text,
+            EstimatedTokens = composed.EstimatedTokens,
+            ContentHash = composed.ContentHash,
+            AsOf = composed.AsOf,
+        };
+
+        foreach (var section in composed.Sections)
+        {
+            message.Sections.Add(new ContextSection { Title = section.Title, Body = section.Body });
+        }
+
+        return message;
+    }
+
     private static ClaimOutcome ToMessage(WireClaimOutcome outcome) => new()
     {
-        Stream = outcome.Stream,
+        VersionId = outcome.VersionId,
         ClaimId = outcome.ClaimId,
+        ClaimType = ClaimTypeOf(outcome.ClaimType),
         Lineage = outcome.Lineage,
-        Status = StatusOf(outcome.Status),
+        Status = ClaimStatusOf(outcome.Status),
         Gate = outcome.Gate,
         Reason = outcome.Reason,
         Head = outcome.Head,
@@ -102,11 +229,13 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         {
             message.Facts.Add(new Fact
             {
+                VersionId = fact.VersionId,
                 ClaimId = fact.ClaimId,
+                ClaimType = ClaimTypeOf(fact.ClaimType),
                 Lineage = fact.Lineage,
                 Statement = fact.Statement,
                 Actor = fact.Actor,
-                Status = StatusOf(fact.Status),
+                Status = ClaimStatusOf(fact.Status),
                 Gate = fact.Gate,
                 Reason = fact.Reason,
                 Sequence = fact.Sequence,
@@ -168,7 +297,10 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         return message;
     }
 
-    private static ClaimStatus StatusOf(string status) => status switch
+    // The contract's enumerations are names in the specification and numbers on the wire; these three put
+    // the two together, and both directions are total, so an unknown value cannot become a silent default
+    // in one direction and a name nobody wrote in the other.
+    private static ClaimStatus ClaimStatusOf(string status) => status switch
     {
         WireClaimStatus.Accepted => ClaimStatus.Accepted,
         WireClaimStatus.Disputed => ClaimStatus.Disputed,
@@ -176,6 +308,27 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         _ => ClaimStatus.Unspecified,
     };
 
-    private static WireClaimProposal ToWire(ClaimProposal proposal) =>
-        new(proposal.ClaimId, proposal.Shape, proposal.Body, proposal.Statement, proposal.Actor);
+    private static ClaimType ClaimTypeOf(string claimType) => claimType switch
+    {
+        WireClaimTypes.Fact => ClaimType.Fact,
+        WireClaimTypes.Update => ClaimType.Update,
+        WireClaimTypes.Correction => ClaimType.Correction,
+        _ => ClaimType.Unspecified,
+    };
+
+    private static string ClaimTypeName(ClaimType claimType) => claimType switch
+    {
+        ClaimType.Fact => WireClaimTypes.Fact,
+        ClaimType.Update => WireClaimTypes.Update,
+        ClaimType.Correction => WireClaimTypes.Correction,
+        _ => WireClaimTypes.Unspecified,
+    };
+
+    private static WireClaimProposal ToWire(ClaimProposal? proposal) => new(
+        proposal?.ClaimId ?? string.Empty,
+        ClaimTypeName(proposal?.ClaimType ?? ClaimType.Unspecified),
+        proposal?.Shape ?? string.Empty,
+        proposal?.Body ?? string.Empty,
+        proposal?.Statement ?? string.Empty,
+        proposal?.Actor ?? string.Empty);
 }

@@ -1,5 +1,6 @@
 namespace Munarium.Server.Tests;
 
+using Munarium.Context;
 using Munarium.Wire;
 
 /// <summary>
@@ -7,7 +8,7 @@ using Munarium.Wire;
 /// a real SharpCoreDB database, and the contract's own shapes.
 /// </summary>
 /// <remarks>
-/// Every test writes to a stream of its own, so the answers do not depend on the order xunit happens
+/// Every test writes to a version of its own, so the answers do not depend on the order xunit happens
 /// to run them in. Pinned reads are asserted relatively - same pin, same digest - for the same
 /// reason.
 /// </remarks>
@@ -27,18 +28,18 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     }
 
     [Fact]
-    public async Task AStreamThatHasNotBeenWrittenToHasHeadZero()
+    public async Task AVersionThatHasNotBeenWrittenToHasHeadZero()
     {
-        var head = await GetAsync("/v1/streams/empty-stream/head", WireJson.Default.WireStreamHead);
+        var head = await GetAsync("/v1/versions/empty-version/head", WireJson.Default.WireVersionHead);
 
-        Assert.Equal("empty-stream", head.Stream);
+        Assert.Equal("empty-version", head.VersionId);
         Assert.Equal(0, head.Head);
     }
 
     [Fact]
     public async Task AnAcceptedClaimEchoesTheLineageTheKernelDerived()
     {
-        var outcome = await ProposeAsync("stream-accepted", "claim-accepted", Vendor("v-1"));
+        var outcome = await ProposeAsync("version-accepted", "claim-accepted", Vendor("v-1"));
 
         Assert.Equal(WireClaimStatus.Accepted, outcome.Status);
         Assert.Equal("vendor@1|vendor_id=v-1", outcome.Lineage);
@@ -49,7 +50,7 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     [Fact]
     public async Task AClaimThatViolatesItsShapeIsRecordedAsDisputedWithTheReason()
     {
-        var outcome = await ProposeAsync("stream-disputed", "claim-disputed", """{"vendor_id":"v-2"}""");
+        var outcome = await ProposeAsync("version-disputed", "claim-disputed", """{"vendor_id":"v-2"}""");
 
         Assert.Equal(WireClaimStatus.Disputed, outcome.Status);
         Assert.Equal("shape", outcome.Gate);
@@ -63,8 +64,9 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     public async Task AClaimUnderAnUnknownShapeIsRecordedAsDisputedRatherThanRefused()
     {
         var outcome = await ProposeAsync(
-            "stream-unknown-shape",
-            new WireClaimProposal("claim-unknown", "patent", """{"patent_id":"p-1"}""", "a claim", "tester"));
+            "version-unknown-shape",
+            new WireClaimProposal(
+                "claim-unknown", WireClaimTypes.Fact, "patent", """{"patent_id":"p-1"}""", "a claim", "tester"));
 
         Assert.Equal(WireClaimStatus.Disputed, outcome.Status);
         Assert.Equal("shape", outcome.Gate);
@@ -74,13 +76,16 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     [Fact]
     public async Task APinIsReproducibleAndALaterWriteDoesNotChangeIt()
     {
-        await ProposeAsync("stream-pin", "claim-pin-1", Vendor("v-7"));
+        await ProposeAsync("version-pin", "claim-pin-1", Vendor("v-7"));
 
-        // Pin at the state the first claim produced, then correct it and read both positions back.
+        // Pin at the state the first claim produced, then supersede it and read both positions back.
         var beforeCorrection = await GetAsync("/v1/facts?as_of=0", WireJson.Default.WireFactSlice);
         var pin = beforeCorrection.AsOf;
 
-        var corrected = (await ProposeAsync("stream-pin", "claim-pin-2", Vendor("v-7", "pending"))).Head;
+        // The value legitimately changed, which the claim says in its type - an unnamed claim would be
+        // refused as a ledger conflict, because a silent overwrite is what the gate exists to stop.
+        var corrected = (await ProposeAsync(
+            "version-pin", "claim-pin-2", Vendor("v-7", "pending"), WireClaimTypes.Update)).Head;
 
         var atPin = await GetAsync($"/v1/facts?as_of={pin}", WireJson.Default.WireFactSlice);
         var now = await GetAsync("/v1/facts?as_of=0", WireJson.Default.WireFactSlice);
@@ -127,8 +132,9 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     public async Task AProposalMissingWhatTheContractRequiresIsRefusedAsAClientError()
     {
         var response = await _client.PostAsJsonAsync(
-            "/v1/streams/stream-invalid/claims",
-            new WireClaimProposal(string.Empty, VendorShape, Vendor("v-9"), "a claim", "tester"),
+            "/v1/versions/version-invalid/claims",
+            new WireClaimProposal(
+                string.Empty, WireClaimTypes.Fact, VendorShape, Vendor("v-9"), "a claim", "tester"),
             WireJson.Default.WireClaimProposal);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -142,7 +148,7 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     [Fact]
     public async Task TheJsonUsesTheFieldNamesTheContractDeclares()
     {
-        await ProposeAsync("stream-json", "claim-json", Vendor("v-json"));
+        await ProposeAsync("version-json", "claim-json", Vendor("v-json"));
 
         var response = await _client.GetAsync(new Uri("/v1/facts?as_of=0", UriKind.Relative));
         var json = await response.Content.ReadAsStringAsync();
@@ -155,24 +161,256 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Contains("vendor@1|vendor_id=v-json", json, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task AVersionIsAClaimAndItsLineageIsRebuiltFromTheLedger()
+    {
+        await CreateVersionAsync("lineage-1", asOfDate: "2026-01-01", label: "the first one");
+        await CreateVersionAsync("lineage-2", parent: "lineage-1", asOfDate: "2026-02-01");
+
+        var lineage = await GetAsync("/v1/versions/lineage-2/lineage", WireJson.Default.WireVersionLineage);
+
+        Assert.Equal(["lineage-1", "lineage-2"], lineage.Versions.Select(version => version.VersionId));
+
+        var root = lineage.Versions[0];
+
+        Assert.Equal(string.Empty, root.ParentVersionId);
+        Assert.Equal("2026-01-01", root.AsOfDate);
+        Assert.Equal("the first one", root.Label);
+
+        // A version is a claim in the ledger, so its own creation is the whole of its stream.
+        Assert.Equal(1, root.Head);
+    }
+
+    [Fact]
+    public async Task ALineageStopsAtTheVersionThatWasAskedFor()
+    {
+        await CreateVersionAsync("lineage-3");
+        await CreateVersionAsync("lineage-4", parent: "lineage-3");
+
+        var lineage = await GetAsync("/v1/versions/lineage-3/lineage", WireJson.Default.WireVersionLineage);
+
+        Assert.Equal(["lineage-3"], lineage.Versions.Select(version => version.VersionId));
+    }
+
+    [Fact]
+    public async Task CreatingAVersionTwiceIsRefusedBecauseItsIdentityIsTaken()
+    {
+        await CreateVersionAsync("lineage-taken", label: "the first one");
+
+        // The same identity with different content would silently replace a version, so it is refused. Only
+        // an identical claim is treated as a retry, and a version's identity is a lineage like any other.
+        var response = await PostVersionAsync(new WireVersionRequest(
+            "lineage-taken", string.Empty, "2026-05-01", "a second one", "tester"));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+
+        var problem = await response.Content.ReadFromJsonAsync(WireJson.Default.WireProblem);
+
+        Assert.NotNull(problem);
+
+        // The refusal comes from the same gate as any other claim.
+        Assert.Contains("ledger-conflict", problem.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AVersionThatDescendsFromNothingIsRefused()
+    {
+        var response = await PostVersionAsync(new WireVersionRequest(
+            "lineage-orphan", "no-such-version", string.Empty, string.Empty, "tester"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task AnUnknownVersionHasNoLineage()
+    {
+        var response = await _client.GetAsync(new Uri("/v1/versions/no-such-version/lineage", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task AVersionsIdentityIsGeneratedWhenNoneIsGiven()
+    {
+        var version = await CreateVersionAsync(string.Empty);
+
+        // A ULID: 128 bits in Crockford base32, and it sorts by creation time.
+        Assert.Equal(26, version.VersionId.Length);
+        Assert.Equal(1, version.Head);
+    }
+
+    [Fact]
+    public async Task AnUnnamedClaimOverAnExistingLineageIsRecordedAsDisputed()
+    {
+        await ProposeAsync("version-conflict", "claim-conflict-1", Vendor("v-conflict"));
+
+        var outcome = await ProposeAsync("version-conflict", "claim-conflict-2", Vendor("v-conflict", "sanctioned"));
+
+        Assert.Equal(WireClaimStatus.Disputed, outcome.Status);
+        Assert.Equal("ledger-conflict", outcome.Gate);
+        Assert.Contains("claim-conflict-1", outcome.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACorrectionSaysWhyItSupersedesAndIsAccepted()
+    {
+        await ProposeAsync("version-correction", "claim-correction-1", Vendor("v-correct"));
+
+        var outcome = await ProposeAsync(
+            "version-correction",
+            "claim-correction-2",
+            Vendor("v-correct", "sanctioned"),
+            WireClaimTypes.Correction);
+
+        Assert.Equal(WireClaimStatus.Accepted, outcome.Status);
+        Assert.Equal(WireClaimTypes.Correction, outcome.ClaimType);
+        Assert.Equal("vendor@1|vendor_id=v-correct", outcome.Lineage);
+    }
+
+    [Fact]
+    public async Task TheComposedContextIsAPureFunctionOfItsPin()
+    {
+        await ProposeAsync("version-context", "claim-context-1", Vendor("v-context"));
+
+        var first = await ComposeAsync(Context("version-context"));
+        var second = await ComposeAsync(Context("version-context"));
+
+        Assert.Equal(first.Text, second.Text);
+        Assert.Equal(first.ContentHash, second.ContentHash);
+        Assert.Equal(Composer.EstimateTokens(first.Text.Length), first.EstimatedTokens);
+        Assert.Contains("\"vendor_id\":\"v-context\"", first.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AComposedContextCarriesOneVersionAndNotTheOthers()
+    {
+        await ProposeAsync("version-context-a", "claim-context-a", Vendor("v-scope-a"));
+        await ProposeAsync("version-context-b", "claim-context-b", Vendor("v-scope-b"));
+
+        var composed = await ComposeAsync(Context("version-context-a"));
+
+        Assert.Contains("v-scope-a", composed.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("v-scope-b", composed.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ADisputedClaimIsComposedUnderItsOwnSection()
+    {
+        await ProposeAsync("version-context-disputed", "claim-context-d", """{"vendor_id":"v-d"}""");
+
+        var composed = await ComposeAsync(Context("version-context-disputed"));
+
+        // A context that hid what the ledger refused would hide the one thing this system exists to keep
+        // visible, so refusals travel with their reason.
+        var disputed = Assert.Single(composed.Sections.Where(section => section.Title == "Disputed"));
+
+        Assert.Contains("shape", disputed.Body, StringComparison.Ordinal);
+        Assert.Contains("v-d", disputed.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheTokenBudgetCapsTheFactsTheCompositionCarries()
+    {
+        await ProposeAsync("version-context-budget", "claim-budget-1", Vendor("v-budget-1"));
+        await ProposeAsync("version-context-budget", "claim-budget-2", Vendor("v-budget-2"));
+
+        var unbounded = await ComposeAsync(Context("version-context-budget"));
+        var capped = await ComposeAsync(Context("version-context-budget", budgetTokens: 40));
+
+        Assert.Contains("v-budget-1", capped.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("v-budget-2", capped.Text, StringComparison.Ordinal);
+        Assert.True(capped.Text.Length < unbounded.Text.Length);
+
+        // The budget bounds the facts. The marker that says facts were omitted is not counted against them,
+        // because it is what tells a reader the context is partial - and it is shorter than the fact it
+        // stands in for.
+        Assert.Contains("more accepted fact(s) omitted", capped.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnAsOfDateResolvesToAPinThroughTheVersions()
+    {
+        await CreateVersionAsync("version-dated-1", asOfDate: "2026-06-01");
+        await ProposeAsync("version-dated-1", "claim-dated-1", Vendor("v-2026"));
+        await CreateVersionAsync("version-dated-2", parent: "version-dated-1", asOfDate: "2026-07-01");
+
+        var atTheFirst = await ComposeAsync(Context("version-dated-1", asOfDate: "2026-06-01"));
+        var atTheSecond = await ComposeAsync(Context("version-dated-1", asOfDate: "2026-07-01"));
+
+        // The date resolves to the position that version was created at, so at the first version's own
+        // position the ledger holds its creation and nothing else - the claim comes after it. A date that
+        // resolved to the present would make both read the same.
+        Assert.Contains("starts a lineage", atTheFirst.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("v-2026", atTheFirst.Text, StringComparison.Ordinal);
+        Assert.Contains("v-2026", atTheSecond.Text, StringComparison.Ordinal);
+        Assert.True(atTheSecond.AsOf > atTheFirst.AsOf);
+    }
+
+    [Fact]
+    public async Task AnAsOfDateNoVersionReachesIsNotFound()
+    {
+        var response = await _client.PostAsJsonAsync(
+            "/v1/context",
+            new WireContextRequest(string.Empty, string.Empty, 0, "1999-01-01", 0, 0),
+            WireJson.Default.WireContextRequest);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     private static string Vendor(string vendorId, string status = "approved") =>
         $$"""{"vendor_id":"{{vendorId}}","status":"{{status}}"}""";
 
-    private async Task<WireClaimOutcome> ProposeAsync(string stream, string claimId, string body) =>
+    private async Task<WireClaimOutcome> ProposeAsync(
+        string version,
+        string claimId,
+        string body,
+        string claimType = WireClaimTypes.Fact) =>
         await ProposeAsync(
-            stream,
-            new WireClaimProposal(claimId, VendorShape, body, "the supplier is north", "tester"));
+            version,
+            new WireClaimProposal(claimId, claimType, VendorShape, body, "the supplier is north", "tester"));
 
-    private async Task<WireClaimOutcome> ProposeAsync(string stream, WireClaimProposal proposal)
+    private async Task<WireClaimOutcome> ProposeAsync(string version, WireClaimProposal proposal)
     {
         var response = await _client.PostAsJsonAsync(
-            $"/v1/streams/{stream}/claims",
+            $"/v1/versions/{version}/claims",
             proposal,
             WireJson.Default.WireClaimProposal);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         return (await response.Content.ReadFromJsonAsync(WireJson.Default.WireClaimOutcome))!;
+    }
+
+    private static WireContextRequest Context(string version, string asOfDate = "", int budgetTokens = 0) =>
+        new(version, string.Empty, 0, asOfDate, budgetTokens, 0);
+
+    private async Task<HttpResponseMessage> PostVersionAsync(WireVersionRequest request) =>
+        await _client.PostAsJsonAsync("/v1/versions", request, WireJson.Default.WireVersionRequest);
+
+    private async Task<WireVersion> CreateVersionAsync(
+        string versionId,
+        string parent = "",
+        string asOfDate = "",
+        string label = "")
+    {
+        var response = await PostVersionAsync(
+            new WireVersionRequest(versionId, parent, asOfDate, label, "tester"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        return (await response.Content.ReadFromJsonAsync(WireJson.Default.WireVersion))!;
+    }
+
+    private async Task<WireComposedContext> ComposeAsync(WireContextRequest request)
+    {
+        var response = await _client.PostAsJsonAsync(
+            "/v1/context",
+            request,
+            WireJson.Default.WireContextRequest);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        return (await response.Content.ReadFromJsonAsync(WireJson.Default.WireComposedContext))!;
     }
 
     private async Task<T> GetAsync<T>(string path, JsonTypeInfo<T> type)

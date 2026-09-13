@@ -129,7 +129,7 @@ public class FactLedgerTests
 
     private static RecordClaimCommand Claim(string vendorId, string statement) => new()
     {
-        Stream = "claims/1",
+        VersionId = "claims/1",
         ClaimId = $"claim-{vendorId}",
         Shape = VendorShape.Name,
         Body = VendorShape.Body(vendorId),

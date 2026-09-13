@@ -32,6 +32,8 @@
     <PackageReference Include="Google.Protobuf" />
     <PackageReference Include="Grpc.Core.Api" />
     <PackageReference Include="Grpc.Net.Client" />
+    <!-- Version identities are ULIDs: sortable, spec-compliant, and the same library the rest of the stack uses. -->
+    <PackageReference Include="Posseth.UlidFactory" />
   </ItemGroup>
 
 </Project>

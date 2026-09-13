@@ -16,26 +16,32 @@
 #   * a schema must not share a name with an operation's derived messages, because the generator
 #     emits both "{OperationId}Request"/"Response" and the schema - and the generated file then
 #     defines the type twice. That is why the search body is SearchQuery/SearchResult while the
-#     operation is Search (whose RPC messages are generated as SearchRequest/SearchResponse).
+#     operation is Search, and why the version creation body is VersionRequest while the operation
+#     is CreateVersion.
 #   * a schema must not have a property whose PascalCase name equals the schema name, because the
 #     generated property and its enclosing class would collide (CS0542). That is why the head of a
-#     stream is the StreamHead schema, not Head.
+#     version is the VersionHead schema, not Head.
 openapi: 3.0.3
 info:
   title: Munarium
   version: "1.0.0"
   description: |
     Munarium is a fact ledger with governance in the write path: a claim is judged before it is
-    written, and a refused claim is recorded as disputed rather than dropped. Reads are pinned
-    with as_of, so what a pin saw stays what it saw, and retrieval answers carry the provenance
-    that makes them checkable later rather than merely believable.
+    written, and a refused claim is recorded as disputed rather than dropped. Claims belong to a
+    version, and a version is a node in a lineage, so an answer can always say which memory it came
+    from. Reads are pinned with as_of, so what a pin saw stays what it saw, and a composed context
+    is a pure function of a pin rather than a guess.
 servers:
   - url: /
 tags:
   - name: kernel
     description: Liveness and identity.
+  - name: versions
+    description: Memory versions and the lineage they form.
   - name: ledger
     description: The append-only fact ledger.
+  - name: context
+    description: Composing what a model would be given.
   - name: retrieval
     description: Evidence retrieval with provenance.
   - name: shapes
@@ -55,27 +61,89 @@ paths:
               schema:
                 $ref: "#/components/schemas/Health"
 
-  /v1/streams/{stream}/head:
+  /v1/versions:
+    post:
+      operationId: CreateVersion
+      tags: [versions]
+      summary: Create a version, which is itself a governed claim.
+      description: |
+        A version is not a table: it is a claim under the "version" shape, so it is judged by the
+        same gates, pinned by the same feed and rebuilt from the same slice as every other fact.
+        That makes a version id immutable by construction - claiming an existing id conflicts with
+        the fact that already holds that lineage. Leave version_id empty to have one generated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VersionRequest"
+      responses:
+        "200":
+          description: The version that was created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Version"
+        "400":
+          description: The version could not be understood, or its parent does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The version's own claim was refused by a gate; the refusal is in the ledger.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/versions/{version_id}/head:
     get:
       operationId: GetHead
       tags: [ledger]
-      summary: The current head of a stream.
+      summary: The current head of a version.
       parameters:
-        - name: stream
+        - name: version_id
           in: path
           required: true
-          description: The stream to read.
+          description: The version to read.
           schema:
             type: string
       responses:
         "200":
-          description: The head of the stream.
+          description: The head of the version.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/StreamHead"
+                $ref: "#/components/schemas/VersionHead"
 
-  /v1/streams/{stream}/claims:
+  /v1/versions/{version_id}/lineage:
+    get:
+      operationId: GetLineage
+      tags: [versions]
+      summary: The path from a lineage root down to a version, inclusive.
+      parameters:
+        - name: version_id
+          in: path
+          required: true
+          description: The version to read the lineage of.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The lineage, root first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionLineage"
+        "404":
+          description: No such version at the present pin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/versions/{version_id}/claims:
     post:
       operationId: ProposeClaim
       tags: [ledger]
@@ -84,11 +152,17 @@ paths:
         The model proposes and the mesh disposes: the claim runs the gates before it is written.
         A permitted claim is recorded as accepted, a refused one as disputed - the refusal is
         evidence in the ledger, not a lost write.
+
+        claim_type says what the claim does to whatever the ledger already holds on the same
+        lineage. "fact" (and leaving it out) asserts a value the ledger should not already hold, so
+        a lineage that already carries one makes it a ledger conflict; "update" and "correction"
+        both say why they are superseding, so they are allowed. That is what keeps "the value
+        changed" and "the earlier value was wrong" distinguishable instead of one silent overwrite.
       parameters:
-        - name: stream
+        - name: version_id
           in: path
           required: true
-          description: The stream to write to.
+          description: The version to write to.
           schema:
             type: string
       requestBody:
@@ -125,8 +199,8 @@ paths:
       description: |
         The slice is rebuilt from the ledger at the pin, never served from a cache, so the same
         pin rebuilds the same facts and therefore the same digest. Facts come back ordered by
-        lineage. This reads the whole ledger at a pin rather than a single stream, because a pin
-        is a global position and that is what the digest is taken over.
+        lineage, and each one names the version it was written to, so one version can be read out
+        of the whole. The digest covers exactly the facts returned.
       parameters:
         - name: as_of
           in: query
@@ -136,6 +210,13 @@ paths:
             type: integer
             format: int64
             default: 0
+        - name: version_id
+          in: query
+          required: false
+          description: Read one version instead of every version. Empty means every version.
+          schema:
+            type: string
+            default: ""
       responses:
         "200":
           description: The slice and its digest.
@@ -143,6 +224,47 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FactSlice"
+
+  /v1/context:
+    post:
+      operationId: ComposeContext
+      tags: [context]
+      summary: Compose the context a model would be given.
+      description: |
+        Composition is a pure function of the pinned facts, so the same pin composes the same text
+        and the same content_hash - which makes the hash a cache key rather than a guess. Sections
+        carry the accepted facts within the budget, and refused claims are listed separately under
+        "Disputed", because a context that hid what the ledger refused would hide the one thing
+        this system exists to keep visible.
+
+        as_of_date resolves to a pin through the versions: the latest version whose as_of date is
+        on or before it, and the global position that version was created at. as_of_date wins over
+        as_of when both are given.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContextRequest"
+      responses:
+        "200":
+          description: The composed context.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComposedContext"
+        "400":
+          description: The request could not be understood.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: No version reaches back as far as the given as_of_date.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /v1/search:
     post:
@@ -179,7 +301,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ShapeList"
-
 components:
   schemas:
     Problem:
@@ -213,16 +334,69 @@ components:
           type: string
           description: The wire contract version this server speaks, "mmp.v1".
 
-    StreamHead:
+    VersionHead:
       type: object
-      required: [stream, head]
+      required: [version_id, head]
       properties:
-        stream:
+        version_id:
           type: string
         head:
           type: integer
           format: int64
-          description: The last sequence number in the stream. 0 means the stream is empty.
+          description: The last sequence number in the version. 0 means nothing has been written.
+
+    Version:
+      type: object
+      required: [version_id, head]
+      properties:
+        version_id:
+          type: string
+          description: The version's identity, which is also the stream its claims are written to.
+        parent_version_id:
+          type: string
+          description: The version it descends from. Empty when it starts a lineage.
+        as_of_date:
+          type: string
+          description: The date this version is "as of", as YYYY-MM-DD. Empty when it declares none.
+        label:
+          type: string
+          description: A label for humans.
+        head:
+          type: integer
+          format: int64
+          description: The version's own head.
+
+    VersionLineage:
+      type: object
+      required: [versions]
+      properties:
+        versions:
+          type: array
+          description: The lineage from its root down to the requested version, inclusive.
+          items:
+            $ref: "#/components/schemas/Version"
+
+    VersionRequest:
+      type: object
+      required: [actor]
+      properties:
+        version_id:
+          type: string
+          description: |
+            The identity to use, or empty to have the server generate one. Identities are ULIDs, so
+            a generated one sorts by creation time.
+        parent_version_id:
+          type: string
+          description: The version to descend from, or empty for a lineage root.
+        as_of_date:
+          type: string
+          description: The date this version is "as of", as YYYY-MM-DD, or empty.
+        label:
+          type: string
+          description: A label for humans, or empty.
+        actor:
+          type: string
+          description: Who is creating it.
 
     ClaimStatus:
       type: string
@@ -235,13 +409,28 @@ components:
         - disputed
         - contended
 
+    ClaimType:
+      type: string
+      description: |
+        What a claim does to whatever the ledger already holds on its lineage. "unspecified" and
+        "fact" both assert a value the ledger should not already hold, so a lineage that already
+        carries one refuses them as a ledger conflict; "update" and "correction" say why they are
+        superseding, so they are permitted.
+      enum:
+        - unspecified
+        - fact
+        - update
+        - correction
+
     ClaimProposal:
       type: object
       required: [claim_id, shape, body, statement, actor]
       properties:
         claim_id:
           type: string
-          description: The claim's identity, unique within the stream.
+          description: The claim's identity, unique within the version.
+        claim_type:
+          $ref: "#/components/schemas/ClaimType"
         shape:
           type: string
           description: |
@@ -259,12 +448,14 @@ components:
 
     ClaimOutcome:
       type: object
-      required: [stream, claim_id, lineage, status, head]
+      required: [version_id, claim_id, claim_type, lineage, status, head]
       properties:
-        stream:
+        version_id:
           type: string
         claim_id:
           type: string
+        claim_type:
+          $ref: "#/components/schemas/ClaimType"
         lineage:
           type: string
           description: |
@@ -280,14 +471,19 @@ components:
         head:
           type: integer
           format: int64
-          description: The stream head after the write.
+          description: The version's head after the write.
 
     Fact:
       type: object
-      required: [claim_id, lineage, statement, actor, status, sequence]
+      required: [version_id, claim_id, claim_type, lineage, statement, actor, status, sequence]
       properties:
+        version_id:
+          type: string
+          description: The version the fact was written to.
         claim_id:
           type: string
+        claim_type:
+          $ref: "#/components/schemas/ClaimType"
         lineage:
           type: string
         statement:
@@ -320,6 +516,71 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Fact"
+
+    ContextSection:
+      type: object
+      required: [title, body]
+      properties:
+        title:
+          type: string
+        body:
+          type: string
+
+    ContextRequest:
+      type: object
+      properties:
+        version_id:
+          type: string
+          description: Compose one version, or empty for every version.
+        shape:
+          type: string
+          description: Compose one shape, or empty for every shape.
+        as_of:
+          type: integer
+          format: int64
+          default: 0
+          description: The global position to compose as of. 0 means the present.
+        as_of_date:
+          type: string
+          description: |
+            A date, as YYYY-MM-DD, resolved to a pin through the versions. Wins over as_of when both
+            are given.
+        budget_tokens:
+          type: integer
+          format: int32
+          default: 0
+          description: |
+            The token budget for facts. 0 means unbounded. The estimate is four characters per
+            token, rounded up - deliberately not a tokeniser, because the estimate has to be
+            reproducible or the content hash means nothing.
+        fact_limit:
+          type: integer
+          format: int32
+          default: 0
+          description: How many facts may be included. 0 means unbounded.
+
+    ComposedContext:
+      type: object
+      required: [sections, text, estimated_tokens, content_hash, as_of]
+      properties:
+        sections:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContextSection"
+        text:
+          type: string
+          description: The composed text, which is the concatenation of the section bodies.
+        estimated_tokens:
+          type: integer
+          format: int32
+          description: The token estimate for the text.
+        content_hash:
+          type: string
+          description: SHA-256 over the text, lowercase hex. The same pin composes the same hash.
+        as_of:
+          type: integer
+          format: int64
+          description: The pin it was composed at.
 
     SourceReference:
       type: object
@@ -416,5 +677,3 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Shape"
-
-

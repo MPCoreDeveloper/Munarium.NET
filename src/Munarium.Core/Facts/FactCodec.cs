@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace Munarium.Facts;
@@ -41,7 +42,10 @@ public static class FactCodec
 
         var builder = new StringBuilder();
         AppendField(builder, "claimId", fact.ClaimId);
+        AppendField(builder, "versionId", fact.VersionId);
+        AppendField(builder, "claimType", ((int)fact.ClaimType).ToString(CultureInfo.InvariantCulture));
         AppendField(builder, "lineage", fact.Lineage);
+        AppendField(builder, "body", fact.Body);
         AppendField(builder, "statement", fact.Statement);
         AppendField(builder, "actor", fact.Actor);
         AppendField(builder, "gate", fact.Gate);
@@ -79,7 +83,10 @@ public static class FactCodec
         return new FactRecord
         {
             ClaimId = Required(fields, "claimId"),
+            VersionId = Required(fields, "versionId"),
+            ClaimType = ClaimTypeOf(Required(fields, "claimType")),
             Lineage = Required(fields, "lineage"),
+            Body = Required(fields, "body"),
             Statement = Required(fields, "statement"),
             Actor = Required(fields, "actor"),
             Gate = Required(fields, "gate"),
@@ -103,6 +110,14 @@ public static class FactCodec
         fields.TryGetValue(name, out var value)
             ? value
             : throw new FormatException($"Fact payload is missing '{name}'.");
+
+    // The claim type travels as its numeric value, and is bounds-checked rather than reflected over: the
+    // member names are free to change, the encoding is not.
+    private static ClaimType ClaimTypeOf(string value) =>
+        int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) &&
+        number is >= (int)ClaimType.Unspecified and <= (int)ClaimType.Correction
+            ? (ClaimType)number
+            : throw new FormatException($"Unknown claim type '{value}' in a fact payload.");
 
     // Exactly three escapes exist, and only a backslash, a newline and a carriage return are ever
     // escaped - which is what keeps the encoding stable enough to hash.

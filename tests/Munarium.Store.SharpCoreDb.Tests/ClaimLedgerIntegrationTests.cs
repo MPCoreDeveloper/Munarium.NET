@@ -87,7 +87,7 @@ public class ClaimLedgerIntegrationTests
 
     private static RecordClaimCommand Command(string vendorId, string statement) => new()
     {
-        Stream = "claims/eu",
+        VersionId = "claims/eu",
         ClaimId = $"claim-{vendorId}",
         Shape = "vendor",
         Body = $$"""{"vendor_id":"{{vendorId}}","status":"approved"}""",

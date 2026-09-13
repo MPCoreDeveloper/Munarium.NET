@@ -49,7 +49,7 @@ public class ShapeGateTests
 
     private static RecordClaimCommand Claim(string body) => new()
     {
-        Stream = "claims/1",
+        VersionId = "claims/1",
         ClaimId = "claim-1",
         Shape = VendorShape.Name,
         Body = body,

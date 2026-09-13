@@ -1,5 +1,6 @@
 namespace Munarium.Server.Tests;
 
+using Grpc.Core;
 using Grpc.Net.Client;
 using Munarium.Wire;
 using Munarium.Wire.Generated;
@@ -33,17 +34,21 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
         {
             var outcome = await client.ProposeClaimAsync(new ProposeClaimRequest
             {
-                Stream = "grpc-claims",
+                VersionId = "grpc-claims",
                 Body = Proposal("grpc-claim-1", """{"vendor_id":"g-1","status":"approved"}"""),
             });
 
             Assert.Equal(ClaimStatus.Accepted, outcome.Data.Status);
+            Assert.Equal(ClaimType.Fact, outcome.Data.ClaimType);
             Assert.Equal("vendor@1|vendor_id=g-1", outcome.Data.Lineage);
 
-            var slice = await client.SliceFactsAsync(new SliceFactsRequest { AsOf = 0 });
+            var slice = await client.SliceFactsAsync(
+                new SliceFactsRequest { AsOf = 0, VersionId = "grpc-claims" });
+
             var fact = Assert.Single(slice.Data.Facts.Where(f => f.Lineage == "vendor@1|vendor_id=g-1"));
 
             Assert.Equal(ClaimStatus.Accepted, fact.Status);
+            Assert.Equal("grpc-claims", fact.VersionId);
             Assert.NotEmpty(slice.Data.Digest);
         });
 
@@ -53,7 +58,7 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
         {
             var outcome = await client.ProposeClaimAsync(new ProposeClaimRequest
             {
-                Stream = "grpc-disputed",
+                VersionId = "grpc-disputed",
                 Body = Proposal("grpc-claim-2", """{"vendor_id":"g-2"}"""),
             });
 
@@ -62,6 +67,69 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
             Assert.Equal("shape", outcome.Data.Gate);
             Assert.Equal(1, outcome.Data.Head);
         });
+
+    [Fact]
+    public async Task AVersionsLineageTravelsOverGrpc() =>
+        await WithClient(async client =>
+        {
+            await client.CreateVersionAsync(new CreateVersionRequest
+            {
+                Body = new VersionRequest { VersionId = "grpc-lineage-1", AsOfDate = "2026-08-01", Actor = "tester" },
+            });
+
+            await client.CreateVersionAsync(new CreateVersionRequest
+            {
+                Body = new VersionRequest
+                {
+                    VersionId = "grpc-lineage-2",
+                    ParentVersionId = "grpc-lineage-1",
+                    Actor = "tester",
+                },
+            });
+
+            var lineage = await client.GetLineageAsync(new GetLineageRequest { VersionId = "grpc-lineage-2" });
+
+            Assert.Equal(
+                ["grpc-lineage-1", "grpc-lineage-2"],
+                lineage.Data.Versions.Select(version => version.VersionId));
+            Assert.Equal("2026-08-01", lineage.Data.Versions[0].AsOfDate);
+        });
+
+    [Fact]
+    public async Task AnUnknownVersionIsNotFoundOverGrpc() =>
+        await WithClient(async client =>
+        {
+            var failure = await Assert.ThrowsAsync<RpcException>(
+                () => client.GetLineageAsync(new GetLineageRequest { VersionId = "grpc-no-such-version" }));
+
+            Assert.Equal(StatusCode.NotFound, failure.StatusCode);
+        });
+
+    [Fact]
+    public async Task TheSameQuestionOverBothTransportsComposesTheSameContext()
+    {
+        await WithClient(async client =>
+        {
+            await client.ProposeClaimAsync(new ProposeClaimRequest
+            {
+                VersionId = "grpc-context",
+                Body = Proposal("grpc-context-1", """{"vendor_id":"g-context","status":"approved"}"""),
+            });
+
+            var overGrpc = await client.ComposeContextAsync(new ComposeContextRequest
+            {
+                Body = new ContextRequest { VersionId = "grpc-context" },
+            });
+
+            var overJson = await ComposeOverJsonAsync("grpc-context");
+
+            // One specification, one implementation, two encodings: the composed text, and the hash that
+            // stands for it, cannot differ between transports.
+            Assert.Equal(overJson.Text, overGrpc.Data.Text);
+            Assert.Equal(overJson.ContentHash, overGrpc.Data.ContentHash);
+            Assert.Equal(overJson.EstimatedTokens, overGrpc.Data.EstimatedTokens);
+        });
+    }
 
     [Fact]
     public async Task TheShapesTravelOverGrpcAsTheyDoOverJson() =>
@@ -89,11 +157,27 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
     private static ClaimProposal Proposal(string claimId, string body) => new()
     {
         ClaimId = claimId,
+        ClaimType = ClaimType.Fact,
         Shape = "vendor",
         Body = body,
         Statement = "the supplier is north",
         Actor = "tester",
     };
+
+    /// <summary>The same question asked over the other transport, for the conformance comparison.</summary>
+    private async Task<WireComposedContext> ComposeOverJsonAsync(string version)
+    {
+        using var http = _factory.CreateClient();
+
+        var response = await http.PostAsJsonAsync(
+            "/v1/context",
+            new WireContextRequest(version, string.Empty, 0, string.Empty, 0, 0),
+            WireJson.Default.WireContextRequest);
+
+        response.EnsureSuccessStatusCode();
+
+        return (await response.Content.ReadFromJsonAsync(WireJson.Default.WireComposedContext))!;
+    }
 
     private async Task WithClient(Func<MunariumServiceClient, Task> body)
     {

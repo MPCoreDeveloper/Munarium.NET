@@ -94,7 +94,7 @@ return 0;
 
 static RecordClaimCommand Claim(string vendorId) => new()
 {
-    Stream = "aot/shape",
+    VersionId = "aot/shape",
     ClaimId = $"claim-{vendorId}",
     Shape = "vendor",
     Body = $$"""{"vendor_id":"{{vendorId}}"}""",

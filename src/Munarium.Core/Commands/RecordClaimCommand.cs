@@ -1,5 +1,6 @@
 namespace Munarium.Commands;
 
+using Munarium.Facts;
 using SharpDispatch;
 
 /// <summary>
@@ -12,11 +13,24 @@ using SharpDispatch;
 /// </remarks>
 public sealed record RecordClaimCommand : ICommand
 {
-    /// <summary>Gets the stream the claim belongs to.</summary>
-    public required string Stream { get; init; }
+    /// <summary>Gets the version the claim belongs to.</summary>
+    /// <remarks>
+    /// A version is written to the stream of its own name, which is what makes a memory version and an
+    /// append-only stream the same thing rather than two that have to be kept in step.
+    /// </remarks>
+    public required string VersionId { get; init; }
 
-    /// <summary>Gets the claim identifier, unique within the stream.</summary>
+    /// <summary>Gets the claim identifier, unique within the version.</summary>
     public required string ClaimId { get; init; }
+
+    /// <summary>
+    /// Gets what the claim does to whatever the ledger already holds on its lineage.
+    /// </summary>
+    /// <remarks>
+    /// A correction and a silent overwrite look identical to a ledger that is not told which one this is,
+    /// which is why the type travels with the claim.
+    /// </remarks>
+    public ClaimType ClaimType { get; init; } = ClaimType.Unspecified;
 
     /// <summary>Gets the name of the shape this claim is made under.</summary>
     /// <remarks>

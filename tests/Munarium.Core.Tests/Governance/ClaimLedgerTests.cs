@@ -106,7 +106,7 @@ public class ClaimLedgerTests
 
     private static RecordClaimCommand Claim(string statement) => new()
     {
-        Stream = "claims/1",
+        VersionId = "claims/1",
         ClaimId = "claim-1",
         Shape = VendorShape.Name,
         Body = VendorShape.Body("north"),

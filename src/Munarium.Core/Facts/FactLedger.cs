@@ -18,12 +18,25 @@ public sealed class FactLedger(IStorageBackend storage)
     private readonly IStorageBackend _storage = storage ?? throw new ArgumentNullException(nameof(storage));
 
     /// <summary>
-    /// Reads the facts that were current at a pin, resolving supersession by lineage.
+    /// Reads the facts that were current at a pin, across every version.
     /// </summary>
     /// <param name="pin">The global position to read as of.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The slice, with a digest over exactly the facts it contains.</returns>
-    public async ValueTask<FactSlice> SliceAsync(SequenceNumber pin, CancellationToken cancellationToken = default)
+    public ValueTask<FactSlice> SliceAsync(SequenceNumber pin, CancellationToken cancellationToken = default) =>
+        SliceAsync(pin, string.Empty, cancellationToken);
+
+    /// <summary>
+    /// Reads the facts that were current at a pin, for one version or for all of them.
+    /// </summary>
+    /// <param name="pin">The global position to read as of.</param>
+    /// <param name="versionId">The version to read, or an empty string for every version.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The slice, with a digest over exactly the facts it contains.</returns>
+    public async ValueTask<FactSlice> SliceAsync(
+        SequenceNumber pin,
+        string versionId,
+        CancellationToken cancellationToken = default)
     {
         var entries = await _storage.ReadGlobalAsync(pin, cancellationToken).ConfigureAwait(false);
 
@@ -38,6 +51,12 @@ public sealed class FactLedger(IStorageBackend storage)
             }
 
             var fact = FactCodec.Decode(entry.Event.Payload.Span);
+
+            if (versionId.Length > 0 && !string.Equals(fact.VersionId, versionId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
             current[fact.Lineage] = new SlicedFact(fact, fact.Verdict(), entry.GlobalSequence);
         }
 

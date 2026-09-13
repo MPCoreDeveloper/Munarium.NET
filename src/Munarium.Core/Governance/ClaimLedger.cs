@@ -82,7 +82,7 @@ public sealed class ClaimLedger
         ArgumentNullException.ThrowIfNull(command);
 
         var verdict = await JudgeAsync(command, cancellationToken).ConfigureAwait(false);
-        var stream = StreamId.From(command.Stream);
+        var stream = StreamId.From(command.VersionId);
         var entry = EntryFor(command, verdict, _shapes.LineageOf(command.Shape, command.Body));
         var expected = await _storage.HeadAsync(stream, cancellationToken).ConfigureAwait(false);
         var lastExpected = expected;
@@ -123,7 +123,10 @@ public sealed class ClaimLedger
         var fact = new FactRecord
         {
             ClaimId = command.ClaimId,
+            VersionId = command.VersionId,
+            ClaimType = command.ClaimType,
             Lineage = lineage,
+            Body = command.Body,
             Statement = command.Statement,
             Actor = command.Actor,
             Gate = gate,

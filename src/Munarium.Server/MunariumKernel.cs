@@ -1,6 +1,7 @@
 namespace Munarium.Server;
 
 using Microsoft.Extensions.DependencyInjection;
+using Munarium.Context;
 using Munarium.Facts;
 using Munarium.Governance;
 using Munarium.Ledger;
@@ -73,8 +74,10 @@ public sealed class MunariumKernel : IAsyncDisposable
         var embedder = new DeterministicEmbeddingProvider(EmbeddingDimensions);
         var retriever = new SharpCoreDbRetriever(EmbeddingDimensions, "munarium@1", new SequenceNumber(0));
 
-        var claims = new ClaimLedger(storage, shapes, [new ShapeGate(shapes)]);
+        // The conflict gate reads the ledger, so it is built over the read model rather than over the
+        // command being judged: that is the whole point of judging a write against what is already there.
         var facts = new FactLedger(storage);
+        var claims = new ClaimLedger(storage, shapes, [new ShapeGate(shapes), new LedgerConflictGate(shapes, facts)]);
 
         var operations = new MunariumOperations(
             storage,
@@ -83,6 +86,7 @@ public sealed class MunariumKernel : IAsyncDisposable
             shapes,
             retriever,
             embedder,
+            new Composer(facts),
             DeterministicEmbeddingProvider.ModelName);
 
         return new MunariumKernel(provider, database, retriever, embedder, operations, shapes);

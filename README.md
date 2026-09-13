@@ -66,9 +66,11 @@ Munarium.NET is dogfooded end to end on the author's own .NET 11 libraries:
 | Piece | What it does |
 | --- | --- |
 | **Ledger** | `IStorageBackend`: a head read, an optimistic-concurrency append, a stream read and a global read. |
-| **Governance** | The write path judges before it writes. A gate returns `Permitted` or `Blocked`, and a blocked claim is recorded as *disputed* rather than dropped — a refusal that cannot be recorded is not governance. |
+| **Governance** | The write path judges before it writes. A gate returns `Permitted` or `Blocked`, and a blocked claim is recorded as *disputed* rather than dropped — a refusal that cannot be recorded is not governance. Two gates ship: `shape` (a body that does not satisfy its shape) and `ledger-conflict` (a claim that would overwrite what its lineage already holds without saying so). A claim says what it is doing through `claim_type`: an *update* or a *correction* supersedes on purpose, an unnamed claim does not. |
 | **Shapes** | Versioned, declarative shapes: a JSON Schema for the fact body, and the identity fields that decide supersession. A schema violation is a verdict, so the claim lands in the ledger with its reason attached. Validation is a documented, deterministic subset of JSON Schema implemented in the kernel — no parser library and no reflection, so the errors are stable enough to hash. |
-| **Facts and pins** | Canonical fact encoding, supersession along a lineage, and an `as_of` pin that rebuilds the same slice — and the same SHA-256 digest — every time. |
+| **Facts and pins** | Canonical fact encoding, supersession along a lineage, and an `as_of` pin that rebuilds the same slice — and the same SHA-256 digest — every time. A fact carries the version it was written to and the body it was claimed with, so a slice can be read back into the claims it came from and one version can be read out of the whole. |
+| **Versions and lineage** | A version is an ordinary claim under the `version` shape, so it is judged by the same gates and rebuilt from the same slice as everything else — and its identity is immutable by construction, because claiming it twice is a ledger conflict. `GetLineage` walks parent links root-first, and `as_of_date` resolves to a pin through the version's own metadata. |
+| **Context** | `ComposeContext` composes what a model would be given: the accepted facts of one version or shape, within a token budget, with refused claims listed separately under *Disputed*. It is a pure function of the pin, so the same pin composes the same text and the same `content_hash` — which is what makes the hash a cache key rather than a guess. |
 | **Retrieval** | A retrieval seam that returns a `ProvenanceEnvelope` rather than bare similarity, and reciprocal rank fusion for combining a vector leg with a lexical one. |
 | **Providers** | The model-provider seam, and a deterministic in-process embedding provider for tests and smoke runs. |
 | **Wire** | One OpenAPI specification as the contract, one transport-agnostic operation surface behind it, and both surfaces served from it: JSON/HTTP by `Munarium.Server`, and gRPC/protobuf by the service base SharpPortico generates from that same specification - so the two cannot drift on names, shapes or enum values. |
@@ -97,9 +99,34 @@ Each of these is an upstream finding with the evidence that produced it, not a p
   before parsing - its bundled parser (`Microsoft.OpenApi` 1.6.x) refuses 3.1 outright - and reports
   `SP1002` to say so. This contract stays at 3.0.3 anyway: it needs nothing from 3.1, and 3.0.3 is what
   every tool reads.
-- **A stream has to be one URL path segment.** Stream names travel in a path
-  (`/v1/streams/{stream}/claims`), so a name containing `/` cannot be addressed. Either stream names
-  stay segment-safe or the parameter moves to a query string.
+- **A version has to be one URL path segment.** Version identities travel in a path
+  (`/v1/versions/{version_id}/claims`), so an identity containing `/` cannot be addressed. Either
+  identities stay segment-safe or the parameter moves to a query string.
+
+## What is not ported yet
+
+The kernel is finished first, because everything else is a thin adapter over it. What is missing, roughly
+in the order it is planned:
+
+- **The rest of the gate vocabulary.** The original's gates are `anchor-consistency`, `ledger-conflict`,
+  `orphaned-reference`, `meta-leakage`, `lexical-similarity` and the `chronology-*` family. `shape` and
+  `ledger-conflict` are here. The others judge concepts this port does not have yet — anchors,
+  sources and references, promises with deadlines — so they arrive with those rather than before them.
+- **Ingestion and index versions.** `/v1/search` answers with a real provenance envelope, but there is no
+  `/v1/ingests` or `/v1/indexes` yet, so an index is what a host put in it rather than a versioned
+  artefact the ledger knows about. Index version → envelope → ledger watermark is the demonstration that
+  closes this.
+- **Idempotency keys.** The original requires an `idempotency-key` metadata entry on every command RPC and
+  replays the stored result. Here a retry writes a second claim; the `ledger-conflict` gate treats a
+  re-sent claim as a retry only when nothing about it changed, which is an approximation and is written
+  down as one.
+- **Pagination** (`PageRequest`/`PageResponse`), **authentication and tenancy**, **sessions and runbooks**,
+  **anchors, promises, counters and the digest ladder**, and the separate **`matrix/v1` semantic query**
+  surface. The original carries roughly 49 RPCs across 8 services; the kernel's core is what is served
+  here.
+- **Clients for other languages.** The gRPC contract is language-neutral, but this port is .NET-first: the
+  .NET surface is what is built and tested against the contract, and clients for other languages are a
+  later consideration rather than a commitment.
 
 ## Status
 
