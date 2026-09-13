@@ -12,4 +12,12 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
+  <!-- Apache-2.0: the LICENSE and NOTICE travel in every shipped package. NOTICE carries
+       the original Munarium / Ioka LLC attribution and Tyler Jensen's authorship, so the
+       credit ships with the artifacts and not only with the repository. -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\LICENSE" Pack="true" PackagePath="" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)..\NOTICE" Pack="true" PackagePath="" Visible="false" />
+  </ItemGroup>
+
 </Project>

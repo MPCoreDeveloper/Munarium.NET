@@ -1,0 +1,32 @@
+Munarium.NET
+Copyright (c) 2026 MPCoreDeveloper
+
+Munarium.NET is a C# port of Munarium and is a derivative work of it. The original
+work is reproduced in this notice, as the Apache License, Version 2.0 requires.
+
+--------------------------------------------------------------------------
+Munarium
+Copyright (c) 2026 Ioka LLC
+
+Original author:      Tyler Jensen (@tylerje, tyler@tsjensen.com)
+Original repository:  https://github.com/iokaio/munarium
+Licensed under the Apache License, Version 2.0.
+--------------------------------------------------------------------------
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+these files except in compliance with the License. A copy of the License is in
+the LICENSE file beside this notice.
+
+"Munarium" and "Ioka" are trademarks of Ioka LLC. The License grants no right to
+use them beyond what is needed to describe the origin of these files. What is
+and is not permitted is described in the original repository's TRADEMARK.md:
+https://github.com/iokaio/munarium/blob/main/TRADEMARK.md
+
+Full credit to the original work is recorded in CREDITS.md.
+
+Third-party software
+--------------------
+
+The MPCoreDeveloper .NET 11 stack this port builds on - SharpCoreDB, SharpDispatch,
+SharpPortico and Posseth.UlidFactory - is licensed under the MIT License. Each is
+governed by its own license, which takes precedence for that component.

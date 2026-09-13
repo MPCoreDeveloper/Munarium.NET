@@ -2,13 +2,21 @@
 
 **Governed memory and traceable evidence for AI applications — the C# port.**
 
-Munarium.NET is a from-scratch C# implementation of Munarium (originally written in Rust).
-It keeps the same promise — an append-only fact ledger with governance in the write path,
-hybrid retrieval that carries a provenance envelope on every answer, and bring-your-own-key
-model providers — and re-homes it on the .NET 11 / C# 15 toolchain.
+Munarium.NET re-implements **Munarium** on the .NET 11 / C# 15 toolchain: an append-only fact
+ledger with governance in the write path, hybrid retrieval that carries a provenance envelope on
+every answer, and bring-your-own-key model providers.
 
-This is an independent port. It does not track the upstream Rust repository and shares no
-build tooling with it.
+## Credits and attribution
+
+Munarium — its design, architecture, the Munarium Memory Protocol (MMP), the invariants, the
+conformance suites and the documentation — is the original work of **Tyler Jensen**
+([@tylerje](https://github.com/tylerje), tyler@tsjensen.com), published by **Ioka LLC** at
+**[github.com/iokaio/munarium](https://github.com/iokaio/munarium)** under the Apache License 2.0.
+
+Munarium.NET is an independent C# port of that work and gratefully builds on Tyler's original
+design. It is not affiliated with, endorsed by, or maintained by Ioka LLC, and it does not track
+the upstream repository. Full credit is recorded permanently in [CREDITS.md](CREDITS.md) and
+[NOTICE](NOTICE); "Munarium" and "Ioka" are trademarks of Ioka LLC.
 
 ## Toolchain
 
@@ -31,7 +39,10 @@ Munarium.NET/
 │   └── Munarium.Core.Tests/  unit tests (xunit.v3)
 ├── Directory.Build.props     shared build settings
 ├── Directory.Packages.props  central package management
-└── global.json               pinned .NET SDK
+├── global.json               pinned .NET SDK
+├── LICENSE                   Apache-2.0
+├── NOTICE                    attribution (original Munarium / Ioka LLC)
+└── CREDITS.md                full credit to the original work
 ```
 
 ## Build and test
