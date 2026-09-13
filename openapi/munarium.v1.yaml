@@ -1,0 +1,415 @@
+# The Munarium wire contract, v1.
+#
+# This file is the source of truth for BOTH transports. The JSON/HTTP surface implements it
+# directly; the gRPC/protobuf surface is generated from it by SharpPortico, so the two cannot
+# drift on names, shapes or enum values. Both are thin adapters over one operation surface
+# (Munarium.Wire.MunariumOperations).
+#
+# Discipline: additive only within v1 - new fields, new operations, new enum values after
+# "unspecified". A breaking change becomes v2 and is served side by side.
+#
+# Declared as OpenAPI 3.0.3, not 3.1: SharpPortico 0.3.0-rc.1 (over Microsoft.OpenApi 1.6.x)
+# rejects a 3.1 document outright with "OpenAPI specification version '3.1.0' is not supported",
+# even though the project documents 3.0/3.1 support. Nothing in this contract needs a 3.1-only
+# keyword, so it stays at 3.0 until the generator accepts 3.1.
+#
+# Naming rules this contract has to respect, learned the hard way against SharpPortico 0.3.0-rc.1:
+#   * a schema must not share a name with an operation's derived messages, because the generator
+#     emits both "{OperationId}Request"/"Response" and the schema - and the generated file then
+#     defines the type twice. That is why the search body is SearchQuery/SearchResult while the
+#     operation is Search (whose RPC messages are generated as SearchRequest/SearchResponse).
+#   * a schema must not have a property whose PascalCase name equals the schema name, because the
+#     generated property and its enclosing class would collide (CS0542). That is why the head of a
+#     stream is the StreamHead schema, not Head.
+openapi: 3.0.3
+info:
+  title: Munarium
+  version: "1.0.0"
+  description: |
+    Munarium is a fact ledger with governance in the write path: a claim is judged before it is
+    written, and a refused claim is recorded as disputed rather than dropped. Reads are pinned
+    with as_of, so what a pin saw stays what it saw, and retrieval answers carry the provenance
+    that makes them checkable later rather than merely believable.
+servers:
+  - url: /
+tags:
+  - name: kernel
+    description: Liveness and identity.
+  - name: ledger
+    description: The append-only fact ledger.
+  - name: retrieval
+    description: Evidence retrieval with provenance.
+  - name: shapes
+    description: What a claim is allowed to look like.
+
+paths:
+  /healthz:
+    get:
+      operationId: GetHealth
+      tags: [kernel]
+      summary: Liveness.
+      responses:
+        "200":
+          description: The server is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /v1/streams/{stream}/head:
+    get:
+      operationId: GetHead
+      tags: [ledger]
+      summary: The current head of a stream.
+      parameters:
+        - name: stream
+          in: path
+          required: true
+          description: The stream to read.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The head of the stream.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamHead"
+
+  /v1/streams/{stream}/claims:
+    post:
+      operationId: ProposeClaim
+      tags: [ledger]
+      summary: Propose a claim, which governance then judges.
+      description: |
+        The model proposes and the mesh disposes: the claim runs the gates before it is written.
+        A permitted claim is recorded as accepted, a refused one as disputed - the refusal is
+        evidence in the ledger, not a lost write.
+      parameters:
+        - name: stream
+          in: path
+          required: true
+          description: The stream to write to.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimProposal"
+      responses:
+        "200":
+          description: The claim as recorded, with the verdict it was recorded under.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimOutcome"
+        "409":
+          description: Every retry lost to a moving head. Retryable, never data loss.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/facts:
+    get:
+      operationId: SliceFacts
+      tags: [ledger]
+      summary: The facts that were current at a pin.
+      description: |
+        The slice is rebuilt from the ledger at the pin, never served from a cache, so the same
+        pin rebuilds the same facts and therefore the same digest. Facts come back ordered by
+        lineage. This reads the whole ledger at a pin rather than a single stream, because a pin
+        is a global position and that is what the digest is taken over.
+      parameters:
+        - name: as_of
+          in: query
+          required: false
+          description: The global position to read as of. 0 means the head.
+          schema:
+            type: integer
+            format: int64
+            default: 0
+      responses:
+        "200":
+          description: The slice and its digest.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FactSlice"
+
+  /v1/search:
+    post:
+      operationId: Search
+      tags: [retrieval]
+      summary: Retrieve evidence for a question.
+      description: |
+        Returns evidence rather than bare similarity: every answer carries the provenance
+        envelope naming which sources answered, which bytes they held when indexed, and which
+        ledger position the index reflects.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchQuery"
+      responses:
+        "200":
+          description: The retrieved chunks and the envelope that seals them.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResult"
+
+  /v1/shapes:
+    get:
+      operationId: ListShapes
+      tags: [shapes]
+      summary: The shapes this deployment understands.
+      responses:
+        "200":
+          description: The registered shapes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShapeList"
+
+components:
+  schemas:
+    Problem:
+      type: object
+      description: A machine-actionable failure, mirroring RFC 9457 problem+json.
+      required: [type, detail]
+      properties:
+        type:
+          type: string
+          description: A stable problem identifier, for example "https://munarium.dev/problems/contended-write".
+        detail:
+          type: string
+        status:
+          type: integer
+          format: int32
+        expected_head:
+          type: integer
+          format: int64
+        actual_head:
+          type: integer
+          format: int64
+
+    Health:
+      type: object
+      required: [status, contract]
+      properties:
+        status:
+          type: string
+          description: Always "ok" - a health check that answers at all is healthy.
+        contract:
+          type: string
+          description: The wire contract version this server speaks, "mmp.v1".
+
+    StreamHead:
+      type: object
+      required: [stream, head]
+      properties:
+        stream:
+          type: string
+        head:
+          type: integer
+          format: int64
+          description: The last sequence number in the stream. 0 means the stream is empty.
+
+    ClaimStatus:
+      type: string
+      description: |
+        What the ledger recorded. "disputed" is a recorded outcome, not an error: the claim is in
+        the ledger with the reason it was refused.
+      enum:
+        - unspecified
+        - accepted
+        - disputed
+        - contended
+
+    ClaimProposal:
+      type: object
+      required: [claim_id, shape, body, statement, actor]
+      properties:
+        claim_id:
+          type: string
+          description: The claim's identity, unique within the stream.
+        shape:
+          type: string
+          description: |
+            The shape this claim is made under. The shape supplies both the schema the body is
+            validated against and the identity fields that decide supersession.
+        body:
+          type: string
+          description: The structured fact body, JSON-encoded and validated against the shape.
+        statement:
+          type: string
+          description: The claim in the actor's words.
+        actor:
+          type: string
+          description: Who is asserting it.
+
+    ClaimOutcome:
+      type: object
+      required: [stream, claim_id, lineage, status, head]
+      properties:
+        stream:
+          type: string
+        claim_id:
+          type: string
+        lineage:
+          type: string
+          description: |
+            Derived by the kernel from the shape's identity fields over the body, so a caller
+            cannot get supersession wrong.
+        status:
+          $ref: "#/components/schemas/ClaimStatus"
+        gate:
+          type: string
+          description: The gate that refused the claim. Empty when it was accepted.
+        reason:
+          type: string
+        head:
+          type: integer
+          format: int64
+          description: The stream head after the write.
+
+    Fact:
+      type: object
+      required: [claim_id, lineage, statement, actor, status, sequence]
+      properties:
+        claim_id:
+          type: string
+        lineage:
+          type: string
+        statement:
+          type: string
+        actor:
+          type: string
+        status:
+          $ref: "#/components/schemas/ClaimStatus"
+        gate:
+          type: string
+        reason:
+          type: string
+        sequence:
+          type: integer
+          format: int64
+          description: The global position that made this fact the current one.
+
+    FactSlice:
+      type: object
+      required: [as_of, digest, facts]
+      properties:
+        as_of:
+          type: integer
+          format: int64
+          description: The pin this slice was taken at.
+        digest:
+          type: string
+          description: SHA-256 over exactly the facts above, lowercase hex. A later event cannot change it.
+        facts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Fact"
+
+    SourceReference:
+      type: object
+      required: [chunk_id, source_id, source_path, content_hash, chunk_ordinal]
+      properties:
+        chunk_id:
+          type: string
+        source_id:
+          type: string
+        source_path:
+          type: string
+          description: The logical path the document was stored under - which document answered.
+        content_hash:
+          type: string
+          description: The document's content hash, which proves which bytes it held when indexed.
+        chunk_ordinal:
+          type: integer
+          format: int32
+
+    ProvenanceEnvelope:
+      type: object
+      required: [index_version, ledger_watermark, sources]
+      properties:
+        index_version:
+          type: string
+          description: The immutable index version the answer came from.
+        ledger_watermark:
+          type: integer
+          format: int64
+          description: The ledger position the index reflects.
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceReference"
+
+    RetrievedChunk:
+      type: object
+      required: [source, score, text]
+      properties:
+        source:
+          $ref: "#/components/schemas/SourceReference"
+        score:
+          type: number
+          format: double
+        text:
+          type: string
+
+    SearchQuery:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: The question, which drives the lexical leg.
+        top_k:
+          type: integer
+          format: int32
+          default: 10
+
+    SearchResult:
+      type: object
+      required: [chunks, envelope]
+      properties:
+        chunks:
+          type: array
+          items:
+            $ref: "#/components/schemas/RetrievedChunk"
+        envelope:
+          $ref: "#/components/schemas/ProvenanceEnvelope"
+
+    Shape:
+      type: object
+      required: [name, version, identity, schema]
+      properties:
+        name:
+          type: string
+        version:
+          type: integer
+          format: int32
+        identity:
+          type: array
+          description: The body keys that identify a claim lineage.
+          items:
+            type: string
+        schema:
+          type: string
+          description: The JSON Schema a fact body must satisfy, JSON-encoded.
+
+    ShapeList:
+      type: object
+      required: [shapes]
+      properties:
+        shapes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Shape"
+
+

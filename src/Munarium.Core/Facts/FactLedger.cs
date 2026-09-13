@@ -45,6 +45,25 @@ public sealed class FactLedger(IStorageBackend storage)
         return new FactSlice(pin, facts, DigestOf(facts));
     }
 
+    /// <summary>
+    /// The current global position: what a caller pins at to read the present state.
+    /// </summary>
+    /// <remarks>
+    /// A stream head is not a pin - a pin is a position in the global feed - so a caller that wants
+    /// "everything as of now" has to be able to ask for this. Nothing is cached, so this is a read of
+    /// the feed, exactly like the slice it is used for.
+    /// </remarks>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The last global sequence written, or zero when nothing has been.</returns>
+    public async ValueTask<SequenceNumber> CurrentPinAsync(CancellationToken cancellationToken = default)
+    {
+        var entries = await _storage
+            .ReadGlobalAsync(new SequenceNumber(long.MaxValue), cancellationToken)
+            .ConfigureAwait(false);
+
+        return entries.Count == 0 ? SequenceNumber.Zero : entries[^1].GlobalSequence;
+    }
+
     private static string DigestOf(IReadOnlyList<SlicedFact> facts)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);

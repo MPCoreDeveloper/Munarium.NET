@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>Munarium.Server</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <Description>The Munarium server: the JSON/HTTP surface of the wire contract, over one operation surface shared with the gRPC surface generated from the same specification.</Description>
+    <!--
+      Deliberately NOT PublishAot. Its default backing store is SharpCoreDB's persistent engine, and
+      that engine serializes its tables and metadata with reflection-based System.Text.Json
+      (Database.Load, Database.SaveMetadata, SingleFileTable.FlushCache), which ILC reports as
+      IL2026/IL3050 - so an AOT publish would have to either suppress a real requirement or fail.
+      The kernel, the wire contract and the event-sourcing storage path ARE AOT-clean, and
+      tools/Munarium.AotSmoke proves it on all three CI platforms; making this server publishable
+      needs an AOT-safe store (a JsonSerializerContext inside SharpCoreDB, or an event-sourcing-only
+      backing).
+    -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!--
+      Endpoint delegates are compiled by the source generator instead of being bound by reflection, so
+      the HTTP surface stays AOT-ready even though the storage engine is not (see above). Without it,
+      MapGet/MapPost with a Delegate is an IL2026/IL3050 error under IsAotCompatible - which is also
+      what PublishAot used to imply.
+    -->
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
+  </PropertyGroup>
+
+  <!-- The shapes ship beside the binary: a deployment reads them from disk, and the server's own
+       default configuration looks next to itself. -->
+  <ItemGroup>
+    <Content Include="..\..\shapes\**\*.json"
+             Link="shapes\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Munarium.Core\Munarium.Core.csproj" />
+    <ProjectReference Include="..\Munarium.Providers\Munarium.Providers.csproj" />
+    <ProjectReference Include="..\Munarium.Store.SharpCoreDb\Munarium.Store.SharpCoreDb.csproj" />
+    <ProjectReference Include="..\Munarium.Wire\Munarium.Wire.csproj" />
+  </ItemGroup>
+
+</Project>

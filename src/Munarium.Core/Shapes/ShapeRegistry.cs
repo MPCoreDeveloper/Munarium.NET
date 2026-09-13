@@ -13,6 +13,7 @@ using System.Diagnostics.CodeAnalysis;
 public sealed class ShapeRegistry
 {
     private readonly Dictionary<string, FactShape> _shapes = [];
+    private readonly IReadOnlyList<FactShape> _ordered;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ShapeRegistry"/> class.
@@ -32,10 +33,16 @@ public sealed class ShapeRegistry
                 throw new ArgumentException($"The shape '{shape.Name}' is registered twice.", nameof(shapes));
             }
         }
+
+        // Ordered once, here: a list of shapes has to be deterministic to be usable as an answer.
+        _ordered = [.. _shapes.Values.OrderBy(shape => shape.Name, StringComparer.Ordinal)];
     }
 
     /// <summary>Gets the number of registered shapes.</summary>
     public int Count => _shapes.Count;
+
+    /// <summary>Gets the registered shapes, ordered by name.</summary>
+    public IReadOnlyList<FactShape> Shapes => _ordered;
 
     /// <summary>
     /// Resolves a shape by name.

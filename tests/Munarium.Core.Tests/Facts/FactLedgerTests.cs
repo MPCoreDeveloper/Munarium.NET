@@ -94,6 +94,26 @@ public class FactLedgerTests
         Assert.True(sliced.Fact.IsDisputed);
     }
 
+    [Fact]
+    public async Task TheCurrentPinIsTheLastGlobalPositionWritten()
+    {
+        var storage = new FakeStorageBackend();
+        var claims = new ClaimLedger(storage, VendorShape.Registry(), [new AlwaysPermitted()]);
+        var facts = new FactLedger(storage);
+
+        Assert.Equal(0, (await facts.CurrentPinAsync()).Value);
+
+        await claims.RecordAsync(Claim("north", "v1"));
+        await claims.RecordAsync(Claim("south", "s1"));
+
+        var pin = await facts.CurrentPinAsync();
+
+        // A stream head is not a pin: the pin is the position in the global feed, which is what a
+        // caller asks for when it wants the present state.
+        Assert.Equal(2, pin.Value);
+        Assert.Equal(2, (await facts.SliceAsync(pin)).Facts.Count);
+    }
+
     private static async Task<string> DigestOfRebuildAsync()
     {
         var storage = new FakeStorageBackend();

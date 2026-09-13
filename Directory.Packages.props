@@ -17,6 +17,7 @@
   <ItemGroup Label="Testing">
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.11.2" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.12" />
   </ItemGroup>
 
   <ItemGroup Label="Hosting">
@@ -38,7 +39,10 @@
     <PackageVersion Include="SharpDispatch" Version="1.1.0-RC.1" />
     <PackageVersion Include="Posseth.UlidFactory" Version="2.1.0-RC.1" />
     <PackageVersion Include="SharpPortico.Runtime" Version="0.3.0-RC.1" />
-    <PackageVersion Include="SharpPortico.Abstractions" Version="0.3.0-RC.1" />
+    <PackageVersion Include="SharpPortico.SourceGenerator" Version="0.3.0-RC.1" />
+    <PackageVersion Include="Google.Protobuf" Version="3.36.0" />
+    <PackageVersion Include="Grpc.Core.Api" Version="2.66.0" />
+    <PackageVersion Include="Grpc.Net.Client" Version="2.66.0" />
   </ItemGroup>
 
 </Project>

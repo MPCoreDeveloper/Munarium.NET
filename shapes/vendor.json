@@ -1,0 +1,15 @@
+{
+  "name": "vendor",
+  "version": 1,
+  "identity": ["vendor_id"],
+  "schema": {
+    "type": "object",
+    "required": ["vendor_id", "status"],
+    "additionalProperties": false,
+    "properties": {
+      "vendor_id": { "type": "string", "minLength": 1 },
+      "status": { "type": "string", "enum": ["approved", "pending", "sanctioned"] },
+      "notes": { "type": "string", "maxLength": 2000 }
+    }
+  }
+}

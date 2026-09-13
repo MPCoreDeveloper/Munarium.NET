@@ -87,8 +87,17 @@ public static class FactCodec
         };
     }
 
-    private static void AppendField(StringBuilder builder, string name, string value) =>
+    // A null field would encode as the text "null" and silently change a digest, so a fact that
+    // carries one is refused where it is produced, with the name of the field.
+    private static void AppendField(StringBuilder builder, string name, string value)
+    {
+        if (value is null)
+        {
+            throw new ArgumentException($"A fact field cannot be null: '{name}'.", nameof(value));
+        }
+
         builder.Append(name).Append(FieldSeparator).Append(Escape(value)).Append(LineSeparator);
+    }
 
     private static string Required(Dictionary<string, string> fields, string name) =>
         fields.TryGetValue(name, out var value)

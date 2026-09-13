@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Munarium.Wire</RootNamespace>
+    <PackageId>Munarium.Wire</PackageId>
+    <Description>Munarium's wire contract: the OpenAPI specification is the single source of truth for both the JSON/HTTP surface and the gRPC/protobuf surface generated from it, and both are adapters over one transport-agnostic operation surface.</Description>
+    <PackageTags>munarium;wire;grpc;protobuf;openapi;sharpPortico;mmp</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Munarium.Core\Munarium.Core.csproj" />
+  </ItemGroup>
+
+  <!--
+    One specification, two transports. The gRPC/protobuf surface is generated from
+    openapi/munarium.v1.yaml by SharpPortico, so the JSON and protobuf surfaces cannot drift on
+    operation names, message shapes or enum values. The service name and namespace travel as
+    AdditionalFiles metadata, which is what keeps this consumable from the NuGet package alone
+    (the generator's attribute lives in a package that is not published).
+  -->
+  <ItemGroup>
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)..\..\openapi\munarium.v1.yaml"
+                     SharpporticoServiceName="MunariumService"
+                     SharpporticoNamespace="Munarium.Wire.Generated" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpPortico.SourceGenerator"
+                      GeneratePathProperty="true"
+                      ExcludeAssets="compile"
+                      PrivateAssets="all" />
+    <PackageReference Include="Google.Protobuf" />
+    <PackageReference Include="Grpc.Core.Api" />
+    <PackageReference Include="Grpc.Net.Client" />
+  </ItemGroup>
+
+  <!--
+    The generator assembly ships in lib/netstandard2.0, not in analyzers/dotnet/cs, so NuGet never
+    hands it to the compiler as an analyzer - not even with OutputItemType="Analyzer". Its OpenAPI
+    dependencies (Microsoft.OpenApi, SharpYaml) *do* ship under analyzers/ and are added
+    automatically, which is what lets the generator resolve them at generator-run time.
+  -->
+  <ItemGroup>
+    <Analyzer Include="$(PkgSharpPortico_SourceGenerator)\lib\netstandard2.0\SharpPortico.SourceGenerator.dll" />
+  </ItemGroup>
+
+</Project>
