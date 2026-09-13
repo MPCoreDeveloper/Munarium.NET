@@ -38,5 +38,17 @@ public interface IStorageBackend
         SequenceNumber expectedHead,
         IReadOnlyList<LedgerEvent> events,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reads a stream's events after <paramref name="after"/> (exclusive), in order.
+    /// </summary>
+    /// <param name="stream">The stream to read.</param>
+    /// <param name="after">The sequence to read after; use <see cref="SequenceNumber.Zero"/> for all.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The events in stream order.</returns>
+    ValueTask<IReadOnlyList<LedgerEvent>> ReadAsync(
+        StreamId stream,
+        SequenceNumber after,
+        CancellationToken cancellationToken = default);
 }
 

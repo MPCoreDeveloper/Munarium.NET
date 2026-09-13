@@ -8,4 +8,9 @@
     <PackageTags>munarium;governed-memory;ledger;provenance;rag;ai</PackageTags>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- The command path is part of the kernel: governance runs on it, so the dispatcher lives here. -->
+    <PackageReference Include="SharpDispatch" />
+  </ItemGroup>
+
 </Project>

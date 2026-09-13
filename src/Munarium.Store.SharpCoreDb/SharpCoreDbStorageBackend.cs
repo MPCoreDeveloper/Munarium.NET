@@ -58,4 +58,26 @@ public sealed class SharpCoreDbStorageBackend(IEventStore eventStore) : IStorage
                 new SequenceNumber(result.ExpectedVersion),
                 new SequenceNumber(result.ActualVersion));
     }
+
+    /// <inheritdoc />
+    public async ValueTask<IReadOnlyList<LedgerEvent>> ReadAsync(
+        StreamId stream,
+        SequenceNumber after,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _eventStore
+            .ReadStreamAsync(
+                new EventStreamId(stream.Value),
+                new EventReadRange(after.Value + 1, long.MaxValue),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var events = new LedgerEvent[result.Events.Count];
+        for (var index = 0; index < result.Events.Count; index++)
+        {
+            events[index] = new LedgerEvent(result.Events[index].EventType, result.Events[index].Payload);
+        }
+
+        return events;
+    }
 }
