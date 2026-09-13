@@ -40,15 +40,29 @@ public interface IStorageBackend
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Reads a stream's events after <paramref name="after"/> (exclusive), in order.
+    /// Reads a stream's events after <paramref name="after"/> (exclusive), in stream order.
     /// </summary>
     /// <param name="stream">The stream to read.</param>
     /// <param name="after">The sequence to read after; use <see cref="SequenceNumber.Zero"/> for all.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The events in stream order.</returns>
-    ValueTask<IReadOnlyList<LedgerEvent>> ReadAsync(
+    /// <returns>The entries in stream order, each carrying its stream and global position.</returns>
+    ValueTask<IReadOnlyList<LedgerEntry>> ReadAsync(
         StreamId stream,
         SequenceNumber after,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reads the ledger across every stream in global order, up to and including
+    /// <paramref name="upTo"/>.
+    /// </summary>
+    /// <param name="upTo">
+    /// The <c>as_of</c> pin: the highest global position to include. Use
+    /// <see cref="SequenceNumber.Zero"/> to read the empty ledger.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The entries with a global position at or below the pin, in global order.</returns>
+    ValueTask<IReadOnlyList<LedgerEntry>> ReadGlobalAsync(
+        SequenceNumber upTo,
         CancellationToken cancellationToken = default);
 }
 

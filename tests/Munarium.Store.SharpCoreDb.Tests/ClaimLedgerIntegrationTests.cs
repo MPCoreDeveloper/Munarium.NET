@@ -2,13 +2,15 @@ namespace Munarium.Store.SharpCoreDb.Tests;
 
 using Microsoft.Extensions.DependencyInjection;
 using Munarium.Commands;
+using Munarium.Facts;
 using Munarium.Governance;
 using Munarium.Ledger;
 using SharpCoreDB;
 using SharpCoreDB.EventSourcing;
 
 /// <summary>
-/// End to end: governance on the command path, written to a real SharpCoreDB store and read back.
+/// End to end: governance on the command path, written to a real SharpCoreDB store, read back as a
+/// fact slice at a pin.
 /// </summary>
 public class ClaimLedgerIntegrationTests
 {
@@ -24,24 +26,41 @@ public class ClaimLedgerIntegrationTests
 
         var backend = new SharpCoreDbStorageBackend(new SharpCoreDbEventStore(database));
         var ledger = new ClaimLedger(backend, [new SanctionsGate()]);
+        var facts = new FactLedger(backend);
         var stream = StreamId.From("claims/eu");
 
-        var permitted = await ledger.RecordAsync(Command(stream.Value, "Northern Supplies Ltd is an approved vendor"));
-        var blocked = await ledger.RecordAsync(Command(stream.Value, "Northern Supplies Ltd trades with a sanctioned entity"));
+        var permitted = await ledger.RecordAsync(Command("vendor/north", "Northern Supplies Ltd is an approved vendor"));
+        var blocked = await ledger.RecordAsync(Command("vendor/south", "Northern Supplies Ltd trades with a sanctioned entity"));
 
         Assert.Equal("asserted:1", Describe(permitted));
         Assert.Equal("disputed:sanctions:listed party:2", Describe(blocked));
 
         var written = await backend.ReadAsync(stream, SequenceNumber.Zero);
         Assert.Equal(2, written.Count);
-        Assert.Equal("claim.asserted", written[0].Type);
-        Assert.Equal("claim.disputed", written[1].Type);
+        Assert.Equal(FactCodec.AssertedEventType, written[0].Event.Type);
+        Assert.Equal(FactCodec.DisputedEventType, written[1].Event.Type);
+
+        // Pin on the last write, so the test does not assume where the store's global feed starts.
+        var pin = written[^1].GlobalSequence;
+        var slice = await facts.SliceAsync(pin);
+
+        Assert.Equal(2, slice.Facts.Count);
+        Assert.Equal(64, slice.Digest.Length);
+        Assert.Equal("permitted", Describe(slice.Facts[0].Verdict));
+        Assert.Equal("blocked:sanctions:listed party", Describe(slice.Facts[1].Verdict));
     }
 
-    private static RecordClaimCommand Command(string stream, string statement) => new()
+    private static string Describe(ClaimVerdict verdict) => verdict switch
     {
-        Stream = stream,
-        ClaimId = "claim-1",
+        Permitted => "permitted",
+        Blocked blocked => $"blocked:{blocked.Gate}:{blocked.Reason}",
+    };
+
+    private static RecordClaimCommand Command(string lineage, string statement) => new()
+    {
+        Stream = "claims/eu",
+        ClaimId = $"claim-{lineage.Replace('/', '-')}",
+        Lineage = lineage,
         Statement = statement,
         Actor = "compliance",
     };

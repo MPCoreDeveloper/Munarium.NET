@@ -11,8 +11,9 @@ using Munarium.Ledger;
 /// </remarks>
 internal sealed class FakeStorageBackend : IStorageBackend
 {
-    private readonly Dictionary<string, List<LedgerEvent>> _streams = [];
+    private readonly Dictionary<string, List<LedgerEntry>> _streams = [];
     private int _conflictsRemaining;
+    private long _globalSequence;
 
     /// <summary>Gets how many times <see cref="AppendAsync"/> was called.</summary>
     public int AppendCalls { get; private set; }
@@ -23,7 +24,7 @@ internal sealed class FakeStorageBackend : IStorageBackend
 
     /// <inheritdoc />
     public ValueTask<SequenceNumber> HeadAsync(StreamId stream, CancellationToken cancellationToken = default)
-        => ValueTask.FromResult(new SequenceNumber(_streams.TryGetValue(stream.Value, out var events) ? events.Count : 0));
+        => ValueTask.FromResult(new SequenceNumber(_streams.TryGetValue(stream.Value, out var entries) ? entries.Count : 0));
 
     /// <inheritdoc />
     public ValueTask<AppendOutcome> AppendAsync(
@@ -34,30 +35,48 @@ internal sealed class FakeStorageBackend : IStorageBackend
     {
         AppendCalls++;
 
-        if (!_streams.TryGetValue(stream.Value, out var streamEvents))
+        if (!_streams.TryGetValue(stream.Value, out var entries))
         {
-            streamEvents = [];
-            _streams[stream.Value] = streamEvents;
+            entries = [];
+            _streams[stream.Value] = entries;
         }
 
-        if (_conflictsRemaining > 0 || expectedHead.Value != streamEvents.Count)
+        if (_conflictsRemaining > 0 || expectedHead.Value != entries.Count)
         {
             _conflictsRemaining = Math.Max(0, _conflictsRemaining - 1);
             return ValueTask.FromResult<AppendOutcome>(
-                new VersionConflict(expectedHead, new SequenceNumber(streamEvents.Count)));
+                new VersionConflict(expectedHead, new SequenceNumber(entries.Count)));
         }
 
-        streamEvents.AddRange(events);
-        return ValueTask.FromResult<AppendOutcome>(new Appended(new SequenceNumber(streamEvents.Count)));
+        foreach (var appended in events)
+        {
+            _globalSequence++;
+            entries.Add(new LedgerEntry(
+                new SequenceNumber(entries.Count + 1),
+                new SequenceNumber(_globalSequence),
+                appended));
+        }
+
+        return ValueTask.FromResult<AppendOutcome>(new Appended(new SequenceNumber(entries.Count)));
     }
 
     /// <inheritdoc />
-    public ValueTask<IReadOnlyList<LedgerEvent>> ReadAsync(
+    public ValueTask<IReadOnlyList<LedgerEntry>> ReadAsync(
         StreamId stream,
         SequenceNumber after,
         CancellationToken cancellationToken = default)
-        => ValueTask.FromResult<IReadOnlyList<LedgerEvent>>(
-            _streams.TryGetValue(stream.Value, out var events)
-                ? [.. events.Skip((int)after.Value)]
+        => ValueTask.FromResult<IReadOnlyList<LedgerEntry>>(
+            _streams.TryGetValue(stream.Value, out var entries)
+                ? [.. entries.Skip((int)after.Value)]
                 : []);
+
+    /// <inheritdoc />
+    public ValueTask<IReadOnlyList<LedgerEntry>> ReadGlobalAsync(
+        SequenceNumber upTo,
+        CancellationToken cancellationToken = default)
+        => ValueTask.FromResult<IReadOnlyList<LedgerEntry>>(
+            [.. _streams.Values
+                .SelectMany(entries => entries)
+                .Where(entry => entry.GlobalSequence.Value <= upTo.Value)
+                .OrderBy(entry => entry.GlobalSequence.Value)]);
 }

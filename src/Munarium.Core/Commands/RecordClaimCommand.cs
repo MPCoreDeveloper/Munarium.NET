@@ -18,6 +18,12 @@ public sealed record RecordClaimCommand : ICommand
     /// <summary>Gets the claim identifier, unique within the stream.</summary>
     public required string ClaimId { get; init; }
 
+    /// <summary>
+    /// Gets the lineage key: the shape-declared identity that decides which facts supersede each
+    /// other. A correction reuses the lineage of the fact it corrects.
+    /// </summary>
+    public required string Lineage { get; init; }
+
     /// <summary>Gets the claim as stated.</summary>
     public required string Statement { get; init; }
 

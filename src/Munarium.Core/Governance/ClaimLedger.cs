@@ -1,6 +1,7 @@
 namespace Munarium.Governance;
 
 using Munarium.Commands;
+using Munarium.Facts;
 using Munarium.Ledger;
 
 /// <summary>
@@ -98,9 +99,26 @@ public sealed class ClaimLedger
         return new ClaimContended(lastExpected, lastActual);
     }
 
-    private static LedgerEvent EntryFor(RecordClaimCommand command, ClaimVerdict verdict) => verdict switch
+    private static LedgerEvent EntryFor(RecordClaimCommand command, ClaimVerdict verdict)
     {
-        Permitted => LedgerEvent.FromText("claim.asserted", command.Statement),
-        Blocked blocked => LedgerEvent.FromText("claim.disputed", $"{blocked.Gate}: {blocked.Reason} | {command.Statement}"),
-    };
+        var (gate, reason) = verdict switch
+        {
+            Permitted => (string.Empty, string.Empty),
+            Blocked blocked => (blocked.Gate, blocked.Reason),
+        };
+
+        var fact = new FactRecord
+        {
+            ClaimId = command.ClaimId,
+            Lineage = command.Lineage,
+            Statement = command.Statement,
+            Actor = command.Actor,
+            Gate = gate,
+            Reason = reason,
+        };
+
+        return new LedgerEvent(
+            fact.IsDisputed ? FactCodec.DisputedEventType : FactCodec.AssertedEventType,
+            FactCodec.Encode(fact));
+    }
 }

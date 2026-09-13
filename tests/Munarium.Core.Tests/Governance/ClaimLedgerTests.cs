@@ -2,6 +2,7 @@ namespace Munarium.Core.Tests.Governance;
 
 using Munarium.Commands;
 using Munarium.Core.Tests.Support;
+using Munarium.Facts;
 using Munarium.Governance;
 using Munarium.Ledger;
 using SharpDispatch;
@@ -23,7 +24,7 @@ public class ClaimLedgerTests
         Assert.Equal("asserted:1", Describe(outcome));
         var written = await storage.ReadAsync(Stream("claims/1"), SequenceNumber.Zero);
         Assert.Single(written);
-        Assert.Equal("claim.asserted", written[0].Type);
+        Assert.Equal(FactCodec.AssertedEventType, written[0].Event.Type);
     }
 
     [Fact]
@@ -39,7 +40,7 @@ public class ClaimLedgerTests
         // The point of the whole path: the refusal is in the ledger, not discarded.
         var written = await storage.ReadAsync(Stream("claims/1"), SequenceNumber.Zero);
         Assert.Single(written);
-        Assert.Equal("claim.disputed", written[0].Type);
+        Assert.Equal(FactCodec.DisputedEventType, written[0].Event.Type);
     }
 
     [Fact]
@@ -84,7 +85,7 @@ public class ClaimLedgerTests
 
         var written = await storage.ReadAsync(Stream("claims/1"), SequenceNumber.Zero);
         Assert.Single(written);
-        Assert.Equal("claim.disputed", written[0].Type);
+        Assert.Equal(FactCodec.DisputedEventType, written[0].Event.Type);
     }
 
     private static StreamId Stream(string value) => StreamId.From(value);
@@ -93,6 +94,7 @@ public class ClaimLedgerTests
     {
         Stream = "claims/1",
         ClaimId = "claim-1",
+        Lineage = "vendor/north",
         Statement = statement,
         Actor = "tester",
     };

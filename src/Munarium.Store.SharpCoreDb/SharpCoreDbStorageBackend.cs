@@ -14,6 +14,8 @@ using SharpCoreDB.EventSourcing;
 /// <param name="eventStore">The SharpCoreDB event store that holds the ledger streams.</param>
 public sealed class SharpCoreDbStorageBackend(IEventStore eventStore) : IStorageBackend
 {
+    private const int GlobalReadBatchSize = 512;
+
     private readonly IEventStore _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
 
     /// <inheritdoc />
@@ -60,7 +62,7 @@ public sealed class SharpCoreDbStorageBackend(IEventStore eventStore) : IStorage
     }
 
     /// <inheritdoc />
-    public async ValueTask<IReadOnlyList<LedgerEvent>> ReadAsync(
+    public async ValueTask<IReadOnlyList<LedgerEntry>> ReadAsync(
         StreamId stream,
         SequenceNumber after,
         CancellationToken cancellationToken = default)
@@ -72,12 +74,64 @@ public sealed class SharpCoreDbStorageBackend(IEventStore eventStore) : IStorage
                 cancellationToken)
             .ConfigureAwait(false);
 
-        var events = new LedgerEvent[result.Events.Count];
-        for (var index = 0; index < result.Events.Count; index++)
+        return Map(result.Events);
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<IReadOnlyList<LedgerEntry>> ReadGlobalAsync(
+        SequenceNumber upTo,
+        CancellationToken cancellationToken = default)
+    {
+        if (upTo.Value <= 0)
         {
-            events[index] = new LedgerEvent(result.Events[index].EventType, result.Events[index].Payload);
+            return [];
         }
 
-        return events;
+        var entries = new List<LedgerEntry>();
+        var from = 1L;
+
+        while (from <= upTo.Value)
+        {
+            var batch = await _eventStore
+                .ReadAllAsync(from, GlobalReadBatchSize, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (batch.Events.Count == 0)
+            {
+                break;
+            }
+
+            foreach (var envelope in batch.Events)
+            {
+                // The feed is in global order, so the first event past the pin ends the slice.
+                if (envelope.GlobalSequence > upTo.Value)
+                {
+                    return entries;
+                }
+
+                entries.Add(Map(envelope));
+            }
+
+            from = batch.Events[^1].GlobalSequence + 1;
+        }
+
+        return entries;
     }
+
+    private static LedgerEntry[] Map(IReadOnlyList<EventEnvelope> envelopes)
+    {
+        var entries = new LedgerEntry[envelopes.Count];
+
+        for (var index = 0; index < envelopes.Count; index++)
+        {
+            entries[index] = Map(envelopes[index]);
+        }
+
+        return entries;
+    }
+
+    private static LedgerEntry Map(EventEnvelope envelope) => new(
+        new SequenceNumber(envelope.Sequence),
+        new SequenceNumber(envelope.GlobalSequence),
+        new LedgerEvent(envelope.EventType, envelope.Payload));
 }
