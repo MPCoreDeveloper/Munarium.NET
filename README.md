@@ -49,7 +49,12 @@ Munarium.NET is dogfooded end to end on the author's own .NET 11 libraries:
   async instead of a compiler-generated state machine.
 - **C# 15 unions** where an outcome is genuinely one of a closed set: the append result is
   `readonly union AppendOutcome(Appended, VersionConflict)`, so a caller that forgets to handle a
-  version conflict does not compile.
+  version conflict does not compile. This is also what pins the port to .NET 11: the union feature needs
+  `System.Runtime.CompilerServices.IUnion` and `UnionAttribute`, which only .NET 11's BCL provides, so a
+  `net10.0` target refuses those declarations with `CS0518` and `CS0656` (and the runtime-async switch
+  this project turns on needs `AsyncHelpers`, which .NET 10 carries as an evaluation-preview surface,
+  `SYSLIB5007`). Multi-targeting net10 would therefore mean replacing those unions, not changing a
+  property.
 - **NativeAOT-compatible and platform-independent** — the libraries declare AOT/trim compatibility,
   so reflection and codegen hazards fail the build, and CI publishes and runs a fully AOT-compiled
   binary on `linux-x64`, `win-x64` and `osx-arm64`. One boundary is deliberate and written down under
