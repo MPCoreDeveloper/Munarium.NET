@@ -1,5 +1,9 @@
 <div align="center">
-  <video src="https://raw.githubusercontent.com/MPCoreDeveloper/Munarium.NET/main/MunariumPromo.mp4" width="520" controls loop muted autoplay playsinline poster="https://raw.githubusercontent.com/MPCoreDeveloper/Munarium.NET/main/MunariumSCDBClean.jpg"></video>
+  <a href="https://github.com/MPCoreDeveloper/Munarium.NET/blob/main/MunariumPromo.mp4" title="Watch the Munarium.NET promo">
+    <img src="https://raw.githubusercontent.com/MPCoreDeveloper/Munarium.NET/main/MunariumSCDBClean.jpg" alt="Munarium.NET - click to watch the promo" width="180" height="268" />
+  </a>
+  <br />
+  <b>&#9654; <a href="https://github.com/MPCoreDeveloper/Munarium.NET/blob/main/MunariumPromo.mp4">Watch the promo</a></b>
 </div>
 
 # Munarium.NET
