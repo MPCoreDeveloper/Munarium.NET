@@ -498,3 +498,7 @@ artifacts/packages/*.nupkg
 artifacts/packages/*.snupkg
 build.txt
 test.txt
+
+# Keep the local RC feed folder tracked (git does not track empty folders).
+!artifacts/packages/
+!artifacts/packages/.gitkeep
