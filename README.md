@@ -1,11 +1,7 @@
 
 <div align="center">
-https://github.com/user-attachments/assets/516b69ac-624e-4af6-82bd-3001e9d8fbd2
+  <video src="https://github.com/user-attachments/assets/516b69ac-624e-4af6-82bd-3001e9d8fbd2" controls muted playsinline></video>
 </div>
-
-
-
-
 
 # Munarium.NET
 
