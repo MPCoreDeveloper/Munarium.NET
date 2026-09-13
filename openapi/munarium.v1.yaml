@@ -105,6 +105,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ClaimOutcome"
+        "400":
+          description: The proposal is missing something the contract requires.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "409":
           description: Every retry lost to a moving head. Retryable, never data loss.
           content:
