@@ -31,8 +31,7 @@ Munarium.NET/
 │   └── Munarium.Core.Tests/  unit tests (xunit.v3)
 ├── Directory.Build.props     shared build settings
 ├── Directory.Packages.props  central package management
-├── global.json               pinned .NET SDK
-└── sonar-project.properties  SonarCloud configuration
+└── global.json               pinned .NET SDK
 ```
 
 ## Build and test
@@ -49,7 +48,9 @@ dotnet test  Munarium.slnx -c Release
 - The .NET analyzers and `SonarAnalyzer.CSharp` run on every build; **warnings are errors** in `src/`.
 - Code style is enforced in the build (`EnforceCodeStyleInBuild`) using the rules in `.editorconfig`.
 - Package versions live in one place (`Directory.Packages.props`, Central Package Management).
-- SonarCloud analysis runs in CI through the .NET SonarScanner.
+- SonarCloud analysis runs in CI through the .NET SonarScanner. Its properties live in
+  `.github/workflows/ci.yml` — the SonarScanner for .NET does **not** read `sonar-project.properties`,
+  so the project key, organization and settings are passed as `/d:` arguments on `begin`.
 
 ## Consuming the MPCoreDeveloper net11 RCs
 

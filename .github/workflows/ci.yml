@@ -51,6 +51,9 @@ jobs:
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
 
+      # The SonarScanner for .NET does not read sonar-project.properties; every
+      # property is passed on `begin`. The project key and organization must match
+      # the project you created on SonarCloud.
       - name: SonarScanner begin
         if: env.SONAR_TOKEN != ''
         run: >
@@ -59,6 +62,9 @@ jobs:
           /o:"mpcoredeveloper"
           /d:sonar.host.url="https://sonarcloud.io"
           /d:sonar.token="$SONAR_TOKEN"
+          /d:sonar.sourceEncoding="UTF-8"
+          /d:sonar.scm.provider="git"
+          /d:sonar.exclusions="**/bin/**,**/obj/**,**/artifacts/**,**/*.g.cs,**/*.Designer.cs"
           /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml"
           /d:sonar.cs.vstest.reportsPaths="**/TestResults/*.trx"
 
