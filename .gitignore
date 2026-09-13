@@ -499,6 +499,9 @@ artifacts/packages/*.snupkg
 build.txt
 test.txt
 
+# Ad-hoc build logs land at the root, where the repository tracks no .txt files at all.
+/*.txt
+
 # Keep the local RC feed folder tracked (git does not track empty folders).
 !artifacts/packages/
 !artifacts/packages/.gitkeep
