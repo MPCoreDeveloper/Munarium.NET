@@ -113,6 +113,9 @@ public sealed class Composer(FactLedger facts)
 
         if (omitted > 0)
         {
+            // The marker is not counted against the budget, because it is what tells a reader the context is
+            // partial - and it is far shorter than the fact it stands in for, so the budget still means what
+            // it says about the facts themselves.
             body.Append("... ").Append(omitted).Append(" more accepted fact(s) omitted\n");
         }
 
