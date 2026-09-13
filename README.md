@@ -44,6 +44,14 @@ Munarium.NET is dogfooded end to end on the author's own .NET 11 libraries:
 ## How it is built
 
 - **.NET 11 (RC) and C# 15** throughout, with nullable reference types and implicit usings enabled.
+- **Runtime async** — the .NET 11 feature switch is on, so async methods compile to runtime-provided
+  async instead of a compiler-generated state machine.
+- **C# 15 unions** where an outcome is genuinely one of a closed set: the append result is
+  `readonly union AppendOutcome(Appended, VersionConflict)`, so a caller that forgets to handle a
+  version conflict does not compile.
+- **NativeAOT-compatible and platform-independent** — the libraries declare AOT/trim compatibility,
+  so reflection and codegen hazards fail the build, and CI publishes and runs a fully AOT-compiled
+  binary on `linux-x64`, `win-x64` and `osx-arm64`.
 - The .NET analyzers and `SonarAnalyzer.CSharp` run on every build; **warnings are errors** in
   shipping code, and code style is enforced during the build.
 - Package versions live in one place (Central Package Management), and the whole stack is dogfooded
