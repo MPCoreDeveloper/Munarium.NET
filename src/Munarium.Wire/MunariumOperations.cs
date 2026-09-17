@@ -12,7 +12,6 @@ using Munarium.Providers;
 using Munarium.Retrieval;
 using Munarium.Shapes;
 using Munarium.Versions;
-using Posseth.UlidFactory;
 
 /// <summary>
 /// The one implementation behind every transport.
@@ -145,7 +144,9 @@ public sealed class MunariumOperations(
         var versionId = request.VersionId.Trim();
         if (versionId.Length == 0)
         {
-            versionId = Ulid.NewUlid().Value;
+            // A generated version identity is a ULID, so the version carries the instant it was created at
+            // without a field for it: see LedgerIds.
+            versionId = LedgerIds.New();
         }
 
         var parent = request.ParentVersionId.Trim();

@@ -11,6 +11,10 @@
   <ItemGroup>
     <!-- The command path is part of the kernel: governance runs on it, so the dispatcher lives here. -->
     <PackageReference Include="SharpDispatch" />
+    <!-- The ledger's identities. A ULID carries the instant it was created at, so the kernel can reason
+         about "now" - and about when something was written - without reading a clock, which is what
+         keeps a verdict reproducible from the snapshot alone. See LedgerIds and MeshSnapshot.WrittenAt. -->
+    <PackageReference Include="Posseth.UlidFactory" />
   </ItemGroup>
 
 </Project>

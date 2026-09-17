@@ -4,6 +4,7 @@ using Munarium.Chronology;
 using Munarium.Claims;
 using Munarium.Core.Tests.Support;
 using Munarium.Governance.Gates;
+using Munarium.Ledger;
 
 /// <summary>
 /// Tests for the chronology gate: how the timeline is assembled from the snapshot and the candidate,
@@ -129,6 +130,83 @@ public class ChronologyGateTests
             new Candidate { Claims = [ClaimFixture.Propose("hero", "death_date", "1940")] },
             new ChronologyRules()));
 
+    /// <summary>
+    /// The absence check reads the snapshot's own instant, because the snapshot carries it: the same
+    /// snapshot therefore produces the same finding for anyone who holds it, with no clock read and no date
+    /// passed in.
+    /// </summary>
+    [Fact]
+    public void TheAbsenceCheckReadsTheSnapshotsOwnInstant()
+    {
+        var rules = new ChronologyRules
+        {
+            Deadlines = [new DeadlineRule("case.filing", "case.incident_date", WithinDays: 30)],
+        };
+
+        var snapshot = ClaimFixture.Snapshot(ClaimFixture.Create(
+            LedgerIds.NewAt(Instant(2020, 3, 15)),
+            1,
+            "case",
+            "incident_date",
+            "2020-01-01"));
+
+        // Nothing arrived, and the deadline (2020-01-31) is behind the snapshot's own instant.
+        var findings = ChronologyGate.Evaluate(snapshot, new Candidate(), rules);
+
+        var finding = Assert.Single(findings);
+        Assert.Equal(ChronologyGate.DeadlineRuleId, finding.RuleId);
+        Assert.Equal("2020-01-31", finding.Detail!["deadline"]!.GetValue<string>());
+        Assert.Equal("2020-03-15", finding.Detail["now"]!.GetValue<string>());
+
+        // The same call twice is the same answer: nothing here reads a wall clock.
+        Assert.Equal(
+            Describe(findings),
+            Describe(ChronologyGate.Evaluate(snapshot, new Candidate(), rules)));
+    }
+
+    [Fact]
+    public void TheAbsenceCheckIsSilentBeforeTheDeadlineOrWhenDisabled()
+    {
+        var rules = new ChronologyRules
+        {
+            Deadlines = [new DeadlineRule("case.filing", "case.incident_date", WithinDays: 30)],
+        };
+
+        var early = ClaimFixture.Snapshot(ClaimFixture.Create(
+            LedgerIds.NewAt(Instant(2020, 1, 15)),
+            1,
+            "case",
+            "incident_date",
+            "2020-01-01"));
+
+        Assert.Empty(ChronologyGate.Evaluate(early, new Candidate(), rules));
+
+        // An explicit null says "do not run the absence check", rather than being the default.
+        var late = ClaimFixture.Snapshot(ClaimFixture.Create(
+            LedgerIds.NewAt(Instant(2020, 3, 15)),
+            1,
+            "case",
+            "incident_date",
+            "2020-01-01"));
+
+        Assert.Empty(ChronologyGate.Evaluate(late, new Candidate(), rules, now: null));
+    }
+
+    [Fact]
+    public void ASnapshotOfOpaqueIdentitiesHasNoInstantToRead()
+    {
+        var rules = new ChronologyRules
+        {
+            Deadlines = [new DeadlineRule("case.filing", "case.incident_date", WithinDays: 30)],
+        };
+
+        Assert.Null(ClaimFixture.Snapshot(ClaimFixture.Create("c1", 1, "case", "incident_date", "2020-01-01")).WrittenOn);
+        Assert.Empty(ChronologyGate.Evaluate(
+            ClaimFixture.Snapshot(ClaimFixture.Create("c1", 1, "case", "incident_date", "2020-01-01")),
+            new Candidate(),
+            rules));
+    }
+
     [Theory]
     [InlineData("*_date", "birth_date", true)]
     [InlineData("*_date", "date_of_birth", false)]
@@ -143,4 +221,10 @@ public class ChronologyGateTests
     {
         Order = [new OrderRule("birth_date", "death_date")],
     };
+
+    private static DateTimeOffset Instant(int year, int month, int day) =>
+        new(year, month, day, 0, 0, 0, TimeSpan.Zero);
+
+    private static string Describe(IReadOnlyList<GateFinding> findings) =>
+        string.Join('|', findings.Select(finding => $"{finding.RuleId}:{finding.Message}"));
 }

@@ -47,6 +47,77 @@ public sealed record MeshSnapshot
     public string? AsOfDate { get; init; }
 
     /// <summary>
+    /// Gets the instant the newest identity in the snapshot was created at.
+    /// </summary>
+    /// <remarks>
+    /// The ledger's identities are ULIDs, so a snapshot carries its own time: this is derived from the
+    /// facts, anchors, promises and entities it holds rather than passed in, and it cannot disagree with
+    /// the ids it came from. A gate that reasons about "now" reads this, which is what makes its verdict
+    /// reproducible by anyone holding the snapshot - a clock read would leave the reader unable to rebuild
+    /// the answer later.
+    /// <para>
+    /// This is not the pin. A pin is a <em>position</em> in the ledger, and the two are deliberately
+    /// different things: the pin says which writes are visible, this says when the newest visible write
+    /// happened. <see langword="null"/> when no identity in the snapshot is a ULID - a caller may name its
+    /// own claims - in which case a clock-driven rule needs an explicit date instead.
+    /// </para>
+    /// </remarks>
+    public DateTimeOffset? WrittenAt
+    {
+        get
+        {
+            DateTimeOffset? newest = null;
+
+            foreach (var identity in Identities())
+            {
+                if (LedgerIds.InstantOf(identity) is { } instant && (newest is null || instant > newest))
+                {
+                    newest = instant;
+                }
+            }
+
+            return newest;
+        }
+    }
+
+    /// <summary>
+    /// Gets <see cref="WrittenAt"/> as the UTC calendar date the chronology rules read.
+    /// </summary>
+    public DateOnly? WrittenOn =>
+        WrittenAt is { } instant ? DateOnly.FromDateTime(instant.UtcDateTime) : null;
+
+    /// <summary>
+    /// Enumerates every identity the snapshot carries.
+    /// </summary>
+    /// <remarks>
+    /// Digests are left out because a rung is rebuilt rather than identified: it has a content hash, which
+    /// is a hash of what it says and not a moment.
+    /// </remarks>
+    /// <returns>The identities, in plane order.</returns>
+    private IEnumerable<string> Identities()
+    {
+        foreach (var fact in Facts)
+        {
+            yield return fact.Id;
+        }
+
+        foreach (var anchor in Anchors.Values)
+        {
+            yield return anchor.Id;
+        }
+
+        foreach (var promise in Promises)
+        {
+            yield return promise.Id;
+        }
+
+        foreach (var entity in Entities)
+        {
+            yield return entity.Id;
+        }
+    }
+
+    /// <summary>
     /// Gets the highest position any fact in the snapshot holds, or zero when there is none.
     /// </summary>
     /// <remarks>

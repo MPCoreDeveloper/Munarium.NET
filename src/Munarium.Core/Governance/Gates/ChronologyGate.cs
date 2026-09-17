@@ -37,18 +37,48 @@ public static class ChronologyGate
     public const string DurationRuleId = "gate.chronology-duration";
 
     /// <summary>
-    /// Evaluates the declared rules against a candidate and the snapshot it was written into.
+    /// Evaluates the declared rules, with the snapshot's own instant as the clock.
     /// </summary>
+    /// <remarks>
+    /// This is the reproducible form: the clock the deadline-absence check reads is
+    /// <see cref="MeshSnapshot.WrittenOn"/>, derived from the identities the snapshot carries, so the same
+    /// snapshot produces the same findings for anyone who holds it - today, tomorrow, or in a review six
+    /// months from now. When no identity in the snapshot is a ULID there is no such instant, and the
+    /// absence check does not run; pass a date explicitly if one is known.
+    /// </remarks>
     /// <param name="snapshot">The pinned view: its facts are the ledger side of the timeline.</param>
     /// <param name="candidate">The candidate under review.</param>
     /// <param name="rules">The declared rules.</param>
-    /// <param name="now">The clock the deadline-absence check reads, or <see langword="null"/> to disable it.</param>
+    /// <returns>One warning or block finding per violation.</returns>
+    public static IReadOnlyList<GateFinding> Evaluate(
+        MeshSnapshot snapshot,
+        Candidate candidate,
+        ChronologyRules rules)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        return Evaluate(snapshot, candidate, rules, snapshot.WrittenOn);
+    }
+
+    /// <summary>
+    /// Evaluates the declared rules against a candidate and the snapshot it was written into.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="now"/> is the clock the deadline-absence check reads, and there is deliberately no
+    /// default for it: an absence check that quietly turns itself off when a caller forgets an argument is
+    /// worse than one that either runs on the snapshot's own instant or is switched off on purpose. Pass
+    /// <see langword="null"/> to say that explicitly.
+    /// </remarks>
+    /// <param name="snapshot">The pinned view: its facts are the ledger side of the timeline.</param>
+    /// <param name="candidate">The candidate under review.</param>
+    /// <param name="rules">The declared rules.</param>
+    /// <param name="now">The clock the absence check reads, or <see langword="null"/> to disable it.</param>
     /// <returns>One warning or block finding per violation.</returns>
     public static IReadOnlyList<GateFinding> Evaluate(
         MeshSnapshot snapshot,
         Candidate candidate,
         ChronologyRules rules,
-        DateOnly? now = null)
+        DateOnly? now)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(candidate);
