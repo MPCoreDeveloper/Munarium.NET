@@ -71,7 +71,12 @@ Munarium.NET is dogfooded end to end on the author's own .NET 11 libraries:
 | Piece | What it does |
 | --- | --- |
 | **Ledger** | `IStorageBackend`: a head read, an optimistic-concurrency append, a stream read and a global read. |
-| **Governance** | The write path judges before it writes. A gate returns `Permitted` or `Blocked`, and a blocked claim is recorded as *disputed* rather than dropped — a refusal that cannot be recorded is not governance. Two gates ship: `shape` (a body that does not satisfy its shape) and `ledger-conflict` (a claim that would overwrite what its lineage already holds without saying so). A claim says what it is doing through `claim_type`: an *update* or a *correction* supersedes on purpose, an unnamed claim does not. |
+| **Governance** | The write path judges before it writes. A gate returns `Permitted` or `Blocked`, and a blocked claim is recorded as *disputed* rather than dropped — a refusal that cannot be recorded is not governance. The command path ships two gates: `shape` (a body that does not satisfy its shape) and `ledger-conflict` (a claim that would overwrite what its lineage already holds without saying so); a claim says what it is doing through `claim_type`, so an *update* or a *correction* supersedes on purpose and an unnamed claim does not. |
+| **The gate vocabulary** | All six rule families, as pure functions of a pinned snapshot and a candidate unit: `anchor-consistency`, `ledger-conflict`, `orphaned-reference`, `meta-leakage` and `lexical-similarity` always run together (with the anchor finding subsuming the conflict for the same detail), and the `chronology-*` family — order, containment, overlap, deadlines, durations — runs when a deployment declares rules. A withheld claim is reported as a finding carrying its rule id, severity and the claim key the accept path disputes. Only the newest candidate-side contributor is named, so a verdict never blames the ledger's own history. |
+| **Claims and resolution** | The semantic model the gates reason over: `subject.key=value` with the scope it was written in, its provenance, and the claim it supersedes. `ClaimResolution` is the reference implementation of the ledger's read semantics — the superseded set is itself filtered by the pin, so a claim superseded only *after* the pin still reads as current at the pin. Every storage backend's query has to agree with it. |
+| **Anchors, promises and counters** | A locked detail may not drift (`anchor-consistency`); a promise made in one scope is owed to a later one, and one fulfilled after the pin reads back *open*; a counter is a whole-document frequency with an optional ceiling, and the writer is told what is left rather than only what it overspent. |
+| **Digest ladder** | Deterministic, model-free compression rungs: tier 0 per scope, tier 1 per scope-prefix group with the values elided, tier 2 the whole-lineage rollup. Rungs are *rebuilt* from the pinned facts rather than served, because stored digest text has no history to read at a pin. |
+| **Chronology** | A closed calendar grammar (ISO dates, `YYYY-MM`, `YYYY`, month names, ranges, seasons, and `circa`/`approx`/`~` hedges) and the certainty algebra on top of it: `DefinitelyBefore` is true only when the comparison is certain given both precisions and both hedges, so an intentionally approximate date is never a violation by itself. |
 | **Shapes** | Versioned, declarative shapes: a JSON Schema for the fact body, and the identity fields that decide supersession. A schema violation is a verdict, so the claim lands in the ledger with its reason attached. Validation is a documented, deterministic subset of JSON Schema implemented in the kernel — no parser library and no reflection, so the errors are stable enough to hash. |
 | **Facts and pins** | Canonical fact encoding, supersession along a lineage, and an `as_of` pin that rebuilds the same slice — and the same SHA-256 digest — every time. A fact carries the version it was written to and the body it was claimed with, so a slice can be read back into the claims it came from and one version can be read out of the whole. |
 | **Versions and lineage** | A version is an ordinary claim under the `version` shape, so it is judged by the same gates and rebuilt from the same slice as everything else — and its identity is immutable by construction, because claiming it twice is a ledger conflict. `GetLineage` walks parent links root-first, and `as_of_date` resolves to a pin through the version's own metadata. |
@@ -113,22 +118,25 @@ Each of these is an upstream finding with the evidence that produced it, not a p
 The kernel is finished first, because everything else is a thin adapter over it. What is missing, roughly
 in the order it is planned:
 
-- **The rest of the gate vocabulary.** The original's gates are `anchor-consistency`, `ledger-conflict`,
-  `orphaned-reference`, `meta-leakage`, `lexical-similarity` and the `chronology-*` family. `shape` and
-  `ledger-conflict` are here. The others judge concepts this port does not have yet — anchors,
-  sources and references, promises with deadlines — so they arrive with those rather than before them.
+- **The candidate plane is not yet on the write path.** The six rule families judge a *candidate unit*
+  (the proposals and the text for one scope), which is not the shape the command path carries: a
+  `RecordClaimCommand` is one claim. What is missing is the accept path that assembles a candidate,
+  runs the deterministic gates plus the armed chronology rules, and records the claims named by a
+  block finding as `disputed` in one write.
 - **Ingestion and index versions.** `/v1/search` answers with a real provenance envelope, but there is no
   `/v1/ingests` or `/v1/indexes` yet, so an index is what a host put in it rather than a versioned
   artefact the ledger knows about. Index version → envelope → ledger watermark is the demonstration that
   closes this.
+- **No backend builds a snapshot, and no RPC serves one.** Anchors, promises, counters, entities and the
+  digest ladder exist as types and as pure logic that is tested against the original's behaviour, but a
+  `MeshSnapshot` is assembled by the caller and nothing reads those planes back out of storage yet.
 - **Idempotency keys.** The original requires an `idempotency-key` metadata entry on every command RPC and
   replays the stored result. Here a retry writes a second claim; the `ledger-conflict` gate treats a
   re-sent claim as a retry only when nothing about it changed, which is an approximation and is written
   down as one.
-- **Pagination** (`PageRequest`/`PageResponse`), **authentication and tenancy**, **sessions and runbooks**,
-  **anchors, promises, counters and the digest ladder**, and the separate **`matrix/v1` semantic query**
-  surface. The original carries roughly 49 RPCs across 8 services; the kernel's core is what is served
-  here.
+- **Pagination** (`PageRequest`/`PageResponse`), **authentication and tenancy**, **sources and the object
+  store**, **sessions and runbooks**, and the separate **`matrix/v1` semantic query** surface. The
+  original carries roughly 49 RPCs across 8 services; the kernel's core is what is served here.
 - **Clients for other languages.** The gRPC contract is language-neutral, but this port is .NET-first: the
   .NET surface is what is built and tested against the contract, and clients for other languages are a
   later consideration rather than a commitment.
