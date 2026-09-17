@@ -100,7 +100,7 @@ Each of these is an upstream finding with the evidence that produced it, not a p
   `ProviderServiceBinder`), so an ASP.NET Core gRPC server is not AOT-compilable. The messages, the
   contract and the generated client are reflection-free. Making this host AOT-clean needs the method
   discovery to be source-generated, which is grpc-dotnet's to do.
-- **OpenAPI 3.1 is parsed as 3.0.** SharpPortico 1.1.0 accepts a 3.1 document by declaring it 3.0
+- **OpenAPI 3.1 is parsed as 3.0.** SharpPortico 1.1.1 accepts a 3.1 document by declaring it 3.0
   before parsing - its bundled parser (`Microsoft.OpenApi` 1.6.x) refuses 3.1 outright - and reports
   `SP1002` to say so. This contract stays at 3.0.3 anyway: it needs nothing from 3.1, and 3.0.3 is what
   every tool reads.
