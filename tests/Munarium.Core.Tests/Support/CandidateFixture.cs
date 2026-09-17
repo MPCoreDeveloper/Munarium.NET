@@ -17,7 +17,7 @@ internal static class CandidateFixture
         var storage = new FakeStorageBackend();
         var facts = new FactLedger(storage);
 
-        return (new CandidateLedger(storage, new MeshSnapshotBuilder(facts)), storage, facts);
+        return (new CandidateLedger(storage, new MeshSnapshotBuilder(storage)), storage, facts);
     }
 
     /// <summary>Builds a proposal.</summary>

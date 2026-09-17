@@ -83,13 +83,12 @@ public class ClaimProjectionTests
     public async Task ASnapshotCarriesAVersionsFactsAtAPin()
     {
         var storage = new FakeStorageBackend();
-        var facts = new FactLedger(storage);
-        var ledger = new Munarium.Governance.CandidateLedger(storage, new MeshSnapshotBuilder(facts));
+        var ledger = new Munarium.Governance.CandidateLedger(storage, new MeshSnapshotBuilder(storage));
 
         await ledger.AppendAsync("release-1", [CandidateFixture.Proposal("service", "api_version", "v2")]);
         await ledger.AppendAsync("release-2", [CandidateFixture.Proposal("service", "owner_team", "platform")]);
 
-        var snapshot = await new MeshSnapshotBuilder(facts).BuildAsync("release-1");
+        var snapshot = await new MeshSnapshotBuilder(storage).BuildAsync("release-1");
 
         var claim = Assert.Single(snapshot.Facts);
         Assert.Equal("service.api_version", claim.ClaimKey);

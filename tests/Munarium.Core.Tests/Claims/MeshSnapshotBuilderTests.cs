@@ -13,11 +13,11 @@ public class MeshSnapshotBuilderTests
     [Fact]
     public async Task TheSnapshotCarriesTheRungsThePinnedFactsProduce()
     {
-        var (ledger, _, facts) = CandidateFixture.Ledger();
+        var (ledger, storage, _) = CandidateFixture.Ledger();
         await ledger.AppendAsync("release-1", [CandidateFixture.Proposal("service", "api_version", "v1", scope: "notes")]);
         await ledger.AppendAsync("release-1", [CandidateFixture.Proposal("service", "owner_team", "platform", scope: "notes")]);
 
-        var builder = new MeshSnapshotBuilder(facts);
+        var builder = new MeshSnapshotBuilder(storage);
         var head = await builder.BuildAsync("release-1");
         var pinned = await builder.BuildAsync("release-1", new SequenceNumber(1));
 
@@ -35,9 +35,9 @@ public class MeshSnapshotBuilderTests
     [Fact]
     public async Task TheLadderRungIsPresentEvenWithNoFacts()
     {
-        var (_, _, facts) = CandidateFixture.Ledger();
+        var (_, storage, _) = CandidateFixture.Ledger();
 
-        var snapshot = await new MeshSnapshotBuilder(facts).BuildAsync("release-1");
+        var snapshot = await new MeshSnapshotBuilder(storage).BuildAsync("release-1");
 
         Assert.Empty(snapshot.Facts);
         var rollup = Assert.Single(snapshot.Digests);
@@ -48,12 +48,12 @@ public class MeshSnapshotBuilderTests
     [Fact]
     public async Task AScopePrefixSelectsTheScopeAndItsDescendants()
     {
-        var (ledger, _, facts) = CandidateFixture.Ledger();
+        var (ledger, storage, _) = CandidateFixture.Ledger();
         await ledger.AppendAsync("release-1", [CandidateFixture.Proposal("service", "api_version", "v1", scope: "notes.release")]);
         await ledger.AppendAsync("release-1", [CandidateFixture.Proposal("service", "owner_team", "platform", scope: "ops")]);
         await ledger.AppendAsync("release-1", [CandidateFixture.Proposal("service", "tier", "gold")]);
 
-        var builder = new MeshSnapshotBuilder(facts);
+        var builder = new MeshSnapshotBuilder(storage);
 
         Assert.Equal(3, (await builder.BuildAsync("release-1")).Facts.Count);
         Assert.Equal(
@@ -68,12 +68,12 @@ public class MeshSnapshotBuilderTests
     [Fact]
     public async Task AFactLimitKeepsTheNewestFacts()
     {
-        var (ledger, _, facts) = CandidateFixture.Ledger();
+        var (ledger, storage, _) = CandidateFixture.Ledger();
         await ledger.AppendAsync("release-1", [CandidateFixture.Proposal("service", "api_version", "v1")]);
         await ledger.AppendAsync("release-1", [CandidateFixture.Proposal("service", "owner_team", "platform")]);
         await ledger.AppendAsync("release-1", [CandidateFixture.Proposal("service", "tier", "gold")]);
 
-        var snapshot = await new MeshSnapshotBuilder(facts).BuildAsync("release-1", factLimit: 2);
+        var snapshot = await new MeshSnapshotBuilder(storage).BuildAsync("release-1", factLimit: 2);
 
         Assert.Equal([2, 3], snapshot.Facts.Select(claim => claim.Sequence.Value));
 
@@ -92,11 +92,11 @@ public class MeshSnapshotBuilderTests
     [Fact]
     public async Task ALimitCountsCurrentFactsOnly()
     {
-        var (ledger, _, facts) = CandidateFixture.Ledger();
+        var (ledger, storage, _) = CandidateFixture.Ledger();
         await ledger.AppendAsync("release-1", [CandidateFixture.Proposal("service", "api_version", "v1")]);
         await ledger.AppendAsync("release-1", [CandidateFixture.Proposal("service", "api_version", "v2", ClaimType.Correction)]);
 
-        var snapshot = await new MeshSnapshotBuilder(facts).BuildAsync("release-1", factLimit: 1);
+        var snapshot = await new MeshSnapshotBuilder(storage).BuildAsync("release-1", factLimit: 1);
 
         Assert.Equal("v2", Assert.Single(snapshot.Facts).Value);
     }
