@@ -104,7 +104,9 @@ public sealed class CandidateLedger
                 return new CandidateContended(callerPin, head);
             }
 
-            var snapshot = await _snapshots.BuildAsync(versionId, null, cancellationToken).ConfigureAwait(false);
+            var snapshot = await _snapshots
+                .BuildAsync(versionId, pin: null, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
             var candidate = CandidateOf(claims, candidateText);
             var findings = Judge(snapshot, candidate);
             var blocked = DeterministicGates.BlockedClaimKeys(findings);

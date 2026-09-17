@@ -60,7 +60,7 @@ public static class ClaimResolution
         var visible = pinned
             .Where(claim => statuses.Contains(claim.Status))
             .Where(claim => !superseded.Contains(claim.Id))
-            .Where(claim => InScope(claim.ScopePath, request.ScopePrefix))
+            .Where(claim => ClaimScope.Matches(claim.ScopePath, request.ScopePrefix))
             .OrderBy(claim => claim.Sequence.Value)
             .ToList();
 
@@ -72,12 +72,4 @@ public static class ClaimResolution
 
         return visible;
     }
-
-    private static bool InScope(string? scope, string? prefix) => prefix switch
-    {
-        null => true,
-        _ when scope is null => false,
-        _ => string.Equals(scope, prefix, StringComparison.Ordinal)
-            || scope.StartsWith(string.Concat(prefix, "."), StringComparison.Ordinal),
-    };
 }
