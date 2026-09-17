@@ -119,11 +119,12 @@ Each of these is an upstream finding with the evidence that produced it, not a p
 The kernel is finished first, because everything else is a thin adapter over it. What is missing, roughly
 in the order it is planned:
 
-- **The candidate plane is not yet on the write path.** The six rule families judge a *candidate unit*
-  (the proposals and the text for one scope), which is not the shape the command path carries: a
-  `RecordClaimCommand` is one claim. What is missing is the accept path that assembles a candidate,
-  runs the deterministic gates plus the armed chronology rules, and records the claims named by a
-  block finding as `disputed` in one write.
+- **The candidate plane is on the write path, but not yet on the wire, and its findings are not stored.**
+  `CandidateLedger` judges a whole unit against the head it was judged against, records a blocked claim as
+  disputed, and lands the batch under one conditional append (re-gating when the head moved under it).
+  What is missing is the RPC that carries it and the findings *store*: the response carries the findings -
+  which is what the original treats as authoritative too - but nothing reads them back out per version yet,
+  and a shape's schema is still only judged on the command path, not over a batch.
 - **Ingestion and index versions.** `/v1/search` answers with a real provenance envelope, but there is no
   `/v1/ingests` or `/v1/indexes` yet, so an index is what a host put in it rather than a versioned
   artefact the ledger knows about. Index version → envelope → ledger watermark is the demonstration that

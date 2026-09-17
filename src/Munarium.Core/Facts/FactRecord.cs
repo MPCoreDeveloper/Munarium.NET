@@ -54,6 +54,49 @@ public sealed record FactRecord
     /// <summary>Gets why the gate blocked the fact, or an empty string when it was permitted.</summary>
     public required string Reason { get; init; }
 
+    /// <summary>
+    /// Gets the subject the claim is about, or an empty string when the claim was written under a shape.
+    /// </summary>
+    /// <remarks>
+    /// The triple <see cref="Subject"/>/<see cref="Key"/>/<see cref="Value"/> is the semantic form of a
+    /// claim, and it is what the gates reason over. The port has two ways to write one, and a stored fact
+    /// can be either: a caller that names its own triple (the reconciliation and direct-write path) sets
+    /// these, and a caller that declares a shape gets its structured body validated instead - in which
+    /// case the shape's identity fields, not this triple, decide supersession. One field cannot serve both
+    /// without lying about one of them, so both are kept and the kind is decided by which one was filled.
+    /// </remarks>
+    public string Subject { get; init; } = string.Empty;
+
+    /// <summary>Gets the property of the subject the claim is about, when the claim names a triple.</summary>
+    public string Key { get; init; } = string.Empty;
+
+    /// <summary>Gets the asserted value, when the claim names a triple.</summary>
+    public string Value { get; init; } = string.Empty;
+
+    /// <summary>Gets the dotted scope the claim was written in, when it was written in one.</summary>
+    public string? ScopePath { get; init; }
+
+    /// <summary>Gets how the claim came to exist. See <see cref="Claims.Provenance"/>.</summary>
+    public Claims.Provenance Provenance { get; init; } = Claims.Provenance.Witnessed;
+
+    /// <summary>Gets the claim this one says it supersedes, when it says so.</summary>
+    public string? SupersedesId { get; init; }
+
+    /// <summary>Gets the entity the claim was resolved to, when entity resolution ran over it.</summary>
+    public string? EntityId { get; init; }
+
+    /// <summary>Gets the claim's evidence, as JSON text, or <see langword="null"/>.</summary>
+    public string? EvidenceJson { get; init; }
+
+    /// <summary>Gets the extractor's confidence, when the claim came from a model.</summary>
+    public double? Confidence { get; init; }
+
+    /// <summary>Gets the <c>name@version</c> reference of the shape the claim was made under.</summary>
+    public string? ShapeRef { get; init; }
+
+    /// <summary>Gets the claim key the gates match a triple against: <c>subject.key</c>.</summary>
+    public string ClaimKey => string.Concat(Subject, ".", Key);
+
     /// <summary>Gets a value indicating whether governance blocked this fact.</summary>
     public bool IsDisputed => !string.IsNullOrEmpty(Gate);
 

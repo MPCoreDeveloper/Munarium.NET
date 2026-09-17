@@ -45,6 +45,19 @@ public static class FactCodec
         AppendField(builder, "versionId", fact.VersionId);
         AppendField(builder, "claimType", ((int)fact.ClaimType).ToString(CultureInfo.InvariantCulture));
         AppendField(builder, "lineage", fact.Lineage);
+        AppendOptional(builder, "subject", fact.Subject);
+        AppendOptional(builder, "key", fact.Key);
+        AppendOptional(builder, "value", fact.Value);
+        AppendOptional(builder, "scopePath", fact.ScopePath);
+        AppendOptional(builder, "provenance", ((int)fact.Provenance).ToString(CultureInfo.InvariantCulture));
+        AppendOptional(builder, "supersedesId", fact.SupersedesId);
+        AppendOptional(builder, "entityId", fact.EntityId);
+        AppendOptional(builder, "evidence", fact.EvidenceJson);
+        AppendOptional(
+            builder,
+            "confidence",
+            fact.Confidence?.ToString("R", CultureInfo.InvariantCulture));
+        AppendOptional(builder, "shapeRef", fact.ShapeRef);
         AppendField(builder, "body", fact.Body);
         AppendField(builder, "statement", fact.Statement);
         AppendField(builder, "actor", fact.Actor);
@@ -86,6 +99,16 @@ public static class FactCodec
             VersionId = Required(fields, "versionId"),
             ClaimType = ClaimTypeOf(Required(fields, "claimType")),
             Lineage = Required(fields, "lineage"),
+            Subject = Optional(fields, "subject"),
+            Key = Optional(fields, "key"),
+            Value = Optional(fields, "value"),
+            ScopePath = Nullable(fields, "scopePath"),
+            Provenance = ProvenanceOf(Optional(fields, "provenance")),
+            SupersedesId = Nullable(fields, "supersedesId"),
+            EntityId = Nullable(fields, "entityId"),
+            EvidenceJson = Nullable(fields, "evidence"),
+            Confidence = ConfidenceOf(Optional(fields, "confidence")),
+            ShapeRef = Nullable(fields, "shapeRef"),
             Body = Required(fields, "body"),
             Statement = Required(fields, "statement"),
             Actor = Required(fields, "actor"),
@@ -96,7 +119,7 @@ public static class FactCodec
 
     // A null field would encode as the text "null" and silently change a digest, so a fact that
     // carries one is refused where it is produced, with the name of the field.
-    private static void AppendField(StringBuilder builder, string name, string value)
+    private static void AppendField(StringBuilder builder, string name, string? value)
     {
         if (value is null)
         {
@@ -106,10 +129,23 @@ public static class FactCodec
         builder.Append(name).Append(FieldSeparator).Append(Escape(value)).Append(LineSeparator);
     }
 
+    // The optional fields are written as empty when absent, and read back as absent. That is what keeps
+    // the format additive: a payload written before a field existed decodes with that field absent rather
+    // than failing, so an older ledger stays readable - which is the only reason a canonical form may
+    // grow at all.
+    private static void AppendOptional(StringBuilder builder, string name, string? value) =>
+        builder.Append(name).Append(FieldSeparator).Append(Escape(value ?? string.Empty)).Append(LineSeparator);
+
     private static string Required(Dictionary<string, string> fields, string name) =>
         fields.TryGetValue(name, out var value)
             ? value
             : throw new FormatException($"Fact payload is missing '{name}'.");
+
+    private static string Optional(Dictionary<string, string> fields, string name) =>
+        fields.TryGetValue(name, out var value) ? value : string.Empty;
+
+    private static string? Nullable(Dictionary<string, string> fields, string name) =>
+        Optional(fields, name) is { Length: > 0 } value ? value : null;
 
     // The claim type travels as its numeric value, and is bounds-checked rather than reflected over: the
     // member names are free to change, the encoding is not.
@@ -118,6 +154,26 @@ public static class FactCodec
         number is >= (int)ClaimType.Unspecified and <= (int)ClaimType.Correction
             ? (ClaimType)number
             : throw new FormatException($"Unknown claim type '{value}' in a fact payload.");
+
+    // Provenance travels the same way, for the same reason. An absent field is the default rather than a
+    // guess: every payload written before provenance existed was witnessed.
+    private static Claims.Provenance ProvenanceOf(string value) =>
+        value.Length == 0 ? Claims.Provenance.Witnessed : ParseProvenance(value);
+
+    private static Claims.Provenance ParseProvenance(string value) =>
+        int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) &&
+        number is >= (int)Claims.Provenance.Witnessed and <= (int)Claims.Provenance.CoverageRepair
+            ? (Claims.Provenance)number
+            : throw new FormatException($"Unknown provenance '{value}' in a fact payload.");
+
+    // Round-trippable and culture-free, so the same double encodes to the same bytes everywhere.
+    private static double? ConfidenceOf(string value) =>
+        value.Length == 0 ? null : ParseConfidence(value);
+
+    private static double ParseConfidence(string value) =>
+        double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
+            ? number
+            : throw new FormatException($"Unparseable confidence '{value}' in a fact payload.");
 
     // Exactly three escapes exist, and only a backslash, a newline and a carriage return are ever
     // escaped - which is what keeps the encoding stable enough to hash.
