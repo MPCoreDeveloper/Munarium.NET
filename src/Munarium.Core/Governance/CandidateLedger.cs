@@ -113,16 +113,26 @@ public sealed class CandidateLedger
                 .Select(claim => Fact(versionId, claim, findings, blocked))
                 .ToList();
 
-            if (stored.Count == 0)
+            var entries = new List<LedgerEvent>(stored.Count + 1);
+
+            entries.AddRange(stored.Select(fact => new LedgerEvent(
+                fact.IsDisputed ? FactCodec.DisputedEventType : FactCodec.AssertedEventType,
+                FactCodec.Encode(fact))));
+
+            // The findings travel in the same conditional append as the claims they judge, which is
+            // deliberately stronger than the original: it records them in a separate table and treats a
+            // failure as a warning, because failing the request would push a client into a retry that
+            // appends again. One append cannot disagree with its own response, so there is nothing to warn
+            // about - and a write that produced no findings records no event.
+            if (findings.Count > 0)
+            {
+                entries.Add(new LedgerEvent(FindingCodec.FindingsEventType, FindingCodec.Encode(findings)));
+            }
+
+            if (entries.Count == 0)
             {
                 return new CandidateRecorded([], findings, head);
             }
-
-            var entries = stored
-                .Select(fact => new LedgerEvent(
-                    fact.IsDisputed ? FactCodec.DisputedEventType : FactCodec.AssertedEventType,
-                    FactCodec.Encode(fact)))
-                .ToArray();
 
             // One conditional append, pinned at the head the gates read: the batch is atomic in the store,
             // so a partial landing is not a state this can be in.
@@ -132,7 +142,11 @@ public sealed class CandidateLedger
 
             if (result is Appended appended)
             {
-                return new CandidateRecorded(Positioned(stored, appended.Head), findings, appended.Head);
+                return new CandidateRecorded(
+                    Positioned(stored, appended.Head, entries.Count),
+                    findings,
+                    appended.Head,
+                    findings.Count > 0 ? appended.Head : null);
             }
 
             if (result is VersionConflict conflict)
@@ -218,10 +232,11 @@ public sealed class CandidateLedger
         };
     }
 
-    private static IReadOnlyList<Claim> Positioned(List<FactRecord> facts, SequenceNumber head)
+    private static IReadOnlyList<Claim> Positioned(List<FactRecord> facts, SequenceNumber head, int appended)
     {
-        // The append that moved the head to H wrote all N of them, so they occupy H-N+1 .. H.
-        var first = head.Value - facts.Count + 1;
+        // The append that moved the head to H wrote all of them, so the first one sits at H-N+1. The count
+        // is the whole batch, not the claims in it: the findings event occupies the position after them.
+        var first = head.Value - appended + 1;
 
         return [.. facts.Select((fact, index) => ClaimProjection.Of(fact, new SequenceNumber(first + index)))];
     }

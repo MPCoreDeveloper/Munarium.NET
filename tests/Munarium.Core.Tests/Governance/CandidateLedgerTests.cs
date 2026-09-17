@@ -95,17 +95,23 @@ public class CandidateLedgerTests
         Assert.Single((await facts.SliceAsync(await facts.CurrentPinAsync(), "release-1")).Facts);
     }
 
-    /// <summary>A candidate that produced only text has findings and nothing to append.</summary>
+    /// <summary>
+    /// A candidate that produced only text and broke no rule has nothing to record at all: no claim to
+    /// append and no verdict to keep.
+    /// </summary>
     [Fact]
-    public async Task ATextOnlyCandidateRecordsItsFindingsAndAppendsNothing()
+    public async Task ATextOnlyCandidateWithNothingToReportAppendsNothing()
     {
         var (ledger, storage, _) = CandidateFixture.Ledger();
 
-        var outcome = await ledger.AppendAsync("release-1", [], "As an AI, I cannot assist with that request.");
+        var recorded = Recorded(await ledger.AppendAsync(
+            "release-1",
+            [],
+            "The harbour was quiet until the second bell."));
 
-        var recorded = Recorded(outcome);
         Assert.Empty(recorded.Claims);
-        Assert.Equal(2, recorded.Findings.Count);
+        Assert.Empty(recorded.Findings);
+        Assert.Null(recorded.FindingsSequence);
         Assert.Equal(SequenceNumber.Zero, recorded.Head);
         Assert.Equal(0, storage.AppendCalls);
     }

@@ -16,10 +16,14 @@ using Munarium.Ledger;
 /// it, and the detail belongs to the finding.
 /// </param>
 /// <param name="Head">The version's head after the append.</param>
+/// <param name="FindingsSequence">
+/// The position the findings were recorded at, or <see langword="null"/> when the write produced none.
+/// </param>
 public sealed record CandidateRecorded(
     IReadOnlyList<Claim> Claims,
     IReadOnlyList<GateFinding> Findings,
-    SequenceNumber Head);
+    SequenceNumber Head,
+    SequenceNumber? FindingsSequence = null);
 
 /// <summary>
 /// The batch did not land: the version's head was not what the gate decision was computed against.
