@@ -150,6 +150,66 @@ public class SnapshotPlaneTests
         Assert.Equal("the payoff, restated", promise.Description);
     }
 
+    /// <summary>
+    /// An unbudgeted counter and a counter held to zero are different statements, so the payload says which
+    /// one it is rather than leaving the absence to mean both.
+    /// </summary>
+    [Fact]
+    public void ACounterRoundTripsWithAndWithoutABudget()
+    {
+        var budgeted = CounterCodec.Decode(CounterCodec.Encode(new CounterTotal { Key = "flashback", Total = 3, Budget = 0 }));
+        var unbudgeted = CounterCodec.Decode(CounterCodec.Encode(new CounterTotal { Key = "storm", Total = 9 }));
+
+        Assert.Equal(3UL, budgeted.Total);
+        Assert.Equal(0UL, budgeted.Budget);
+        Assert.Equal("storm", unbudgeted.Key);
+        Assert.Null(unbudgeted.Budget);
+    }
+
+    [Fact]
+    public void AnEntityRoundTripsWithItsAliasesAndItsMerge()
+    {
+        var entity = new Entity
+        {
+            Id = "entity-7",
+            VersionId = "release-1",
+            CanonicalName = "Northern Supplies Ltd",
+            EntityType = "vendor",
+            Aliases = ["north supplies", "Northern Supply"],
+            MergedInto = "entity-2",
+            Sequence = SequenceNumber.Zero,
+        };
+
+        var decoded = EntityCodec.Decode(EntityCodec.Encode(entity), new SequenceNumber(5));
+
+        Assert.Equal("Northern Supplies Ltd", decoded.CanonicalName);
+        Assert.Equal("vendor", decoded.EntityType);
+        // Aliases come back in ordinal order: which order they were seen in is not part of what an entity is,
+        // so a payload depends on the set and not on the path that built it.
+        Assert.Equal(["Northern Supply", "north supplies"], decoded.Aliases);
+        Assert.Equal("entity-2", decoded.MergedInto);
+        Assert.Equal(new SequenceNumber(5), decoded.Sequence);
+    }
+
+    /// <summary>
+    /// The last event for a key is the state, and a counter recorded after the pin is not there yet: a plane
+    /// is a state at a pin, not a log.
+    /// </summary>
+    [Fact]
+    public async Task TheFoldKeepsTheLatestEventPerKey()
+    {
+        var storage = new FakeStorageBackend();
+        var builder = new MeshSnapshotBuilder(storage);
+        await AppendAsync(storage, CounterCodec.RecordedEventType, CounterCodec.Encode(new CounterTotal { Key = "flashback", Total = 3, Budget = 2 }));
+        await AppendAsync(storage, CounterCodec.RecordedEventType, CounterCodec.Encode(new CounterTotal { Key = "flashback", Total = 5, Budget = 2 }));
+
+        var counter = Assert.Single((await builder.BuildAsync("release-1")).Counters);
+        Assert.Equal(5UL, counter.Total);
+
+        // And at the earlier pin the total that was recorded then is what stands.
+        Assert.Equal(3UL, Assert.Single((await builder.BuildAsync("release-1", new SequenceNumber(1))).Counters).Total);
+    }
+
     private static async Task AppendAsync(FakeStorageBackend storage, string eventType, byte[] payload)
     {
         var stream = StreamId.From("release-1");

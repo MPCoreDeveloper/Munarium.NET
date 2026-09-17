@@ -131,9 +131,11 @@ in the order it is planned:
   `/v1/ingests` or `/v1/indexes` yet, so an index is what a host put in it rather than a versioned
   artefact the ledger knows about. Index version → envelope → ledger watermark is the demonstration that
   closes this.
-- **No backend builds a snapshot, and no RPC serves one.** Anchors, promises, counters, entities and the
-  digest ladder exist as types and as pure logic that is tested against the original's behaviour, but a
-  `MeshSnapshot` is assembled by the caller and nothing reads those planes back out of storage yet.
+- **No RPC serves a snapshot.** `MeshSnapshotBuilder` reads the fact, anchor, promise, counter and entity
+  planes out of the version's stream under one pin and rebuilds the digest ladder, so a gate or a composer
+  can be handed a real snapshot; what is missing is the surface - nothing exposes a snapshot over the wire,
+  and the commands that lock an anchor or register a promise (rather than the storage seam itself) are the
+  authoring slice.
 - **Idempotency keys.** The original requires an `idempotency-key` metadata entry on every command RPC and
   replays the stored result. Here a retry writes a second claim; the `ledger-conflict` gate treats a
   re-sent claim as a retry only when nothing about it changed, which is an approximation and is written

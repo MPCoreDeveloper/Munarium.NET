@@ -63,6 +63,14 @@ public sealed class MeshSnapshotBuilder(IStorageBackend storage)
             current = [.. current.OrderBy(claim => claim.Sequence.Value).TakeLast(limit)];
         }
 
+        // One read of the version's stream: the planes share it, so four reads to answer one question would
+        // be four round trips per gate evaluation - and the gates run on the write path.
+        var entries = await _storage
+            .ReadAsync(StreamId.From(versionId), SequenceNumber.Zero, cancellationToken)
+            .ConfigureAwait(false);
+
+        var planes = Fold(entries, asOf);
+
         return new MeshSnapshot
         {
             VersionId = versionId,
@@ -71,89 +79,75 @@ public sealed class MeshSnapshotBuilder(IStorageBackend storage)
             // stored rung is an upsert with no history, so it cannot answer "what did this scope say in
             // March" - only the pinned facts can, and the rungs are a function of them.
             Digests = DigestLadder.Build(versionId, current),
-            Anchors = await AnchorsAsync(versionId, asOf, cancellationToken).ConfigureAwait(false),
-            Promises = await PromisesAsync(versionId, asOf, cancellationToken).ConfigureAwait(false),
+            Anchors = planes.Anchors,
+            Promises = planes.Promises,
+            Counters = planes.Counters,
+            Entities = planes.Entities,
             AsOfSequence = asOf,
         };
     }
 
     /// <summary>
-    /// Folds a version's stream into the anchors that are locked at a pin.
+    /// Folds a version's stream into the planes as they stand at a pin.
     /// </summary>
     /// <remarks>
-    /// The stream is folded rather than queried because the planes share the claims' stream: a lock, a
-    /// release and a promise are events in it like anything else. The fold is over the events at or below the
-    /// pin, so a release recorded after the pin leaves the lock standing - which is the same property a
-    /// superseded claim has.
+    /// The fold is over the events at or below the pin, which is what delivers every plane's pin semantics
+    /// at once: a release recorded after the pin leaves the lock standing, a fulfilment recorded after the
+    /// pin leaves the promise open, and a counter or an entity recorded after the pin is not there yet. That
+    /// is the same property a supersession has, and it comes out of one rule instead of one rule per plane.
     /// <para>
-    /// A released anchor is dropped rather than carried with a released status, because the snapshot's
-    /// contract is the locked ones: a gate reads it to know what may not drift, and an entry it has to
-    /// second-guess is an entry it can get wrong.
+    /// Two of the four planes are keyed and two are not by accident. Anchors are keyed by the detail they
+    /// lock, promises by their stable coordination key, counters by the pattern they count, entities by their
+    /// identity - and in every case the later event for a key replaces the earlier one, so a plane is a state
+    /// and not a log. A released anchor is dropped rather than carried, because the snapshot's contract is the
+    /// locked ones and a gate that has to second-guess an entry can get it wrong.
     /// </para>
     /// </remarks>
-    private async ValueTask<IReadOnlyDictionary<string, Anchor>> AnchorsAsync(
-        string versionId,
-        SequenceNumber pin,
-        CancellationToken cancellationToken)
+    private static Planes Fold(IReadOnlyList<LedgerEntry> entries, SequenceNumber pin)
     {
-        var entries = await _storage
-            .ReadAsync(StreamId.From(versionId), SequenceNumber.Zero, cancellationToken)
-            .ConfigureAwait(false);
-
-        var locked = new SortedDictionary<string, Anchor>(StringComparer.Ordinal);
-
-        foreach (var entry in entries.Where(entry => entry.GlobalSequence <= pin))
-        {
-            if (AnchorCodec.IsAnchorEvent(entry.Event.Type))
-            {
-                var anchor = AnchorCodec.Decode(entry.Event.Payload.Span, entry.GlobalSequence);
-
-                if (anchor.Status is AnchorStatus.Locked)
-                {
-                    locked[anchor.DetailKey] = anchor;
-                }
-                else
-                {
-                    locked.Remove(anchor.DetailKey);
-                }
-            }
-        }
-
-        return locked;
-    }
-
-    /// <summary>
-    /// Folds a version's stream into the promises as they stand at a pin.
-    /// </summary>
-    /// <remarks>
-    /// Keyed by the stable coordination key, so a promise restated is the same promise and not a second one.
-    /// A fulfilment recorded after the pin does not apply, which is what makes a promise fulfilled later read
-    /// back <em>open</em> at the earlier pin - the semantic the promise registry documents, delivered here by
-    /// the fold rather than by a second status computation.
-    /// </remarks>
-    private async ValueTask<IReadOnlyList<Promise>> PromisesAsync(
-        string versionId,
-        SequenceNumber pin,
-        CancellationToken cancellationToken)
-    {
-        var entries = await _storage
-            .ReadAsync(StreamId.From(versionId), SequenceNumber.Zero, cancellationToken)
-            .ConfigureAwait(false);
-
+        var anchors = new SortedDictionary<string, Anchor>(StringComparer.Ordinal);
         var promises = new SortedDictionary<string, Promise>(StringComparer.Ordinal);
+        var counters = new SortedDictionary<string, CounterTotal>(StringComparer.Ordinal);
+        var entities = new SortedDictionary<string, Entity>(StringComparer.Ordinal);
 
-        foreach (var entry in entries.Where(entry => entry.GlobalSequence <= pin))
+        foreach (var entry in entries)
         {
+            if (entry.GlobalSequence > pin)
+            {
+                continue;
+            }
+
+            var payload = entry.Event.Payload.Span;
+
             switch (entry.Event.Type)
             {
+                case AnchorCodec.LockedEventType:
+                    var anchor = AnchorCodec.Decode(payload, entry.GlobalSequence);
+                    anchors[anchor.DetailKey] = anchor;
+                    break;
+
+                case AnchorCodec.ReleasedEventType:
+                    anchors.Remove(AnchorCodec.Decode(payload, entry.GlobalSequence).DetailKey);
+                    break;
+
                 case PromiseCodec.RegisteredEventType:
-                    var registered = PromiseCodec.DecodeRegistered(entry.Event.Payload.Span, entry.GlobalSequence);
+                    var registered = PromiseCodec.DecodeRegistered(payload, entry.GlobalSequence);
                     promises[registered.Key] = registered;
                     break;
 
                 case PromiseCodec.FulfilledEventType:
-                    var fulfilled = PromiseCodec.DecodeFulfilled(entry.Event.Payload.Span, entry.GlobalSequence);
+                    var fulfilled = PromiseCodec.DecodeFulfilled(payload, entry.GlobalSequence);
                     promises[fulfilled.Key] = fulfilled;
+                    break;
+
+                case CounterCodec.RecordedEventType:
+                    var counter = CounterCodec.Decode(payload);
+                    counters[counter.Key] = counter;
+                    break;
+
+                case EntityCodec.ResolvedEventType:
+                    var entity = EntityCodec.Decode(payload, entry.GlobalSequence);
+                    entities[entity.Id] = entity;
                     break;
 
                 default:
@@ -161,6 +155,15 @@ public sealed class MeshSnapshotBuilder(IStorageBackend storage)
             }
         }
 
-        return [.. promises.Values];
+        return new Planes(anchors, [.. promises.Values], [.. counters.Values], [.. entities.Values]);
     }
+
+    /// <summary>
+    /// The planes a fold produced, in the shape the snapshot wants them.
+    /// </summary>
+    private sealed record Planes(
+        IReadOnlyDictionary<string, Anchor> Anchors,
+        IReadOnlyList<Promise> Promises,
+        IReadOnlyList<CounterTotal> Counters,
+        IReadOnlyList<Entity> Entities);
 }
