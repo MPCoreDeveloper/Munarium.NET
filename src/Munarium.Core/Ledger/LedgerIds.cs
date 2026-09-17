@@ -99,4 +99,65 @@ public static class LedgerIds
 
         return newest;
     }
+
+    /// <summary>
+    /// The order the identities give you: by the instant each carries, then by the identity itself.
+    /// </summary>
+    /// <remarks>
+    /// A ULID is ordered by construction - Crockford Base32 preserves order, so comparing two of them
+    /// ordinally <em>is</em> comparing the moments they were created at, with the random tail deciding
+    /// inside one millisecond. That makes an identity carry three things at once: what it is, when it
+    /// happened, and how it sorts against its neighbours, without a fourth column for any of them.
+    /// <para>
+    /// This is a <em>time</em> order, not the ledger's order, and the difference is load-bearing. The
+    /// ledger's order is the position the store assigned, and the pin - the thing that makes a read
+    /// reproducible - is expressed in that position. A clock is not a ledger: two writers whose clocks
+    /// disagree, or two writes inside one millisecond, produce an identity order that is not the order
+    /// the writes landed in. Resolution therefore keeps reading sequences, and this comparer is what a
+    /// caller uses when it has identities but no positions - a pre-acceptance batch, an ingest run, a
+    /// list of ids out of a document.
+    /// </para>
+    /// <para>
+    /// Total and deterministic over any mix: identities that are not ULIDs carry no instant, so a
+    /// comparison they take part in falls back to ordinal text order. That fallback is a tie-break, not a
+    /// claim about time, which is why a mixed set is not a timeline.
+    /// </para>
+    /// </remarks>
+    public static IComparer<string> ChronologicalComparer { get; } = new ByInstantThenText();
+
+    /// <summary>
+    /// Orders identities by the instant they carry.
+    /// </summary>
+    /// <param name="values">The identities.</param>
+    /// <returns>The identities, oldest first.</returns>
+    public static IReadOnlyList<string> InOrder(IEnumerable<string?> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+
+        return
+        [
+            .. values
+                .OfType<string>()
+                .Where(value => value.Length > 0)
+                .Order(ChronologicalComparer),
+        ];
+    }
+
+    private sealed class ByInstantThenText : IComparer<string>
+    {
+        /// <inheritdoc />
+        public int Compare(string? left, string? right)
+        {
+            if (InstantOf(left) is { } leftInstant && InstantOf(right) is { } rightInstant)
+            {
+                var byInstant = leftInstant.CompareTo(rightInstant);
+                if (byInstant != 0)
+                {
+                    return byInstant;
+                }
+            }
+
+            return string.CompareOrdinal(left, right);
+        }
+    }
 }
