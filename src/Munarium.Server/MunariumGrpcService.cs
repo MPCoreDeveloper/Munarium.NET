@@ -114,6 +114,23 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
     }
 
     /// <inheritdoc />
+    public override async Task<LoadSnapshotResponse> LoadSnapshotAsync(
+        LoadSnapshotRequest request,
+        ServerCallContext context)
+    {
+        var snapshot = await _operations
+            .LoadSnapshotAsync(
+                request.VersionId,
+                request.AsOf,
+                request.Scope,
+                request.FactLimit,
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return new LoadSnapshotResponse { Data = ToMessage(snapshot) };
+    }
+
+    /// <inheritdoc />
     public override async Task<ListFindingsResponse> ListFindingsAsync(
         ListFindingsRequest request,
         ServerCallContext context)
@@ -266,6 +283,126 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         return message;
     }
 
+    private static Snapshot ToMessage(WireSnapshot snapshot)
+    {
+        var message = new Snapshot
+        {
+            VersionId = snapshot.VersionId,
+            AsOfSequence = snapshot.AsOfSequence,
+            AsOfDate = snapshot.AsOfDate,
+            WrittenAt = snapshot.WrittenAt,
+            WrittenOn = snapshot.WrittenOn,
+        };
+
+        foreach (var claim in snapshot.Facts)
+        {
+            message.Facts.Add(ToMessage(claim));
+        }
+
+        foreach (var anchor in snapshot.Anchors)
+        {
+            message.Anchors.Add(ToMessage(anchor));
+        }
+
+        foreach (var digest in snapshot.Digests)
+        {
+            message.Digests.Add(ToMessage(digest));
+        }
+
+        foreach (var promise in snapshot.Promises)
+        {
+            message.Promises.Add(ToMessage(promise));
+        }
+
+        foreach (var counter in snapshot.Counters)
+        {
+            message.Counters.Add(ToMessage(counter));
+        }
+
+        foreach (var entity in snapshot.Entities)
+        {
+            message.Entities.Add(ToMessage(entity));
+        }
+
+        return message;
+    }
+
+    private static ResolvedClaim ToMessage(WireResolvedClaim claim) => new()
+    {
+        ClaimId = claim.ClaimId,
+        VersionId = claim.VersionId,
+        Sequence = claim.Sequence,
+        ClaimType = ClaimTypeOf(claim.ClaimType),
+        Subject = claim.Subject,
+        Key = claim.Key,
+        Value = claim.Value,
+        ScopePath = claim.ScopePath,
+        Status = ClaimStatusOf(claim.Status),
+        Provenance = ProvenanceOf(claim.Provenance),
+        SupersedesId = claim.SupersedesId,
+    };
+
+    private static Anchor ToMessage(WireAnchor anchor) => new()
+    {
+        AnchorId = anchor.AnchorId,
+        VersionId = anchor.VersionId,
+        DetailKey = anchor.DetailKey,
+        LockedValue = anchor.LockedValue,
+        LockedAtScope = anchor.LockedAtScope,
+        Status = AnchorStatusOf(anchor.Status),
+        Sequence = anchor.Sequence,
+        Evidence = anchor.Evidence,
+    };
+
+    private static Digest ToMessage(WireDigest digest) => new()
+    {
+        VersionId = digest.VersionId,
+        Tier = digest.Tier,
+        ScopePath = digest.ScopePath,
+        Content = digest.Content,
+        ContentHash = digest.ContentHash,
+        BuiltFromSequence = digest.BuiltFromSequence,
+    };
+
+    private static Promise ToMessage(WirePromise promise) => new()
+    {
+        PromiseId = promise.PromiseId,
+        VersionId = promise.VersionId,
+        Key = promise.Key,
+        Kind = promise.Kind,
+        Description = promise.Description,
+        OriginScope = promise.OriginScope,
+        DueScope = promise.DueScope,
+        Status = PromiseStatusOf(promise.Status),
+        Sequence = promise.Sequence,
+        FulfilledSequence = promise.FulfilledSequence,
+    };
+
+    private static Counter ToMessage(WireCounter counter) => new()
+    {
+        Key = counter.Key,
+        Total = counter.Total,
+        Budget = counter.Budget,
+        OverBudget = counter.OverBudget,
+    };
+
+    private static Entity ToMessage(WireEntity entity)
+    {
+        var message = new Entity
+        {
+            EntityId = entity.EntityId,
+            VersionId = entity.VersionId,
+            CanonicalName = entity.CanonicalName,
+            EntityType = entity.EntityType,
+            Sequence = entity.Sequence,
+            MergedInto = entity.MergedInto,
+        };
+
+        message.Aliases.AddRange(entity.Aliases);
+
+        return message;
+    }
+
     private static FindingList ToMessage(WireFindingList findings)
     {
         var message = new FindingList();
@@ -406,6 +543,31 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         ClaimType.Update => WireClaimTypes.Update,
         ClaimType.Correction => WireClaimTypes.Correction,
         _ => WireClaimTypes.Unspecified,
+    };
+
+    private static Provenance ProvenanceOf(string provenance) => provenance switch
+    {
+        WireProvenances.Backfilled => Provenance.Backfilled,
+        WireProvenances.Repaired => Provenance.Repaired,
+        WireProvenances.Emergent => Provenance.Emergent,
+        WireProvenances.CoverageRepair => Provenance.CoverageRepair,
+        _ => Provenance.Witnessed,
+    };
+
+    private static AnchorStatus AnchorStatusOf(string status) => status switch
+    {
+        WireAnchorStatuses.Locked => AnchorStatus.Locked,
+        WireAnchorStatuses.Released => AnchorStatus.Released,
+        _ => AnchorStatus.Unspecified,
+    };
+
+    private static PromiseStatus PromiseStatusOf(string status) => status switch
+    {
+        WirePromiseStatuses.Open => PromiseStatus.Open,
+        WirePromiseStatuses.Fulfilled => PromiseStatus.Fulfilled,
+        WirePromiseStatuses.Expired => PromiseStatus.Expired,
+        WirePromiseStatuses.Violated => PromiseStatus.Violated,
+        _ => PromiseStatus.Unspecified,
     };
 
     private static string ProvenanceName(Provenance provenance) => provenance switch

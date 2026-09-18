@@ -80,9 +80,13 @@ public sealed class MunariumKernel : IAsyncDisposable
         var facts = new FactLedger(storage);
         var claims = new ClaimLedger(storage, shapes, [new ShapeGate(shapes), new LedgerConflictGate(shapes, facts)]);
 
+        // One snapshot builder serves both the write path and the audit read, so a gate and a caller reading a
+        // snapshot are looking at the same construction of the same pin.
+        var snapshots = new MeshSnapshotBuilder(storage);
+
         // The candidate plane: a batch judged as one unit against the head the gates read, which is what the
         // claim-batch operation carries. It reads the same ledger through the same storage seam.
-        var candidates = new CandidateLedger(storage, new MeshSnapshotBuilder(storage));
+        var candidates = new CandidateLedger(storage, snapshots);
 
         // Findings are read back out of the same stream the write path records them in, so the two cannot be out
         // of step: there is no second table to disagree with.
@@ -98,6 +102,7 @@ public sealed class MunariumKernel : IAsyncDisposable
             retriever,
             embedder,
             new Composer(facts),
+            snapshots,
             DeterministicEmbeddingProvider.ModelName);
 
         return new MunariumKernel(provider, database, retriever, embedder, operations, shapes);

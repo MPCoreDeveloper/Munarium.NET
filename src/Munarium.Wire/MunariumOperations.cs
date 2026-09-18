@@ -32,6 +32,7 @@ public sealed class MunariumOperations(
     IRetrievalBackend retrieval,
     IModelProvider embedder,
     Composer composer,
+    MeshSnapshotBuilder snapshots,
     string embeddingModel)
 {
     /// <summary>The wire contract version this implementation speaks.</summary>
@@ -55,6 +56,7 @@ public sealed class MunariumOperations(
     private readonly IRetrievalBackend _retrieval = retrieval ?? throw new ArgumentNullException(nameof(retrieval));
     private readonly IModelProvider _embedder = embedder ?? throw new ArgumentNullException(nameof(embedder));
     private readonly Composer _composer = composer ?? throw new ArgumentNullException(nameof(composer));
+    private readonly MeshSnapshotBuilder _snapshots = snapshots ?? throw new ArgumentNullException(nameof(snapshots));
     private readonly string _embeddingModel = embeddingModel ?? throw new ArgumentNullException(nameof(embeddingModel));
 
     /// <summary>Liveness.</summary>
@@ -250,6 +252,48 @@ public sealed class MunariumOperations(
         var recorded = await _findings.ReadAsync(versionId, query, cancellationToken).ConfigureAwait(false);
 
         return new WireFindingList([.. recorded.Select(StoredOf)]);
+    }
+
+    /// <summary>Reads everything the mesh holds at one pin.</summary>
+    /// <param name="versionId">The version to read, or empty for every version.</param>
+    /// <param name="asOf">The position to read as of, or 0 for the present.</param>
+    /// <param name="scope">A scope prefix to read, or empty for every scope.</param>
+    /// <param name="factLimit">How many facts to keep, counting from the newest, or 0 for all of them.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The snapshot at that pin.</returns>
+    /// <remarks>
+    /// The scope filter and the fact limit belong to the builder, applied after resolution, and the digest ladder
+    /// is rebuilt there too: this operation turns the question into the builder's parameters and the answer into
+    /// the contract's shape, and decides nothing itself.
+    /// </remarks>
+    public async ValueTask<WireSnapshot> LoadSnapshotAsync(
+        string versionId,
+        long asOf = 0,
+        string? scope = null,
+        int factLimit = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var snapshot = await _snapshots
+            .BuildAsync(
+                versionId,
+                asOf > 0 ? new SequenceNumber(asOf) : null,
+                Optional(scope),
+                factLimit > 0 ? factLimit : null,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return new WireSnapshot(
+            snapshot.VersionId,
+            snapshot.AsOfSequence?.Value ?? 0,
+            snapshot.AsOfDate ?? string.Empty,
+            Timestamp(snapshot.WrittenAt),
+            snapshot.WrittenOn?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty,
+            [.. snapshot.Facts.Select(ClaimOf)],
+            [.. snapshot.Anchors.Values.Select(AnchorOf)],
+            [.. snapshot.Digests.Select(DigestOf)],
+            [.. snapshot.Promises.Select(PromiseOf)],
+            [.. snapshot.Counters.Select(CounterOf)],
+            [.. snapshot.Entities.Select(EntityOf)]);
     }
 
     /// <summary>Creates a version, which is itself a governed claim.</summary>
@@ -633,6 +677,96 @@ public sealed class MunariumOperations(
 
     private static WireStoredFinding StoredOf(StoredFinding stored) =>
         new(stored.Sequence.Value, FindingOf(stored.Finding));
+
+    // The instant a snapshot carries, in the format the evidence contract validates a timestamp against: one
+    // spelling of a timestamp in this port rather than one per surface.
+    private static string Timestamp(DateTimeOffset? instant) =>
+        instant?.ToString("yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK", CultureInfo.InvariantCulture) ?? string.Empty;
+
+    private static string ProvenanceName(Provenance provenance) => provenance switch
+    {
+        Provenance.Backfilled => WireProvenances.Backfilled,
+        Provenance.Repaired => WireProvenances.Repaired,
+        Provenance.Emergent => WireProvenances.Emergent,
+        Provenance.CoverageRepair => WireProvenances.CoverageRepair,
+        _ => WireProvenances.Witnessed,
+    };
+
+    private static WireResolvedClaim ClaimOf(Claim claim) => new(
+        claim.Id,
+        claim.VersionId,
+        claim.Sequence.Value,
+        ClaimTypeName(claim.ClaimType),
+        claim.Subject,
+        claim.Key,
+        claim.Value,
+        claim.ScopePath ?? string.Empty,
+        claim.Status is ClaimStatus.Disputed ? WireClaimStatus.Disputed : WireClaimStatus.Accepted,
+        ProvenanceName(claim.Provenance),
+        claim.SupersedesId ?? string.Empty);
+
+    private static WireAnchor AnchorOf(Anchor anchor) => new(
+        anchor.Id,
+        anchor.VersionId,
+        anchor.DetailKey,
+        anchor.LockedValue,
+        anchor.LockedAtScope ?? string.Empty,
+        AnchorStatusName(anchor.Status),
+        anchor.Sequence.Value,
+        anchor.EvidenceJson ?? string.Empty);
+
+    private static WireDigest DigestOf(Digest digest) => new(
+        digest.VersionId,
+        digest.Tier,
+        digest.ScopePath,
+        digest.Content,
+        digest.ContentHash,
+        digest.BuiltFromSequence.Value);
+
+    private static WirePromise PromiseOf(Promise promise) => new(
+        promise.Id,
+        promise.VersionId,
+        promise.Key,
+        promise.Kind,
+        promise.Description,
+        promise.OriginScope ?? string.Empty,
+        promise.DueScope ?? string.Empty,
+        PromiseStatusName(promise.Status),
+        promise.Sequence.Value,
+        promise.FulfilledSequence?.Value ?? 0);
+
+    // The contract counts in int64: a count that does not fit is not a count, and a uint64 that did would be a
+    // number no reader of the answer could act on.
+    private static WireCounter CounterOf(CounterTotal counter) => new(
+        counter.Key,
+        (long)counter.Total,
+        (long)(counter.Budget ?? 0),
+        counter.IsOverBudget);
+
+    private static WireEntity EntityOf(Entity entity) => new(
+        entity.Id,
+        entity.VersionId,
+        entity.CanonicalName,
+        entity.EntityType ?? string.Empty,
+        entity.Aliases,
+        entity.Sequence.Value,
+        entity.MergedInto ?? string.Empty);
+
+    private static string AnchorStatusName(AnchorStatus status) => status switch
+    {
+        AnchorStatus.Locked => WireAnchorStatuses.Locked,
+        AnchorStatus.Released => WireAnchorStatuses.Released,
+        _ => WireAnchorStatuses.Unspecified,
+    };
+
+    private static string PromiseStatusName(PromiseStatus status) => status switch
+    {
+        PromiseStatus.Open => WirePromiseStatuses.Open,
+        PromiseStatus.Fulfilled => WirePromiseStatuses.Fulfilled,
+        PromiseStatus.Expired => WirePromiseStatuses.Expired,
+        PromiseStatus.Violated => WirePromiseStatuses.Violated,
+        _ => WirePromiseStatuses.Unspecified,
+    };
 
     // An empty query value means "do not filter", which is a different thing from filtering for the empty string:
     // no finding has an empty rule id, so a filter the caller did not ask for would only ever hide findings.

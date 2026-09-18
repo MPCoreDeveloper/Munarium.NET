@@ -151,6 +151,19 @@ public static class MunariumEndpoints
                     .ConfigureAwait(false));
 
         app.MapGet(
+            "/v1/snapshots",
+            async (
+                [FromQuery(Name = "version_id")] string? versionId,
+                [FromQuery(Name = "as_of")] long? asOf,
+                [FromQuery(Name = "scope")] string? scope,
+                [FromQuery(Name = "fact_limit")] int? factLimit,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+                await operations
+                    .LoadSnapshotAsync(versionId ?? string.Empty, asOf ?? 0, scope, factLimit ?? 0, cancellationToken)
+                    .ConfigureAwait(false));
+
+        app.MapGet(
             "/v1/facts",
             async (
                 [FromQuery(Name = "as_of")] long? asOf,

@@ -235,6 +235,30 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
             Assert.NotEmpty(blocked.Finding.Detail);
         });
 
+    /// <summary>One pin, every plane, over the other transport.</summary>
+    [Fact]
+    public async Task ASnapshotTravelsOverGrpc() =>
+        await WithClient(async client =>
+        {
+            await client.ProposeClaimBatchAsync(new ProposeClaimBatchRequest
+            {
+                VersionId = "grpc-snapshot",
+                Body = Batch(("service", "api_version", "v2")),
+            });
+
+            var snapshot = await client.LoadSnapshotAsync(new LoadSnapshotRequest { VersionId = "grpc-snapshot" });
+            var fact = Assert.Single(snapshot.Data.Facts);
+
+            Assert.Equal("service", fact.Subject);
+            Assert.Equal("api_version", fact.Key);
+            Assert.Equal("v2", fact.Value);
+            Assert.Equal(ClaimStatus.Accepted, fact.Status);
+            Assert.Equal(Provenance.Witnessed, fact.Provenance);
+            Assert.NotEmpty(snapshot.Data.Digests);
+            Assert.NotEmpty(snapshot.Data.WrittenAt);
+            Assert.True(snapshot.Data.AsOfSequence > 0);
+        });
+
     /// <summary>The same batch a JSON caller would send, built for the gRPC surface.</summary>
     private static ClaimBatchRequest Batch(params (string Subject, string Key, string Value)[] claims)
     {

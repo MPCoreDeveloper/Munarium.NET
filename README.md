@@ -150,11 +150,12 @@ in the order it is planned:
   corpus is what a host put in the index rather than something the deployment ingested and can rebuild on demand.
   The source identity, the path rules and the `ISourceStore` seam are in place; the ingest surface, the source
   metadata row and the extractors that turn DOCX or PDF into the text a chunker cuts are the ingest slice.
-- **No RPC serves a snapshot.** `MeshSnapshotBuilder` reads the fact, anchor, promise, counter and entity
-  planes out of the version's stream under one pin and rebuilds the digest ladder, so a gate or a composer
-  can be handed a real snapshot; what is missing is the surface - nothing exposes a snapshot over the wire,
-  and the commands that lock an anchor or register a promise (rather than the storage seam itself) are the
-  authoring slice.
+- **A snapshot is served; the commands that write the planes behind it are not.** `GET /v1/snapshots` (and the
+  `LoadSnapshot` RPC) answers with one pin across every plane: facts resolved-current, the digest ladder rebuilt
+  from them, the scope filter and fact limit applied after resolution, and the three keyed planes - anchors,
+  promises, counters, entities - as they stood at that position, plus the instant derived from the snapshot's own
+  identities rather than from a clock. What is missing is the authoring side: nothing on the wire locks an anchor,
+  registers a promise or records an entity, so those planes are reached through the storage seam today.
 - **Idempotency keys.** The original requires an `idempotency-key` metadata entry on every command RPC and
   replays the stored result. Here a retry writes a second claim; the `ledger-conflict` gate treats a
   re-sent claim as a retry only when nothing about it changed, which is an approximation and is written

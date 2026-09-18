@@ -487,6 +487,70 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Empty(none.Findings);
     }
 
+    /// <summary>
+    /// The audit read: one pin bounds facts, the digest ladder and the other three planes at once, and the
+    /// instant comes from the snapshot's own identities rather than from a clock.
+    /// </summary>
+    [Fact]
+    public async Task ASnapshotCarriesEveryPlaneAtOnePin()
+    {
+        await ProposeBatchAsync(
+            "version-snapshot",
+            Batch(("service", "api_version", "v2"), ("service", "owner_team", "platform")));
+
+        var snapshot = await GetAsync("/v1/snapshots?version_id=version-snapshot", WireJson.Default.WireSnapshot);
+
+        Assert.Equal("version-snapshot", snapshot.VersionId);
+        Assert.True(snapshot.AsOfSequence > 0);
+        Assert.Equal(
+            ["service.api_version", "service.owner_team"],
+            snapshot.Facts.Select(fact => $"{fact.Subject}.{fact.Key}"));
+        Assert.All(snapshot.Facts, fact => Assert.Equal(WireClaimStatus.Accepted, fact.Status));
+        Assert.All(snapshot.Facts, fact => Assert.Equal(WireProvenances.Witnessed, fact.Provenance));
+
+        // The ladder is rebuilt from the pinned facts rather than looked up, so it is there to read.
+        Assert.NotEmpty(snapshot.Digests);
+        Assert.All(snapshot.Digests, rung => Assert.NotEmpty(rung.ContentHash));
+
+        // Every identity in the snapshot is a ULID, so the snapshot carries when it was written.
+        Assert.NotEmpty(snapshot.WrittenAt);
+        Assert.NotEmpty(snapshot.WrittenOn);
+
+        // The planes this version never wrote to are empty rather than absent.
+        Assert.Empty(snapshot.Anchors);
+        Assert.Empty(snapshot.Promises);
+        Assert.Empty(snapshot.Counters);
+        Assert.Empty(snapshot.Entities);
+    }
+
+    /// <summary>
+    /// The limit and the scope filter are applied after resolution, which is the only order that answers "the
+    /// newest fact of this scope": filtering first would let a superseded fact occupy the slot.
+    /// </summary>
+    [Fact]
+    public async Task ASnapshotLimitsAndFiltersFactsAfterResolvingThem()
+    {
+        await ProposeBatchAsync(
+            "version-snapshot-limit",
+            Batch(("service", "api_version", "v2"), ("service", "owner_team", "platform")));
+
+        var limited = await GetAsync(
+            "/v1/snapshots?version_id=version-snapshot-limit&fact_limit=1",
+            WireJson.Default.WireSnapshot);
+
+        var newest = Assert.Single(limited.Facts);
+
+        // The newer of the two facts is the one that survives the limit.
+        Assert.Equal("service", newest.Subject);
+        Assert.Equal("owner_team", newest.Key);
+
+        var elsewhere = await GetAsync(
+            "/v1/snapshots?version_id=version-snapshot-limit&scope=compliance",
+            WireJson.Default.WireSnapshot);
+
+        Assert.Empty(elsewhere.Facts);
+    }
+
     private static string Vendor(string vendorId, string status = "approved") =>
         $$"""{"vendor_id":"{{vendorId}}","status":"{{status}}"}""";
 

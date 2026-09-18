@@ -308,6 +308,58 @@ paths:
               schema:
                 $ref: "#/components/schemas/FindingList"
 
+  /v1/snapshots:
+    get:
+      operationId: LoadSnapshot
+      tags: [ledger]
+      summary: Everything the mesh holds at one pin, across every plane.
+      description: |
+        The audit read: one pin bounds facts, anchors, digests, promises, counters and entities at once, so a
+        caller can see what the mesh believed at that position and hand the answer to someone else to check.
+
+        Facts arrive resolved-current at the pin rather than as the writes that produced them; the scope filter
+        and the fact limit are applied after that resolution, which is the only order that answers "the newest
+        two facts of this scope" - filtering first would let a superseded fact occupy a slot and the reader
+        would get fewer current facts than it asked for. The digest ladder is rebuilt from the pinned facts,
+        because stored digest text has no history to read at a pin.
+
+        "written_at" is derived from the identities the snapshot holds rather than read from a clock, so a
+        verdict or a composition that depends on it can be rebuilt by anyone holding this answer.
+      parameters:
+        - name: version_id
+          in: query
+          required: false
+          description: The version to read, or empty for every version.
+          schema:
+            type: string
+        - name: as_of
+          in: query
+          required: false
+          description: The position to read as of, or 0 for the present.
+          schema:
+            type: integer
+            format: int64
+        - name: scope
+          in: query
+          required: false
+          description: A scope prefix to read, or empty for every scope.
+          schema:
+            type: string
+        - name: fact_limit
+          in: query
+          required: false
+          description: How many facts to keep, counting from the newest, or 0 for all of them.
+          schema:
+            type: integer
+            format: int32
+      responses:
+        "200":
+          description: The snapshot at that pin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Snapshot"
+
   /v1/facts:
     get:
       operationId: SliceFacts
@@ -538,6 +590,240 @@ components:
         - fact
         - update
         - correction
+
+    Snapshot:
+      type: object
+      description: |-
+        The point-in-time view the gates and the composer read. Every plane shares one sequence axis, which is
+        the whole reason a pin can be a single number: a reader that pinned facts and promises separately would
+        have to invent a rule for the two pins disagreeing.
+      required: [version_id, facts, anchors, digests, promises, counters, entities]
+      properties:
+        version_id:
+          type: string
+          description: The version the snapshot was taken of, or empty for every version.
+        as_of_sequence:
+          type: integer
+          format: int64
+          description: The position the snapshot was pinned at, or 0 for the present.
+        as_of_date:
+          type: string
+          description: The calendar date it was read as of, or empty.
+        written_at:
+          type: string
+          description: |-
+            The instant the newest identity in the snapshot was created at, as RFC 3339, or empty when no
+            identity is a ULID. This is not the pin: the pin says which writes are visible, this says when the
+            newest visible write happened.
+        written_on:
+          type: string
+          description: That instant as a calendar date, YYYY-MM-DD, or empty - what a chronology rule reads.
+        facts:
+          type: array
+          description: The current facts at the pin, in ascending sequence order.
+          items:
+            $ref: "#/components/schemas/ResolvedClaim"
+        anchors:
+          type: array
+          description: The locked anchors, later version winning, keyed by detail key.
+          items:
+            $ref: "#/components/schemas/Anchor"
+        digests:
+          type: array
+          description: The digest ladder as it stands at the pin, rebuilt rather than served.
+          items:
+            $ref: "#/components/schemas/Digest"
+        promises:
+          type: array
+          items:
+            $ref: "#/components/schemas/Promise"
+        counters:
+          type: array
+          items:
+            $ref: "#/components/schemas/Counter"
+        entities:
+          type: array
+          items:
+            $ref: "#/components/schemas/Entity"
+
+    AnchorStatus:
+      type: string
+      description: Whether a lock still holds. Only a locked anchor is judged against.
+      enum:
+        - unspecified
+        - locked
+        - released
+
+    PromiseStatus:
+      type: string
+      description: What became of a promise, as of the pin.
+      enum:
+        - unspecified
+        - open
+        - fulfilled
+        - expired
+        - violated
+
+    ResolvedClaim:
+      type: object
+      description: |-
+        A claim as the kernel reasons over it: the triple, where it sits in the scope tree, and the provenance
+        it was admitted under. The sequence is the position in the ledger as a whole, because that is the axis
+        the pin is on.
+      required: [claim_id, version_id, sequence, claim_type, subject, key, value, status, provenance]
+      properties:
+        claim_id:
+          type: string
+        version_id:
+          type: string
+        sequence:
+          type: integer
+          format: int64
+        claim_type:
+          $ref: "#/components/schemas/ClaimType"
+        subject:
+          type: string
+        key:
+          type: string
+        value:
+          type: string
+        scope_path:
+          type: string
+          description: The dotted scope it was written in, or empty.
+        status:
+          $ref: "#/components/schemas/ClaimStatus"
+        provenance:
+          $ref: "#/components/schemas/Provenance"
+        supersedes_id:
+          type: string
+          description: The claim it says it supersedes, or empty.
+
+    Anchor:
+      type: object
+      description: |-
+        A locked detail: while the anchor is locked, the detail key may not drift from the locked value. An
+        anchor freezes one detail without freezing the whole subject.
+      required: [anchor_id, version_id, detail_key, locked_value, status, sequence]
+      properties:
+        anchor_id:
+          type: string
+        version_id:
+          type: string
+        detail_key:
+          type: string
+          description: The locked detail, as "subject.key".
+        locked_value:
+          type: string
+        locked_at_scope:
+          type: string
+          description: The scope the lock was taken at, or empty.
+        status:
+          $ref: "#/components/schemas/AnchorStatus"
+        sequence:
+          type: integer
+          format: int64
+        evidence:
+          type: string
+          description: The evidence the lock was taken on, as JSON text, or empty.
+
+    Digest:
+      type: object
+      description: One rung of the digest ladder - a deterministic, model-free compression of facts under a scope.
+      required: [version_id, tier, scope_path, content, content_hash, built_from_sequence]
+      properties:
+        version_id:
+          type: string
+        tier:
+          type: integer
+          format: int32
+          description: 0 per scope, 1 per scope-prefix group, 2 the whole-lineage rollup.
+        scope_path:
+          type: string
+          description: The scope the rung covers - the group name at tier 1, and empty for the rollup.
+        content:
+          type: string
+        content_hash:
+          type: string
+          description: The SHA-256 of the content, as lowercase hex.
+        built_from_sequence:
+          type: integer
+          format: int64
+          description: The highest ledger position the rung was built from.
+
+    Promise:
+      type: object
+      description: A promise made in one scope and owed to a later one.
+      required: [promise_id, version_id, key, kind, description, status, sequence]
+      properties:
+        promise_id:
+          type: string
+        version_id:
+          type: string
+        key:
+          type: string
+        kind:
+          type: string
+        description:
+          type: string
+        origin_scope:
+          type: string
+          description: The scope it was made in, or empty.
+        due_scope:
+          type: string
+          description: The scope it is owed to, or empty.
+        status:
+          $ref: "#/components/schemas/PromiseStatus"
+        sequence:
+          type: integer
+          format: int64
+          description: The position the promise was made at.
+        fulfilled_sequence:
+          type: integer
+          format: int64
+          description: The position it was fulfilled at, or 0 while it is open.
+
+    Counter:
+      type: object
+      description: A whole-document frequency, with the ceiling it was declared under when it declared one.
+      required: [key, total]
+      properties:
+        key:
+          type: string
+        total:
+          type: integer
+          format: int64
+        budget:
+          type: integer
+          format: int64
+          description: The declared ceiling, or 0 when the counter has none.
+        over_budget:
+          type: boolean
+          description: Whether the total has passed the ceiling.
+
+    Entity:
+      type: object
+      description: A resolved entity, and the aliases it was resolved from.
+      required: [entity_id, version_id, canonical_name, sequence]
+      properties:
+        entity_id:
+          type: string
+        version_id:
+          type: string
+        canonical_name:
+          type: string
+        entity_type:
+          type: string
+          description: The entity's type, or empty.
+        aliases:
+          type: array
+          items:
+            type: string
+        sequence:
+          type: integer
+          format: int64
+        merged_into:
+          type: string
+          description: The entity this one was merged into, or empty.
 
     FindingList:
       type: object

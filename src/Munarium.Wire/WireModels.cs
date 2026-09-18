@@ -359,6 +359,169 @@ public sealed record WireStoredFinding(long Sequence, WireFinding Finding);
 /// <param name="Findings">The findings, oldest first.</param>
 public sealed record WireFindingList(IReadOnlyList<WireStoredFinding> Findings);
 
+/// <summary>The values the contract's <c>AnchorStatus</c> can carry.</summary>
+public static class WireAnchorStatuses
+{
+    /// <summary>No status was given.</summary>
+    public const string Unspecified = "unspecified";
+
+    /// <summary>The lock still holds, and is the only state judged against.</summary>
+    public const string Locked = "locked";
+
+    /// <summary>The detail was released and may drift again.</summary>
+    public const string Released = "released";
+}
+
+/// <summary>The values the contract's <c>PromiseStatus</c> can carry.</summary>
+public static class WirePromiseStatuses
+{
+    /// <summary>No status was given.</summary>
+    public const string Unspecified = "unspecified";
+
+    /// <summary>Nothing has settled it yet.</summary>
+    public const string Open = "open";
+
+    /// <summary>It was fulfilled, at the position the promise carries.</summary>
+    public const string Fulfilled = "fulfilled";
+
+    /// <summary>Its deadline passed without fulfilment.</summary>
+    public const string Expired = "expired";
+
+    /// <summary>It was broken outright.</summary>
+    public const string Violated = "violated";
+}
+
+/// <summary>Everything the mesh holds at one pin, across every plane.</summary>
+/// <param name="VersionId">The version the snapshot was taken of, or empty for every version.</param>
+/// <param name="AsOfSequence">The position it was pinned at, or 0 for the present.</param>
+/// <param name="AsOfDate">The calendar date it was read as of, or empty.</param>
+/// <param name="WrittenAt">The instant the newest identity in it was created at, or empty.</param>
+/// <param name="WrittenOn">That instant as a calendar date, or empty.</param>
+/// <param name="Facts">The current facts at the pin, in ascending sequence order.</param>
+/// <param name="Anchors">The locked anchors, later version winning.</param>
+/// <param name="Digests">The digest ladder, rebuilt at the pin.</param>
+/// <param name="Promises">The promises, with their status as of the pin.</param>
+/// <param name="Counters">The whole-document counters.</param>
+/// <param name="Entities">The resolved entities.</param>
+public sealed record WireSnapshot(
+    string VersionId,
+    long AsOfSequence,
+    string AsOfDate,
+    string WrittenAt,
+    string WrittenOn,
+    IReadOnlyList<WireResolvedClaim> Facts,
+    IReadOnlyList<WireAnchor> Anchors,
+    IReadOnlyList<WireDigest> Digests,
+    IReadOnlyList<WirePromise> Promises,
+    IReadOnlyList<WireCounter> Counters,
+    IReadOnlyList<WireEntity> Entities);
+
+/// <summary>A claim as the kernel reasons over it, resolved-current at the pin.</summary>
+/// <param name="ClaimId">The claim's identity.</param>
+/// <param name="VersionId">The version it was written to.</param>
+/// <param name="Sequence">Its position in the ledger as a whole, which is the axis the pin is on.</param>
+/// <param name="ClaimType">What it did to whatever the ledger held on its lineage.</param>
+/// <param name="Subject">The thing it is about.</param>
+/// <param name="Key">The property of the subject.</param>
+/// <param name="Value">The asserted value, as text.</param>
+/// <param name="ScopePath">The dotted scope it was written in, or empty.</param>
+/// <param name="Status">What the ledger recorded.</param>
+/// <param name="Provenance">How it came to exist.</param>
+/// <param name="SupersedesId">The claim it says it supersedes, or empty.</param>
+public sealed record WireResolvedClaim(
+    string ClaimId,
+    string VersionId,
+    long Sequence,
+    string ClaimType,
+    string Subject,
+    string Key,
+    string Value,
+    string ScopePath,
+    string Status,
+    string Provenance,
+    string SupersedesId);
+
+/// <summary>One rung of the digest ladder.</summary>
+/// <param name="VersionId">The version the rung was built for.</param>
+/// <param name="Tier">0 per scope, 1 per scope-prefix group, 2 the rollup.</param>
+/// <param name="ScopePath">The scope it covers - the group name at tier 1, empty for the rollup.</param>
+/// <param name="Content">The rung's content.</param>
+/// <param name="ContentHash">The SHA-256 of the content, as lowercase hex.</param>
+/// <param name="BuiltFromSequence">The highest ledger position it was built from.</param>
+public sealed record WireDigest(
+    string VersionId,
+    int Tier,
+    string ScopePath,
+    string Content,
+    string ContentHash,
+    long BuiltFromSequence);
+
+/// <summary>A locked detail: the detail key may not drift from the locked value while it holds.</summary>
+/// <param name="AnchorId">The anchor's identity.</param>
+/// <param name="VersionId">The version the lock was taken in.</param>
+/// <param name="DetailKey">The locked detail, as <c>subject.key</c>.</param>
+/// <param name="LockedValue">The value the detail is pinned to.</param>
+/// <param name="LockedAtScope">The scope the lock was taken at, or empty.</param>
+/// <param name="Status">Whether the lock still holds.</param>
+/// <param name="Sequence">The position the lock was taken at.</param>
+/// <param name="Evidence">The evidence the lock was taken on, as JSON text, or empty.</param>
+public sealed record WireAnchor(
+    string AnchorId,
+    string VersionId,
+    string DetailKey,
+    string LockedValue,
+    string LockedAtScope,
+    string Status,
+    long Sequence,
+    string Evidence);
+
+/// <summary>A promise made in one scope and owed to a later one.</summary>
+/// <param name="PromiseId">The promise's identity.</param>
+/// <param name="VersionId">The version it was made in.</param>
+/// <param name="Key">The key it is known by.</param>
+/// <param name="Kind">What kind of promise it is.</param>
+/// <param name="Description">The promise in words.</param>
+/// <param name="OriginScope">The scope it was made in, or empty.</param>
+/// <param name="DueScope">The scope it is owed to, or empty.</param>
+/// <param name="Status">What became of it, as of the pin.</param>
+/// <param name="Sequence">The position it was made at.</param>
+/// <param name="FulfilledSequence">The position it was fulfilled at, or 0 while it is open.</param>
+public sealed record WirePromise(
+    string PromiseId,
+    string VersionId,
+    string Key,
+    string Kind,
+    string Description,
+    string OriginScope,
+    string DueScope,
+    string Status,
+    long Sequence,
+    long FulfilledSequence);
+
+/// <summary>A whole-document frequency, with the ceiling it was declared under.</summary>
+/// <param name="Key">The counter's key.</param>
+/// <param name="Total">How many times the key has been counted.</param>
+/// <param name="Budget">The declared ceiling, or 0 when the counter has none.</param>
+/// <param name="OverBudget">Whether the total has passed the ceiling.</param>
+public sealed record WireCounter(string Key, long Total, long Budget, bool OverBudget);
+
+/// <summary>A resolved entity, and the aliases it was resolved from.</summary>
+/// <param name="EntityId">The entity's identity.</param>
+/// <param name="VersionId">The version it was resolved in.</param>
+/// <param name="CanonicalName">The name it is known by.</param>
+/// <param name="EntityType">Its type, or empty.</param>
+/// <param name="Aliases">The names it was resolved from.</param>
+/// <param name="Sequence">The position it was resolved at.</param>
+/// <param name="MergedInto">The entity it was merged into, or empty.</param>
+public sealed record WireEntity(
+    string EntityId,
+    string VersionId,
+    string CanonicalName,
+    string EntityType,
+    IReadOnlyList<string> Aliases,
+    long Sequence,
+    string MergedInto);
+
 public readonly union WireClaimResult(WireClaimOutcome, WireProblem);
 
 /// <summary>The result of creating a version: the version, or why it could not be created.</summary>
