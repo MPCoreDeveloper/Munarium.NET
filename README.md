@@ -83,7 +83,8 @@ Munarium.NET is dogfooded end to end on the author's own .NET 11 libraries:
 | **Facts and pins** | Canonical fact encoding, supersession along a lineage, and an `as_of` pin that rebuilds the same slice — and the same SHA-256 digest — every time. A fact carries the version it was written to and the body it was claimed with, so a slice can be read back into the claims it came from and one version can be read out of the whole. |
 | **Versions and lineage** | A version is an ordinary claim under the `version` shape, so it is judged by the same gates and rebuilt from the same slice as everything else — and its identity is immutable by construction, because claiming it twice is a ledger conflict. `GetLineage` walks parent links root-first, and `as_of_date` resolves to a pin through the version's own metadata. |
 | **Context** | `ComposeContext` composes what a model would be given: the accepted facts of one version or shape, within a token budget, with refused claims listed separately under *Disputed*. It is a pure function of the pin, so the same pin composes the same text and the same `content_hash` — which is what makes the hash a cache key rather than a guess. |
-| **Retrieval** | A retrieval seam that returns a `ProvenanceEnvelope` rather than bare similarity, and reciprocal rank fusion for combining a vector leg with a lexical one. |
+| **Retrieval** | A retrieval seam that returns a `ProvenanceEnvelope` rather than bare similarity. The adapter over SharpCoreDB runs two independent legs — Okapi BM25 through the engine's own analyzing tokenizer, stemmer and stop words, and a vector leg that is either an exact scan or a DiskANN Vamana graph — and fuses them **by rank**, because a BM25 score and a cosine distance do not share a scale. Fusion is the port's own so the answer and its envelope are produced together: the ranking that decided the answer is the ranking the envelope records, and opaque chunk ids stay opaque where the engine's fusion parses them back to numbers. |
+| **Index versions** | An index version is an immutable snapshot of one collection's corpus as one shape sees it, and its identity is a hash of everything that determines what a query would match — collection, shape, engine, chunker, extractors, embedder and the source/hash bindings. So a rebuild of one corpus is one version and any change that alters the text or the vectors is another, which makes a build idempotent and a cutover meaningful. Segments are joined with a unit separator and the sources are sorted and deduped before hashing: the same bug the evidence plane's domain key fixed, where material joined with a printable character can be reached two ways. Building records a version **without** making it live, a cutover is per collection and atomic, a superseded version stays resolvable, and `ResolveAsync` takes an answer's envelope and checks that the version it names exists, that the bytes it cites are ones that version indexed, and that it does not claim more of the ledger than the index ever reflected. |
 | **Evidence** | A manifest is a promise about bytes: the contract version and canonicalization, the artifact and logical-result hashes, the schema, the row identity rule, the snapshot vector, and the authorization class. The domain key excludes the artifact hash — re-serializing one logical result must not mint a second artifact — and includes the authorization class, joined with a unit separator, so one compartment holding a comma cannot be two compartments. Content is verified canonically (`sha256:` plus lowercase hex), and a check reports the two lengths and the two hashes rather than a bare yes: an operator chasing a mismatch needs to know what was expected and what arrived. |
 | **The evidence hierarchy** | A research profile resolves into a plan of layers, each with pinned sources, a requirement (`required`, `optional`, `fallback`), a role and its own context budget. `HierarchyRunner` runs them in trust order: providers are tried in order and the first that claims a source wins, a fallback layer runs only when nothing before it produced evidence, and a plane-qualified source (`matrix:`, `facts:`) that no provider claims **refuses** rather than quietly becoming a document search that reports a required layer satisfied. A required layer that refused stops the turn — as a result rather than an exception, because a refusal is something the answer has to disclose. `HierarchyComposer` then composes the blocks: highest trust occupies the budget first, a `preserve_complete_result` layer is taken whole or dropped, every block is labelled `COMPLETE` or `TRUNCATED`, and rows are numbered by one function the served-evidence list shares, because a checker that numbered rows differently from the text the model read would reject correct citations. |
 | **Providers** | The model-provider seam, and a deterministic in-process embedding provider for tests and smoke runs. |
@@ -135,10 +136,16 @@ in the order it is planned:
   missing is the server side: providers bound to the real planes (a semantic data view, the fact ledger, sealed
   artifacts), an `IEvidenceStore` adapter, the research profiles a runbook declares, progress on the wire, and
   the per-turn hierarchy decision persisted where an operator can read it.
-- **Ingestion and index versions.** `/v1/search` answers with a real provenance envelope, but there is no
-  `/v1/ingests` or `/v1/indexes` yet, so an index is what a host put in it rather than a versioned
-  artefact the ledger knows about. Index version → envelope → ledger watermark is the demonstration that
-  closes this.
+- **Index versions are defined and checkable, but nothing builds one or serves their state.** The catalogue, the
+  derived identity, the cutover rules and the envelope resolution are in the kernel and tested; the adapter can
+  answer a query with BM25 and either vector engine. What is missing is the build path over the wire: an index
+  version is not yet persisted by a store adapter (the storage adapter holds events, and retrieval bookkeeping is
+  deliberately not ledger data, so this wants a table rather than the event stream), and there is no
+  `/v1/indexes` surface to build, activate or read one.
+- **Ingestion.** `/v1/search` answers with a real provenance envelope, but nothing writes a document yet, so a
+  corpus is what a host put in the index rather than something the deployment ingested and can rebuild on demand.
+  The source identity, the path rules and the `ISourceStore` seam are in place; the ingest surface, the source
+  metadata row and the extractors that turn DOCX or PDF into the text a chunker cuts are the ingest slice.
 - **No RPC serves a snapshot.** `MeshSnapshotBuilder` reads the fact, anchor, promise, counter and entity
   planes out of the version's stream under one pin and rebuilds the digest ladder, so a gate or a composer
   can be handed a real snapshot; what is missing is the surface - nothing exposes a snapshot over the wire,
@@ -148,9 +155,6 @@ in the order it is planned:
   replays the stored result. Here a retry writes a second claim; the `ledger-conflict` gate treats a
   re-sent claim as a retry only when nothing about it changed, which is an approximation and is written
   down as one.
-- **The source ingest path.** The identity, the path rules and the `ISourceStore` seam are in place, but
-  nothing writes a document through them yet: ingest, the source metadata row, the index version it feeds,
-  and the store backends themselves (filesystem, SharpCoreDB, object storage) are the ingest slice.
 - **Pagination** (`PageRequest`/`PageResponse`), **authentication and tenancy**, **sessions and runbooks**,
   and the separate **`matrix/v1` semantic query** surface. The original carries roughly 49 RPCs across 8
   services; the kernel's core is what is served here.
