@@ -172,6 +172,44 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Contains("vendor@1|vendor_id=v-json", json, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A key is spelled the contract's way on the request side too, which is what a caller who is not using this port's
+    /// own types has to write: the contract names the field, and the transports do not each get an opinion about it.
+    /// </summary>
+    [Fact]
+    public void AKeyIsSpelledTheContractsWayInARequestBody()
+    {
+        string key = LedgerIds.New();
+        string field = $"\"idempotency_key\":\"{key}\"";
+
+        Assert.Contains(
+            field,
+            JsonSerializer.Serialize(
+                new WireCounterRecording("the bell", 4, 6, key), WireJson.Default.WireCounterRecording),
+            StringComparison.Ordinal);
+
+        Assert.Contains(
+            field,
+            JsonSerializer.Serialize(
+                new WireAnchorLock("service", "api_version", "v2", string.Empty, string.Empty, key),
+                WireJson.Default.WireAnchorLock),
+            StringComparison.Ordinal);
+
+        Assert.Contains(
+            field,
+            JsonSerializer.Serialize(
+                new WirePromiseRegistration("audit-report", "deliverable", "an audit report", "api", "compliance", key),
+                WireJson.Default.WirePromiseRegistration),
+            StringComparison.Ordinal);
+
+        Assert.Contains(
+            field,
+            JsonSerializer.Serialize(
+                new WireVersionRequest("v-keyed", string.Empty, string.Empty, "keyed", "tester", key),
+                WireJson.Default.WireVersionRequest),
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task AVersionIsAClaimAndItsLineageIsRebuiltFromTheLedger()
     {
