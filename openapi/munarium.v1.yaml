@@ -191,6 +191,57 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/versions/{version_id}/claim-batches:
+    post:
+      operationId: ProposeClaimBatch
+      tags: [ledger]
+      summary: Propose a batch of claims, judged as one unit and landed as one append.
+      description: |
+        The candidate plane: everything a writer produced for a scope at once, judged against the head the
+        gates read and landed as one conditional append. A blocked claim is recorded as disputed rather
+        than dropped, so a batch is not a transaction that can half-succeed - it lands entirely or not at
+        all, and the findings that judged it travel with it.
+
+        The findings are the authoritative carrier of the verdict: the ledger keeps the rule that refused a
+        claim, and the detail - which claim key, which values disagreed - belongs to the finding.
+
+        These claims are semantic: subject.key=value, the vocabulary the gates reason over, with the claim
+        type saying what the write does to what is already on the key. expected_head is a caller's pin: a
+        batch that names one is answered with a contention instead of a re-gate, because it asked for a
+        position rather than for an append.
+      parameters:
+        - name: version_id
+          in: path
+          required: true
+          description: The version to write to.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimBatchRequest"
+      responses:
+        "200":
+          description: The batch as recorded, with the verdicts it was recorded under.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimBatchOutcome"
+        "400":
+          description: A claim in the batch is missing something the contract requires.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The caller's pin was not the head, or every retry lost to a moving head.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
   /v1/facts:
     get:
       operationId: SliceFacts
@@ -421,6 +472,129 @@ components:
         - fact
         - update
         - correction
+
+    ClaimCandidate:
+      type: object
+      description: |-
+        One claim as the candidate plane sees it: a semantic triple rather than a shaped body, because that
+        is what the gates reason over. A batch may span scopes, so the scope travels per claim, and the
+        candidate's own scope - the one a finding is reported against - is the first one any claim names.
+      required: [subject, key, value]
+      properties:
+        claim_type:
+          $ref: "#/components/schemas/ClaimType"
+        subject:
+          type: string
+          description: The thing the claim is about.
+        key:
+          type: string
+          description: The property of the subject.
+        value:
+          type: string
+          description: The asserted value, as text.
+        scope_path:
+          type: string
+          description: The dotted scope the claim was produced in, or empty for none.
+        provenance:
+          $ref: "#/components/schemas/Provenance"
+        supersedes_id:
+          type: string
+          description: The claim this one says it supersedes, or empty when it names none.
+
+    ClaimBatchRequest:
+      type: object
+      required: [claims]
+      properties:
+        claims:
+          type: array
+          description: The proposals in the batch, in the order they were produced.
+          items:
+            $ref: "#/components/schemas/ClaimCandidate"
+        text:
+          type: string
+          description: |-
+            The text the text-shaped gates read - meta-leakage and repetition judge a unit of text, not a
+            claim - or empty when the batch produced none.
+        expected_head:
+          type: integer
+          format: int64
+          description: |-
+            The head the caller requires, or 0 to append at whatever the head is. A caller that pins one
+            gets a contention instead of a re-gate.
+
+    Provenance:
+      type: string
+      description: How a claim came to exist.
+      enum:
+        - unspecified
+        - witnessed
+        - backfilled
+        - repaired
+        - emergent
+        - coverage_repair
+
+    Severity:
+      type: string
+      description: How serious a finding is. Only "block" refuses a claim.
+      enum:
+        - unspecified
+        - info
+        - warn
+        - block
+
+    Finding:
+      type: object
+      description: |-
+        One thing a gate had to say about a batch. Findings accumulate, because a batch can break several
+        rules at once and an operator who fixes one of them should not have to re-run to discover the next.
+      required: [rule_id, severity, message]
+      properties:
+        rule_id:
+          type: string
+          description: The dotted rule identifier, such as "gate.ledger-conflict".
+        severity:
+          $ref: "#/components/schemas/Severity"
+        message:
+          type: string
+          description: The finding in the operator's words.
+        scope_path:
+          type: string
+          description: The scope the batch was judged in, or empty.
+        claim_key:
+          type: string
+          description: |-
+            The claim this finding disputes, or empty when it names none - a meta-leakage finding is about
+            a unit of text and cannot dispute one claim.
+        detail:
+          type: string
+          description: |-
+            The structured detail as JSON text. The kernel does not interpret it, so the contract carries it
+            verbatim rather than promising a shape it would have to keep in step.
+
+    ClaimBatchOutcome:
+      type: object
+      required: [version_id, head, claims, findings]
+      properties:
+        version_id:
+          type: string
+        head:
+          type: integer
+          format: int64
+          description: The version's head after the append.
+        claims:
+          type: array
+          description: The claims as recorded, in the order they were proposed.
+          items:
+            $ref: "#/components/schemas/ClaimOutcome"
+        findings:
+          type: array
+          description: Every finding the gates produced, including the warnings that refused nothing.
+          items:
+            $ref: "#/components/schemas/Finding"
+        findings_sequence:
+          type: integer
+          format: int64
+          description: The position the findings were recorded at, or 0 when the write produced none.
 
     ClaimProposal:
       type: object

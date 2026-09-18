@@ -357,6 +357,81 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    /// <summary>
+    /// The candidate plane: a batch is judged as one unit and landed as one append, so the head moves by the
+    /// number of claims rather than by the number of writes.
+    /// </summary>
+    [Fact]
+    public async Task ABatchLandsAsOneAppend()
+    {
+        var outcome = await ProposeBatchAsync(
+            "version-batch",
+            Batch(("service", "api_version", "v2"), ("service", "owner_team", "platform")));
+
+        Assert.Equal(2, outcome.Head);
+        Assert.Equal(2, outcome.Claims.Count);
+        Assert.All(outcome.Claims, claim => Assert.Equal(WireClaimStatus.Accepted, claim.Status));
+        Assert.Equal(
+            ["service.api_version", "service.owner_team"],
+            outcome.Claims.Select(claim => claim.Lineage));
+
+        // The claims are in the ledger, not merely in the response.
+        var slice = await GetAsync("/v1/facts?version_id=version-batch", WireJson.Default.WireFactSlice);
+
+        Assert.Equal(2, slice.Facts.Count);
+    }
+
+    /// <summary>
+    /// A batch that names a position asks for that position: losing it is a contention rather than a quiet
+    /// re-gate, because the caller asked to write at a head and not merely to write.
+    /// </summary>
+    [Fact]
+    public async Task APinnedBatchThatLostTheHeadIsContended()
+    {
+        using var response = await _client.PostAsJsonAsync(
+            "/v1/versions/version-batch-contended/claim-batches",
+            new WireClaimBatchRequest(
+                [Candidate("service", "api_version", "v2")],
+                string.Empty,
+                ExpectedHead: 99),
+            WireJson.Default.WireClaimBatchRequest);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+
+        var problem = (await response.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
+
+        Assert.Equal(MunariumOperations.ContendedWriteProblem, problem.Type);
+        Assert.Equal(99, problem.ExpectedHead);
+    }
+
+    [Fact]
+    public async Task ABatchMissingARequiredFieldNamesTheClaimThatMissedIt()
+    {
+        using var response = await _client.PostAsJsonAsync(
+            "/v1/versions/version-batch-invalid/claim-batches",
+            new WireClaimBatchRequest(
+                [
+                    Candidate("service", "api_version", "v2"),
+                    new WireClaimCandidate(string.Empty, "service", "owner_team", string.Empty, string.Empty, string.Empty, string.Empty),
+                ],
+                string.Empty,
+                ExpectedHead: 0),
+            WireJson.Default.WireClaimBatchRequest);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var problem = (await response.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
+
+        // The second claim is the one that missed a value, and nothing was recorded for either of them: a
+        // request that was not understood is not a write.
+        Assert.Equal(MunariumOperations.InvalidRequestProblem, problem.Type);
+        Assert.Equal("claims[1]: value is required.", problem.Detail);
+
+        var head = await GetAsync("/v1/versions/version-batch-invalid/head", WireJson.Default.WireVersionHead);
+
+        Assert.Equal(0, head.Head);
+    }
+
     private static string Vendor(string vendorId, string status = "approved") =>
         $$"""{"vendor_id":"{{vendorId}}","status":"{{status}}"}""";
 
@@ -379,6 +454,25 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         return (await response.Content.ReadFromJsonAsync(WireJson.Default.WireClaimOutcome))!;
+    }
+
+    private static WireClaimBatchRequest Batch(
+        params (string Subject, string Key, string Value)[] claims) =>
+        new([.. claims.Select(claim => Candidate(claim.Subject, claim.Key, claim.Value))], string.Empty, ExpectedHead: 0);
+
+    private static WireClaimCandidate Candidate(string subject, string key, string value) =>
+        new(string.Empty, subject, key, value, string.Empty, string.Empty, string.Empty);
+
+    private async Task<WireClaimBatchOutcome> ProposeBatchAsync(string version, WireClaimBatchRequest request)
+    {
+        var response = await _client.PostAsJsonAsync(
+            $"/v1/versions/{version}/claim-batches",
+            request,
+            WireJson.Default.WireClaimBatchRequest);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        return (await response.Content.ReadFromJsonAsync(WireJson.Default.WireClaimBatchOutcome))!;
     }
 
     private static WireContextRequest Context(string version, string asOfDate = "", int budgetTokens = 0) =>

@@ -98,6 +98,22 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
     }
 
     /// <inheritdoc />
+    public override async Task<ProposeClaimBatchResponse> ProposeClaimBatchAsync(
+        ProposeClaimBatchRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .ProposeClaimBatchAsync(request.VersionId, ToWire(request.Body), context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireClaimBatchOutcome outcome => new ProposeClaimBatchResponse { Data = ToMessage(outcome) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
     public override async Task<SliceFactsResponse> SliceFactsAsync(
         SliceFactsRequest request,
         ServerCallContext context)
@@ -209,6 +225,38 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         return message;
     }
 
+    private static ClaimBatchOutcome ToMessage(WireClaimBatchOutcome outcome)
+    {
+        var message = new ClaimBatchOutcome
+        {
+            VersionId = outcome.VersionId,
+            Head = outcome.Head,
+            FindingsSequence = outcome.FindingsSequence,
+        };
+
+        foreach (var claim in outcome.Claims)
+        {
+            message.Claims.Add(ToMessage(claim));
+        }
+
+        foreach (var finding in outcome.Findings)
+        {
+            message.Findings.Add(ToMessage(finding));
+        }
+
+        return message;
+    }
+
+    private static Finding ToMessage(WireFinding finding) => new()
+    {
+        RuleId = finding.RuleId,
+        Severity = SeverityOf(finding.Severity),
+        Message = finding.Message,
+        ScopePath = finding.ScopePath,
+        ClaimKey = finding.ClaimKey,
+        Detail = finding.Detail,
+    };
+
     private static ClaimOutcome ToMessage(WireClaimOutcome outcome) => new()
     {
         VersionId = outcome.VersionId,
@@ -297,9 +345,10 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         return message;
     }
 
-    // The contract's enumerations are names in the specification and numbers on the wire; these three put
-    // the two together, and both directions are total, so an unknown value cannot become a silent default
-    // in one direction and a name nobody wrote in the other.
+    // The contract's enumerations are names in the specification and numbers on the wire; these put the two
+    // together, and each direction exists where the contract carries one: a status and a claim type travel
+    // both ways, a provenance only into a write and a severity only out of a read. Every mapper is total, so
+    // an unknown value becomes the contract's "unspecified" rather than a silent default.
     private static ClaimStatus ClaimStatusOf(string status) => status switch
     {
         WireClaimStatus.Accepted => ClaimStatus.Accepted,
@@ -323,6 +372,48 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         ClaimType.Correction => WireClaimTypes.Correction,
         _ => WireClaimTypes.Unspecified,
     };
+
+    private static string ProvenanceName(Provenance provenance) => provenance switch
+    {
+        Provenance.Witnessed => WireProvenances.Witnessed,
+        Provenance.Backfilled => WireProvenances.Backfilled,
+        Provenance.Repaired => WireProvenances.Repaired,
+        Provenance.Emergent => WireProvenances.Emergent,
+        Provenance.CoverageRepair => WireProvenances.CoverageRepair,
+        _ => WireProvenances.Unspecified,
+    };
+
+    private static Severity SeverityOf(string severity) => severity switch
+    {
+        WireSeverities.Info => Severity.Info,
+        WireSeverities.Warn => Severity.Warn,
+        WireSeverities.Block => Severity.Block,
+        _ => Severity.Unspecified,
+    };
+
+    private static WireClaimBatchRequest ToWire(ClaimBatchRequest? body)
+    {
+        var claims = new List<WireClaimCandidate>();
+
+        if (body is not null)
+        {
+            foreach (var candidate in body.Claims)
+            {
+                claims.Add(ToWire(candidate));
+            }
+        }
+
+        return new WireClaimBatchRequest(claims, body?.Text ?? string.Empty, body?.ExpectedHead ?? 0);
+    }
+
+    private static WireClaimCandidate ToWire(ClaimCandidate candidate) => new(
+        ClaimTypeName(candidate.ClaimType),
+        candidate.Subject,
+        candidate.Key,
+        candidate.Value,
+        candidate.ScopePath,
+        ProvenanceName(candidate.Provenance),
+        candidate.SupersedesId);
 
     private static WireClaimProposal ToWire(ClaimProposal? proposal) => new(
         proposal?.ClaimId ?? string.Empty,

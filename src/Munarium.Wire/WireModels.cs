@@ -249,6 +249,107 @@ public sealed record WireComposedContext(
 /// answers <c>409</c> with the problem and gRPC answers <c>ABORTED</c>, and both have to handle it
 /// because forgetting a case does not compile.
 /// </remarks>
+/// <summary>
+/// The values the contract's <c>Provenance</c> can carry: how a claim came to exist.
+/// </summary>
+public static class WireProvenances
+{
+    /// <summary>The caller did not say, which is read as a witnessed claim rather than as an excuse.</summary>
+    public const string Unspecified = "unspecified";
+
+    /// <summary>Someone or something observed it.</summary>
+    public const string Witnessed = "witnessed";
+
+    /// <summary>It was imported from an earlier system rather than observed now.</summary>
+    public const string Backfilled = "backfilled";
+
+    /// <summary>It was re-asserted to fix a recorded value.</summary>
+    public const string Repaired = "repaired";
+
+    /// <summary>It was concluded from what was observed.</summary>
+    public const string Emergent = "emergent";
+
+    /// <summary>It was produced by coverage repair rather than by a witness.</summary>
+    public const string CoverageRepair = "coverage_repair";
+}
+
+/// <summary>
+/// The values the contract's <c>Severity</c> can carry.
+/// </summary>
+/// <remarks>
+/// Strings, not the ledger's numbers: the ledger encodes a severity numerically because its member names are
+/// free to change, while the wire is where the names <em>are</em> the contract - a caller reading "warn" learns
+/// something a caller reading "1" does not.
+/// </remarks>
+public static class WireSeverities
+{
+    /// <summary>No severity was given.</summary>
+    public const string Unspecified = "unspecified";
+
+    /// <summary>Worth knowing.</summary>
+    public const string Info = "info";
+
+    /// <summary>Worth acting on, and not a refusal.</summary>
+    public const string Warn = "warn";
+
+    /// <summary>The claim was refused and recorded as disputed.</summary>
+    public const string Block = "block";
+}
+
+/// <summary>One claim as the candidate plane sees it: a semantic triple rather than a shaped body.</summary>
+/// <param name="ClaimType">What the claim does to whatever the ledger holds on its key.</param>
+/// <param name="Subject">The thing the claim is about.</param>
+/// <param name="Key">The property of the subject.</param>
+/// <param name="Value">The asserted value, as text.</param>
+/// <param name="ScopePath">The dotted scope it was produced in, or empty.</param>
+/// <param name="Provenance">How the claim came to exist.</param>
+/// <param name="SupersedesId">The claim it says it supersedes, or empty.</param>
+public sealed record WireClaimCandidate(
+    string ClaimType,
+    string Subject,
+    string Key,
+    string Value,
+    string ScopePath,
+    string Provenance,
+    string SupersedesId);
+
+/// <summary>A batch of claims as proposed, with the text the text-shaped gates read.</summary>
+/// <param name="Claims">The proposals, in the order they were produced.</param>
+/// <param name="Text">The unit of text the text-shaped gates judge, or empty.</param>
+/// <param name="ExpectedHead">The head the caller requires, or 0 to append at whatever the head is.</param>
+public sealed record WireClaimBatchRequest(
+    IReadOnlyList<WireClaimCandidate> Claims,
+    string Text,
+    long ExpectedHead);
+
+/// <summary>One thing a gate had to say about a batch.</summary>
+/// <param name="RuleId">The dotted rule identifier.</param>
+/// <param name="Severity">How serious it is; only <c>block</c> refuses a claim.</param>
+/// <param name="Message">The finding in the operator's words.</param>
+/// <param name="ScopePath">The scope the batch was judged in, or empty.</param>
+/// <param name="ClaimKey">The claim it disputes, or empty when it names none.</param>
+/// <param name="Detail">The structured detail as JSON text, carried verbatim.</param>
+public sealed record WireFinding(
+    string RuleId,
+    string Severity,
+    string Message,
+    string ScopePath,
+    string ClaimKey,
+    string Detail);
+
+/// <summary>A batch as recorded, with the verdicts it was recorded under.</summary>
+/// <param name="VersionId">The version it was written to.</param>
+/// <param name="Head">The version's head after the append.</param>
+/// <param name="Claims">The claims as recorded, in the order they were proposed.</param>
+/// <param name="Findings">Every finding the gates produced, including the ones that refused nothing.</param>
+/// <param name="FindingsSequence">The position the findings were recorded at, or 0 when the write produced none.</param>
+public sealed record WireClaimBatchOutcome(
+    string VersionId,
+    long Head,
+    IReadOnlyList<WireClaimOutcome> Claims,
+    IReadOnlyList<WireFinding> Findings,
+    long FindingsSequence);
+
 public readonly union WireClaimResult(WireClaimOutcome, WireProblem);
 
 /// <summary>The result of creating a version: the version, or why it could not be created.</summary>
@@ -256,3 +357,6 @@ public readonly union WireVersionResult(WireVersion, WireProblem);
 
 /// <summary>The result of composing a context: the context, or why it could not be composed.</summary>
 public readonly union WireContextResult(WireComposedContext, WireProblem);
+
+/// <summary>The result of proposing a batch: the batch as recorded, or why it was not.</summary>
+public readonly union WireClaimBatchResult(WireClaimBatchOutcome, WireProblem);

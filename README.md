@@ -88,7 +88,7 @@ Munarium.NET is dogfooded end to end on the author's own .NET 11 libraries:
 | **Evidence** | A manifest is a promise about bytes: the contract version and canonicalization, the artifact and logical-result hashes, the schema, the row identity rule, the snapshot vector, and the authorization class. The domain key excludes the artifact hash — re-serializing one logical result must not mint a second artifact — and includes the authorization class, joined with a unit separator, so one compartment holding a comma cannot be two compartments. Content is verified canonically (`sha256:` plus lowercase hex), and a check reports the two lengths and the two hashes rather than a bare yes: an operator chasing a mismatch needs to know what was expected and what arrived. |
 | **The evidence hierarchy** | A research profile resolves into a plan of layers, each with pinned sources, a requirement (`required`, `optional`, `fallback`), a role and its own context budget. `HierarchyRunner` runs them in trust order: providers are tried in order and the first that claims a source wins, a fallback layer runs only when nothing before it produced evidence, and a plane-qualified source (`matrix:`, `facts:`) that no provider claims **refuses** rather than quietly becoming a document search that reports a required layer satisfied. A required layer that refused stops the turn — as a result rather than an exception, because a refusal is something the answer has to disclose. `HierarchyComposer` then composes the blocks: highest trust occupies the budget first, a `preserve_complete_result` layer is taken whole or dropped, every block is labelled `COMPLETE` or `TRUNCATED`, and rows are numbered by one function the served-evidence list shares, because a checker that numbered rows differently from the text the model read would reject correct citations. |
 | **Providers** | The model-provider seam, and a deterministic in-process embedding provider for tests and smoke runs. |
-| **Wire** | One OpenAPI specification as the contract, one transport-agnostic operation surface behind it, and both surfaces served from it: JSON/HTTP by `Munarium.Server`, and gRPC/protobuf by the service base SharpPortico generates from that same specification - so the two cannot drift on names, shapes or enum values. |
+| **Wire** | One OpenAPI specification as the contract, one transport-agnostic operation surface behind it, and both surfaces served from it: JSON/HTTP by `Munarium.Server`, and gRPC/protobuf by the service base SharpPortico generates from that same specification - so the two cannot drift on names, shapes or enum values. A new operation is one specification entry plus one adapter per surface; the generated client is what the gRPC tests drive, which is why the contract file is the only place an operation is declared. |
 
 `src/Munarium.Store.SharpCoreDb` is the storage and retrieval adapter over SharpCoreDB, and
 `src/Munarium.Providers` holds the providers. `src/Munarium.Server` serves the wire surface over both
@@ -123,13 +123,14 @@ Each of these is an upstream finding with the evidence that produced it, not a p
 The kernel is finished first, because everything else is a thin adapter over it. What is missing, roughly
 in the order it is planned:
 
-- **The candidate plane is on the write path, with its verdicts recorded, but not yet on the wire.**
-  `CandidateLedger` judges a whole unit against the head it was judged against, records a blocked claim as
-  disputed, and lands the claims and the write's findings in **one** conditional append - so the response
-  and the record cannot disagree, where the original writes findings to a separate table and treats a
-  failure as a warning. `FindingsLedger` reads them back per version with the original's query (pin,
-  severity, exact rule, rule prefix, limit). What is missing is the RPC that carries the batch, and a
-  shape's schema is still only judged on the command path, not over a batch.
+- **The candidate plane is on the write path *and* on both wire surfaces; what is missing is the findings
+  read.** `CandidateLedger` judges a whole unit against the head it was judged against, records a blocked claim
+  as disputed, and lands the claims and the write's findings in **one** conditional append - so the response and
+  the record cannot disagree, where the original writes findings to a separate table and treats a failure as a
+  warning. `POST /v1/versions/{id}/claim-batches` (and the `ProposeClaimBatch` RPC) carries the batch, returns
+  each claim's verdict with the findings that produced them, and answers a caller's `expected_head` pin with a
+  contention rather than a re-gate. `FindingsLedger` reads the findings back per version with the original's
+  query (pin, severity, exact rule, rule prefix, limit), but no route serves that read yet.
 - **The evidence hierarchy runs in the kernel, but nothing serves it yet.** A plan executes in trust order, a
   plane-qualified source refuses when nothing is bound to it, a required layer's refusal stops the turn, and
   composition honours both the profile budget and the whole-or-nothing rule — all against test doubles. What is

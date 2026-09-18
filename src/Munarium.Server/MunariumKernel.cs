@@ -1,6 +1,7 @@
 namespace Munarium.Server;
 
 using Microsoft.Extensions.DependencyInjection;
+using Munarium.Claims;
 using Munarium.Context;
 using Munarium.Facts;
 using Munarium.Governance;
@@ -79,9 +80,14 @@ public sealed class MunariumKernel : IAsyncDisposable
         var facts = new FactLedger(storage);
         var claims = new ClaimLedger(storage, shapes, [new ShapeGate(shapes), new LedgerConflictGate(shapes, facts)]);
 
+        // The candidate plane: a batch judged as one unit against the head the gates read, which is what the
+        // claim-batch operation carries. It reads the same ledger through the same storage seam.
+        var candidates = new CandidateLedger(storage, new MeshSnapshotBuilder(storage));
+
         var operations = new MunariumOperations(
             storage,
             claims,
+            candidates,
             facts,
             shapes,
             retriever,

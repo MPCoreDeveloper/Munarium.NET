@@ -3,6 +3,7 @@ namespace Munarium.Wire;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Munarium.Claims;
 using Munarium.Commands;
 using Munarium.Context;
 using Munarium.Facts;
@@ -24,6 +25,7 @@ using Munarium.Versions;
 public sealed class MunariumOperations(
     IStorageBackend storage,
     ClaimLedger claims,
+    CandidateLedger candidates,
     FactLedger facts,
     ShapeRegistry shapes,
     IRetrievalBackend retrieval,
@@ -45,6 +47,7 @@ public sealed class MunariumOperations(
 
     private readonly IStorageBackend _storage = storage ?? throw new ArgumentNullException(nameof(storage));
     private readonly ClaimLedger _claims = claims ?? throw new ArgumentNullException(nameof(claims));
+    private readonly CandidateLedger _candidates = candidates ?? throw new ArgumentNullException(nameof(candidates));
     private readonly FactLedger _facts = facts ?? throw new ArgumentNullException(nameof(facts));
     private readonly ShapeRegistry _shapes = shapes ?? throw new ArgumentNullException(nameof(shapes));
     private readonly IRetrievalBackend _retrieval = retrieval ?? throw new ArgumentNullException(nameof(retrieval));
@@ -119,6 +122,91 @@ public sealed class MunariumOperations(
             ClaimContended contended => new WireProblem(
                 ContendedWriteProblem,
                 "Every retry lost to a moving head; the write was not recorded.",
+                Status: 409,
+                contended.Expected.Value,
+                contended.Actual.Value),
+        };
+    }
+
+    /// <summary>Proposes a batch of claims, which governance then judges as one unit.</summary>
+    /// <param name="versionId">The version to write to.</param>
+    /// <param name="request">The batch as proposed.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The batch as recorded, or a problem when it was not recorded.</returns>
+    /// <remarks>
+    /// The whole unit is judged against the head the gates read and landed as one conditional append, so a
+    /// batch cannot half-succeed. A blocked claim is recorded as disputed rather than dropped, which is why a
+    /// 200 here can carry a disputed claim: the ledger did what it was asked and recorded the refusal with it.
+    /// </remarks>
+    public async ValueTask<WireClaimBatchResult> ProposeClaimBatchAsync(
+        string versionId,
+        WireClaimBatchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (request.Claims.Count == 0)
+        {
+            return new WireProblem(
+                InvalidRequestProblem,
+                "claims must not be empty; a batch with nothing to judge is not a write.",
+                Status: 400,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        var proposals = new List<ProposedClaim>(request.Claims.Count);
+
+        for (var index = 0; index < request.Claims.Count; index++)
+        {
+            var claim = request.Claims[index];
+
+            // The contract marks these required, so a caller that omits one is told which - and which claim.
+            if (FirstMissing((claim.Subject, "subject"), (claim.Key, "key"), (claim.Value, "value")) is { } invalid)
+            {
+                return new WireProblem(
+                    InvalidRequestProblem,
+                    $"claims[{index}]: {invalid}",
+                    Status: 400,
+                    ExpectedHead: 0,
+                    ActualHead: 0);
+            }
+
+            proposals.Add(new ProposedClaim
+            {
+                ClaimType = ClaimTypeOf(claim.ClaimType),
+                Subject = claim.Subject,
+                Key = claim.Key,
+                Value = claim.Value,
+                ScopePath = claim.ScopePath.Length > 0 ? claim.ScopePath : null,
+                Provenance = ProvenanceOf(claim.Provenance),
+                SupersedesId = claim.SupersedesId.Length > 0 ? claim.SupersedesId : null,
+            });
+        }
+
+        // Zero means "no pin": a caller that names a position asks for that position and gets a contention
+        // rather than a re-gate. Positions start at one, so zero is never a real head.
+        var expectedHead = request.ExpectedHead > 0 ? new SequenceNumber(request.ExpectedHead) : (SequenceNumber?)null;
+
+        var outcome = await _candidates
+            .AppendAsync(versionId, proposals, request.Text, expectedHead, cancellationToken)
+            .ConfigureAwait(false);
+
+        return outcome switch
+        {
+            CandidateRecorded recorded => new WireClaimBatchOutcome(
+                versionId,
+                recorded.Head.Value,
+                [
+                    .. recorded.Claims.Select(claim =>
+                        VerdictOf(versionId, claim, recorded.Findings, recorded.Head.Value)),
+                ],
+                [.. recorded.Findings.Select(FindingOf)],
+                recorded.FindingsSequence?.Value ?? 0),
+
+            CandidateContended contended => new WireProblem(
+                ContendedWriteProblem,
+                "Every retry lost to a moving head; the batch was not recorded.",
                 Status: 409,
                 contended.Expected.Value,
                 contended.Actual.Value),
@@ -470,4 +558,56 @@ public sealed class MunariumOperations(
 
         return null;
     }
+
+    // The per-claim verdict, derived from the same blocked finding the write path matched. One rule, so the
+    // wire and the ledger cannot disagree about why a claim is disputed.
+    private static WireClaimOutcome VerdictOf(
+        string versionId,
+        Claim claim,
+        IReadOnlyList<GateFinding> findings,
+        long head)
+    {
+        var refusal = findings.FirstOrDefault(finding =>
+            finding.Severity is Severity.Block &&
+            string.Equals(finding.ClaimKey, claim.ClaimKey, StringComparison.Ordinal));
+
+        return new WireClaimOutcome(
+            versionId,
+            claim.Id,
+            ClaimTypeName(claim.ClaimType),
+            claim.ClaimKey,
+            claim.Status is ClaimStatus.Disputed ? WireClaimStatus.Disputed : WireClaimStatus.Accepted,
+            refusal?.RuleId ?? string.Empty,
+            refusal?.Message ?? string.Empty,
+            head);
+    }
+
+    // The detail travels as the JSON text it already is: the kernel does not interpret it, so the contract
+    // carries it verbatim rather than promising a shape it would then have to keep in step.
+    private static WireFinding FindingOf(GateFinding finding) => new(
+        finding.RuleId,
+        SeverityName(finding.Severity),
+        finding.Message,
+        finding.ScopePath ?? string.Empty,
+        finding.ClaimKey ?? string.Empty,
+        finding.Detail?.ToJsonString() ?? string.Empty);
+
+    private static string SeverityName(Severity severity) => severity switch
+    {
+        Severity.Info => WireSeverities.Info,
+        Severity.Warn => WireSeverities.Warn,
+        Severity.Block => WireSeverities.Block,
+        _ => WireSeverities.Unspecified,
+    };
+
+    // An unrecognised word reads as "the caller did not say" rather than as a refusal: a claim is not refused
+    // for the provenance it carries, and guessing at a meaning would be worse than admitting there is none.
+    private static Provenance ProvenanceOf(string? provenance) => provenance switch
+    {
+        WireProvenances.Backfilled => Provenance.Backfilled,
+        WireProvenances.Repaired => Provenance.Repaired,
+        WireProvenances.Emergent => Provenance.Emergent,
+        WireProvenances.CoverageRepair => Provenance.CoverageRepair,
+        _ => Provenance.Witnessed,
+    };
 }

@@ -102,6 +102,32 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+        app.MapPost(
+            "/v1/versions/{version_id}/claim-batches",
+            async (
+                [FromRoute(Name = "version_id")] string versionId,
+                WireClaimBatchRequest request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .ProposeClaimBatchAsync(versionId, request, cancellationToken)
+                    .ConfigureAwait(false);
+
+                // A batch that was judged and recorded is a 200 even when it carries a disputed claim: the
+                // ledger recorded the refusal rather than losing the write. Only a batch that was not
+                // recorded - a request that was not understood, or a pin that lost - is a problem.
+                IResult answer = result switch
+                {
+                    WireClaimBatchOutcome outcome => TypedResults.Json(
+                        outcome, WireJson.Default.WireClaimBatchOutcome),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
         app.MapGet(
             "/v1/facts",
             async (

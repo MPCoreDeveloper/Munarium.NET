@@ -154,6 +154,80 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
             Assert.Equal("munarium@1", result.Data.Envelope.IndexVersion);
         });
 
+    /// <summary>
+    /// The candidate plane over gRPC: a batch is one unit, so one append moves the head however many claims it
+    /// carries.
+    /// </summary>
+    [Fact]
+    public async Task ABatchLandsAsOneAppendOverGrpc() =>
+        await WithClient(async client =>
+        {
+            var outcome = await client.ProposeClaimBatchAsync(new ProposeClaimBatchRequest
+            {
+                VersionId = "grpc-batch-accepted",
+                Body = Batch(("service", "api_version", "v2"), ("service", "owner_team", "platform")),
+            });
+
+            Assert.Equal(2, outcome.Data.Head);
+            Assert.Equal(2, outcome.Data.Claims.Count);
+            Assert.All(outcome.Data.Claims, claim => Assert.Equal(ClaimStatus.Accepted, claim.Status));
+            Assert.Equal("service.api_version", outcome.Data.Claims[0].Lineage);
+            Assert.DoesNotContain(outcome.Data.Findings, finding => finding.Severity == Severity.Block);
+        });
+
+    /// <summary>
+    /// A blocked claim is recorded as disputed over gRPC too, and the finding that blocked it travels with the
+    /// batch - which is what lets a caller say why rather than only that.
+    /// </summary>
+    [Fact]
+    public async Task ABlockedClaimCarriesItsFindingOverGrpc() =>
+        await WithClient(async client =>
+        {
+            await client.ProposeClaimBatchAsync(new ProposeClaimBatchRequest
+            {
+                VersionId = "grpc-batch-disputed",
+                Body = Batch(("service", "api_version", "v1")),
+            });
+
+            var second = await client.ProposeClaimBatchAsync(new ProposeClaimBatchRequest
+            {
+                VersionId = "grpc-batch-disputed",
+                Body = Batch(("service", "api_version", "v2")),
+            });
+
+            var claim = Assert.Single(second.Data.Claims);
+            var finding = Assert.Single(second.Data.Findings, item => item.Severity == Severity.Block);
+
+            Assert.Equal(ClaimStatus.Disputed, claim.Status);
+            Assert.Equal("service.api_version", claim.Lineage);
+            Assert.Equal("service.api_version", finding.ClaimKey);
+            Assert.StartsWith("gate.", finding.RuleId, StringComparison.Ordinal);
+
+            // The per-claim verdict and the finding are the same judgement, told twice: one cannot disagree
+            // with the other without the caller noticing.
+            Assert.Equal(finding.RuleId, claim.Gate);
+            Assert.Equal(finding.Message, claim.Reason);
+        });
+
+    /// <summary>The same batch a JSON caller would send, built for the gRPC surface.</summary>
+    private static ClaimBatchRequest Batch(params (string Subject, string Key, string Value)[] claims)
+    {
+        var body = new ClaimBatchRequest();
+
+        foreach (var (subject, key, value) in claims)
+        {
+            body.Claims.Add(new ClaimCandidate
+            {
+                ClaimType = ClaimType.Fact,
+                Subject = subject,
+                Key = key,
+                Value = value,
+            });
+        }
+
+        return body;
+    }
+
     private static ClaimProposal Proposal(string claimId, string body) => new()
     {
         ClaimId = claimId,
