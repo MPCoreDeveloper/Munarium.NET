@@ -32,7 +32,7 @@ public sealed class FactProvider(FactLedger ledger) : IEvidenceProvider
     /// Only the fact plane reads it: a document collection and a data view are addressed by name, while the ledger's
     /// facts live in a scope tree and a layer may want one branch of it.
     /// </remarks>
-    private const string ScopePrefix = "scope:";
+    private const string ScopePrefix = EvidencePlanes.ScopePrefix;
 
     private readonly FactLedger _ledger = ledger ?? throw new ArgumentNullException(nameof(ledger));
 

@@ -32,6 +32,9 @@ public static class EvidencePlanes
     /// <summary>The prefix of the fact plane.</summary>
     public const string FactsPrefix = "facts:";
 
+    /// <summary>The prefix a layer pins a scope prefix with.</summary>
+    public const string ScopePrefix = "scope:";
+
     /// <summary>
     /// Reports whether a source names a plane rather than a document collection.
     /// </summary>
