@@ -157,6 +157,11 @@ public sealed class MunariumKernel : IAsyncDisposable
         // What a command answered, kept under the caller's key: a retry is answered rather than done twice, and only a
         // write that was recorded is remembered.
         var idempotency = new SharpCoreDbIdempotencyStore(database);
+
+        // The sealed evidence plane: the artifacts, their single-use grants and their audit, in tables of their own. Its
+        // bytes share the source store the documents live in and go under the reserved `evidence/` keyspace, which
+        // document ingress refuses - so a document can never collide with an artifact.
+        var evidence = new SharpCoreDbEvidenceStore(database);
         var builder = new IndexBuilder(
             sourceStore,
             sourceRegistry,
@@ -188,6 +193,8 @@ public sealed class MunariumKernel : IAsyncDisposable
             idempotency,
             builder,
             catalogue,
+            evidence,
+            sourceStore,
             Tenant);
 
         return new MunariumKernel(provider, database, host, builder, catalogue, facts, operations, shapes);

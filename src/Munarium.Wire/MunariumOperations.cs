@@ -8,6 +8,7 @@ using Munarium.Claims;
 using Munarium.Commands;
 using Munarium.Context;
 using Munarium.Counters;
+using Munarium.Evidence;
 using Munarium.Facts;
 using Munarium.Governance;
 using Munarium.Idempotency;
@@ -47,6 +48,8 @@ public sealed class MunariumOperations(
     IIdempotencyStore idempotency,
     IndexBuilder indexBuilder,
     IndexCatalog catalogue,
+    IEvidenceStore evidence,
+    ISourceStore evidenceBytes,
     string tenant)
 {
     /// <summary>The wire contract version this implementation speaks.</summary>
@@ -79,6 +82,33 @@ public sealed class MunariumOperations(
     /// <summary>The problem identifier a version this process cannot serve answers with.</summary>
     public const string IndexNotBuiltHereProblem = "https://munarium.dev/problems/index-not-built-here";
 
+    /// <summary>The problem identifier a citation that names no artifact answers with.</summary>
+    public const string EvidenceNotFoundProblem = "https://munarium.dev/problems/evidence-not-found";
+
+    /// <summary>The problem identifier a reader that does not dominate the artifact's class answers with.</summary>
+    public const string EvidenceForbiddenProblem = "https://munarium.dev/problems/evidence-forbidden";
+
+    /// <summary>The problem identifier an artifact whose bytes never arrived answers with.</summary>
+    public const string EvidencePendingProblem = "https://munarium.dev/problems/evidence-pending";
+
+    /// <summary>The problem identifier an artifact whose bytes retention removed answers with.</summary>
+    public const string EvidenceExpiredProblem = "https://munarium.dev/problems/evidence-expired";
+
+    /// <summary>The problem identifier a deletion a legal hold forbids answers with.</summary>
+    public const string EvidenceOnHoldProblem = "https://munarium.dev/problems/evidence-on-hold";
+
+    /// <summary>The problem identifier an upload that has not been committed answers with - or one that cannot be.</summary>
+    public const string EvidenceNotCommittedProblem = "https://munarium.dev/problems/evidence-not-committed";
+
+    /// <summary>The problem identifier a grant that is unknown, expired or spent answers with.</summary>
+    public const string EvidenceGrantInvalidProblem = "https://munarium.dev/problems/evidence-grant-invalid";
+
+    /// <summary>The problem identifier bytes over the inline cap answer with.</summary>
+    public const string EvidenceTooLargeProblem = "https://munarium.dev/problems/evidence-too-large";
+
+    /// <summary>The problem identifier bytes that are not what the manifest declares answer with.</summary>
+    public const string EvidenceHashMismatchProblem = "https://munarium.dev/problems/evidence-hash-mismatch";
+
 
     private readonly IStorageBackend _storage = storage ?? throw new ArgumentNullException(nameof(storage));
     private readonly ClaimLedger _claims = claims ?? throw new ArgumentNullException(nameof(claims));
@@ -99,6 +129,8 @@ public sealed class MunariumOperations(
     private readonly IIdempotencyStore _idempotency = idempotency ?? throw new ArgumentNullException(nameof(idempotency));
     private readonly IndexBuilder _builder = indexBuilder ?? throw new ArgumentNullException(nameof(indexBuilder));
     private readonly IndexCatalog _catalogue = catalogue ?? throw new ArgumentNullException(nameof(catalogue));
+    private readonly IEvidenceStore _evidence = evidence ?? throw new ArgumentNullException(nameof(evidence));
+    private readonly ISourceStore _evidenceBytes = evidenceBytes ?? throw new ArgumentNullException(nameof(evidenceBytes));
     private readonly string _tenant = string.IsNullOrWhiteSpace(tenant)
         ? throw new ArgumentException("The deployment's tenant must be named.", nameof(tenant))
         : tenant;
@@ -1357,7 +1389,745 @@ public sealed class MunariumOperations(
         new([.. _shapes.Shapes.Select(
             shape => new WireShape(shape.Name, shape.Version, shape.Identity, shape.Schema))]);
 
+    /// <summary>
+    /// Seals an artifact: the bytes inline, or a single-use grant when the caller sends none.
+    /// </summary>
+    /// <param name="request">The manifest, and the bytes when they travel with it.</param>
+    /// <param name="principal">Who is sealing, and which class they may seal into.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What the seal did, or why it did nothing.</returns>
+    /// <remarks>
+    /// Idempotent by the domain tuple rather than by an idempotency key, and deliberately so: the tuple holds across
+    /// replicas and across headers, which is the stronger guarantee for a producer retrying a seal. The check happens
+    /// before any bytes are written, so a retry does not re-upload a hundred megabytes to find out the seal already
+    /// happened.
+    /// <para>
+    /// A caller may not seal above itself. Every later reader trusts the class a manifest declares, so a principal that
+    /// could seal into a class it does not itself dominate would be minting evidence nobody was ever authorized to
+    /// assert - sealing up is the forgery; sealing down is merely conservative.
+    /// </para>
+    /// </remarks>
+    public async ValueTask<WireSealResult> SealEvidenceAsync(
+        WireSealEvidenceRequest request,
+        EvidencePrincipal principal,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(principal);
+
+        var manifest = request.Manifest;
+
+        try
+        {
+            manifest.Validate();
+        }
+        catch (ArgumentException invalid)
+        {
+            return new WireProblem(InvalidRequestProblem, invalid.Message, Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        if (!string.Equals(manifest.Tenant, principal.Tenant, StringComparison.Ordinal))
+        {
+            return new WireProblem(
+                InvalidRequestProblem,
+                $"the manifest declares tenant '{manifest.Tenant}' and this caller seals for '{principal.Tenant}'.",
+                Status: 400,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        if (!manifest.AuthorizationClass.DominatedBy(principal.Level, principal.Compartments, principal.AllCompartments))
+        {
+            return new WireProblem(
+                EvidenceForbiddenProblem,
+                "a caller may not seal an artifact into a class it does not itself dominate.",
+                Status: 403,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        // The id is the server's to assign: a caller-supplied one is dropped rather than honoured, so a client cannot
+        // choose an id to collide with.
+        manifest = manifest with { EvidenceId = null };
+
+        var existing = await _evidence
+            .FindByDomainKeyAsync(principal.Tenant, manifest.ComputeDomainKey(), cancellationToken)
+            .ConfigureAwait(false);
+
+        if (existing is not null)
+        {
+            // The same logical result, under the same policy, for the same class is the same seal, so the caller is
+            // handed the identity that was already assigned rather than a second one.
+            return new WireSealResponse(existing.EvidenceId, existing.State.ToWireName(), Created: false);
+        }
+
+        var evidenceId = EvidenceIds.New();
+        var blobPath = string.Concat(EvidenceContract.PathPrefix, evidenceId);
+        var now = Rfc3339(DateTimeOffset.UtcNow);
+        byte[]? bytes = null;
+
+        if (!string.IsNullOrWhiteSpace(request.BytesBase64))
+        {
+            try
+            {
+                bytes = Convert.FromBase64String(request.BytesBase64);
+            }
+            catch (FormatException invalid)
+            {
+                return new WireProblem(
+                    InvalidRequestProblem,
+                    $"bytes_base64 is not valid base64: {invalid.Message}",
+                    Status: 400,
+                    ExpectedHead: 0,
+                    ActualHead: 0);
+            }
+        }
+
+        return bytes is null
+            ? await GrantAsync(principal, manifest, evidenceId, blobPath, now, cancellationToken).ConfigureAwait(false)
+            : await SealInlineAsync(principal, manifest, evidenceId, blobPath, now, bytes, cancellationToken)
+                .ConfigureAwait(false);
+    }
+
+    /// <summary>Registers a pending artifact with a single-use grant, which is the upload path.</summary>
+    /// <param name="principal">Who is sealing.</param>
+    /// <param name="manifest">The manifest they derived.</param>
+    /// <param name="evidenceId">The identity the server assigned.</param>
+    /// <param name="blobPath">Where the bytes will live.</param>
+    /// <param name="now">When the seal happened.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What the seal did, or why it did nothing.</returns>
+    private async ValueTask<WireSealResult> GrantAsync(
+        EvidencePrincipal principal,
+        EvidenceManifest manifest,
+        string evidenceId,
+        string blobPath,
+        string now,
+        CancellationToken cancellationToken)
+    {
+        // Short on purpose: a grant is a single-use capability to write bytes under an id the server has already
+        // committed to, so its blast radius is a function of its lifetime.
+        var grant = new EvidenceGrant
+        {
+            GrantId = EvidenceIds.NewGrant(),
+            EvidenceId = evidenceId,
+            Tenant = principal.Tenant,
+            ExpiresAt = Rfc3339(DateTimeOffset.UtcNow.AddSeconds(EvidenceContract.GrantTtlSeconds)),
+        };
+
+        var outcome = await _evidence
+            .RegisterAsync(
+                new EvidenceArtifact
+                {
+                    EvidenceId = evidenceId,
+                    Tenant = principal.Tenant,
+                    State = EvidenceState.Pending,
+                    Manifest = manifest,
+                    BlobPath = blobPath,
+                    CreatedAt = now,
+                },
+                grant,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return new WireSealResponse(
+            outcome.EvidenceId,
+            EvidenceState.Pending.ToWireName(),
+            outcome.Created,
+            outcome.Grant is { } issued ? new WireEvidenceGrant(issued.GrantId, issued.ExpiresAt) : null);
+    }
+
+    /// <summary>Stores the bytes and registers a committed artifact, in that order.</summary>
+    /// <param name="principal">Who is sealing.</param>
+    /// <param name="manifest">The manifest they derived.</param>
+    /// <param name="evidenceId">The identity the server assigned.</param>
+    /// <param name="blobPath">Where the bytes go.</param>
+    /// <param name="now">When the seal happened.</param>
+    /// <param name="bytes">The bytes.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What the seal did, or why it did nothing.</returns>
+    private async ValueTask<WireSealResult> SealInlineAsync(
+        EvidencePrincipal principal,
+        EvidenceManifest manifest,
+        string evidenceId,
+        string blobPath,
+        string now,
+        byte[] bytes,
+        CancellationToken cancellationToken)
+    {
+        if (bytes.Length > EvidenceContract.InlineSealMaxBytes)
+        {
+            return new WireProblem(
+                EvidenceTooLargeProblem,
+                $"the bytes are {bytes.Length} byte(s), over the {EvidenceContract.InlineSealMaxBytes}-byte inline cap; "
+                    + "take a grant and upload them",
+                Status: 413,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        if (ArtifactContent.Verify(manifest, bytes) is { Verified: false } mismatch)
+        {
+            return Mismatch(mismatch);
+        }
+
+        // Bytes first, metadata second. The other order can leave a committed row pointing at bytes that were never
+        // written - a citation that resolves to nothing. This order can leave an orphan blob, which costs storage and
+        // lies to nobody.
+        await _evidenceBytes
+            .PutAsync(
+                EvidenceKey(principal.Tenant, blobPath, manifest.ArtifactHash),
+                manifest.MediaType,
+                bytes,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var seal = await _evidence
+            .RegisterAsync(
+                new EvidenceArtifact
+                {
+                    EvidenceId = evidenceId,
+                    Tenant = principal.Tenant,
+                    State = EvidenceState.Committed,
+                    Manifest = manifest,
+                    BlobPath = blobPath,
+                    CreatedAt = now,
+                    CommittedAt = now,
+                },
+                grant: null,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        // The state is the recorded artifact's rather than a constant: losing the domain-key race to a concurrent seal
+        // hands back the winner's id, and that artifact stays pending until its own bytes are committed. Reporting
+        // "committed" for it would send the caller off to cite evidence that does not resolve yet.
+        var recorded = seal.Created
+            ? EvidenceState.Committed
+            : (await _evidence.GetAsync(principal.Tenant, seal.EvidenceId, cancellationToken).ConfigureAwait(false))
+                ?.State ?? EvidenceState.Committed;
+
+        return new WireSealResponse(seal.EvidenceId, recorded.ToWireName(), seal.Created);
+    }
+
+    /// <summary>
+    /// Uploads bytes under a grant, and does not spend the grant unless they are the bytes the manifest names.
+    /// </summary>
+    /// <param name="principal">Who is uploading.</param>
+    /// <param name="evidenceId">The artifact the grant is for.</param>
+    /// <param name="grantId">The grant.</param>
+    /// <param name="bytes">The bytes.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Nothing on success, or why nothing was stored.</returns>
+    /// <remarks>
+    /// The bytes are verified <em>before</em> the grant is spent, so a corrupt upload can be retried: burning a
+    /// single-use capability on a client-side mistake would turn a recoverable error into an unrecoverable one. An
+    /// unknown artifact answers what an invalid grant answers, so a caller without a valid grant learns nothing about
+    /// which ids exist.
+    /// </remarks>
+    public async ValueTask<WireProblem?> PutEvidenceBytesAsync(
+        EvidencePrincipal principal,
+        string evidenceId,
+        string grantId,
+        ReadOnlyMemory<byte> bytes,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+
+        var artifact = await _evidence.GetAsync(principal.Tenant, evidenceId, cancellationToken).ConfigureAwait(false);
+
+        if (artifact is null
+            || !artifact.Manifest.AuthorizationClass.DominatedBy(
+                principal.Level, principal.Compartments, principal.AllCompartments))
+        {
+            return GrantInvalid();
+        }
+
+        if (ArtifactContent.Verify(artifact.Manifest, bytes.Span) is { Verified: false } mismatch)
+        {
+            return Mismatch(mismatch);
+        }
+
+        var spent = await _evidence
+            .ConsumeGrantAsync(
+                principal.Tenant, evidenceId, grantId, Rfc3339(DateTimeOffset.UtcNow), cancellationToken)
+            .ConfigureAwait(false);
+
+        if (spent is null)
+        {
+            return GrantInvalid();
+        }
+
+        await _evidenceBytes
+            .PutAsync(
+                EvidenceKey(principal.Tenant, artifact.BlobPath, artifact.Manifest.ArtifactHash),
+                artifact.Manifest.MediaType,
+                bytes,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    /// <summary>
+    /// Commits an uploaded artifact, after re-reading its bytes and checking them again.
+    /// </summary>
+    /// <param name="principal">Who is committing.</param>
+    /// <param name="evidenceId">The artifact.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What happened, or why it did not.</returns>
+    /// <remarks>
+    /// This is the moment an artifact becomes citable, so it is the moment "these bytes are that hash" has to be true -
+    /// not the moment an upload happened to return a success. Only absence is the caller's state to fix: a backend that
+    /// failed to read is a storage error, and reporting it as "upload first" would send a caller off to re-upload bytes
+    /// that are already there.
+    /// </remarks>
+    public async ValueTask<WireEvidenceCommitResult> CommitEvidenceAsync(
+        EvidencePrincipal principal,
+        string evidenceId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+
+        // No resolve helper here, and no audit either: committing is not a read, and the four questions a read asks
+        // include "is it committed", which is the one thing this operation exists to answer yes to. The original keeps
+        // the two apart for the same reason, and a commit that recorded a resolution would inflate the audit with
+        // events that are not resolutions.
+        var artifact = await _evidence.GetAsync(principal.Tenant, evidenceId, cancellationToken).ConfigureAwait(false);
+
+        if (artifact is null)
+        {
+            return NotFound(evidenceId);
+        }
+
+        if (!artifact.Manifest.AuthorizationClass.DominatedBy(
+            principal.Level, principal.Compartments, principal.AllCompartments))
+        {
+            return new WireProblem(
+                EvidenceForbiddenProblem,
+                "this reader does not dominate the artifact's authorization class.",
+                Status: 403,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        var stored = await _evidenceBytes
+            .GetAsync(EvidenceKey(principal.Tenant, artifact.BlobPath, artifact.Manifest.ArtifactHash), cancellationToken)
+            .ConfigureAwait(false);
+
+        if (stored.Length == 0 && artifact.Manifest.BytesLength > 0)
+        {
+            return NotCommitted(evidenceId);
+        }
+
+        if (ArtifactContent.Verify(artifact.Manifest, stored) is { Verified: false } mismatch)
+        {
+            return new WireProblem(
+                EvidenceHashMismatchProblem,
+                $"artifact_hash mismatch: the manifest declares {mismatch.ExpectedHash} over {mismatch.ExpectedLength} "
+                    + $"byte(s), and the stored bytes hash to {mismatch.ActualHash} over {mismatch.ActualLength}",
+                Status: 409,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        var committed = await _evidence
+            .CommitAsync(principal.Tenant, evidenceId, Rfc3339(DateTimeOffset.UtcNow), cancellationToken)
+            .ConfigureAwait(false);
+
+        return new WireEvidenceCommit(evidenceId, EvidenceState.Committed.ToWireName(), committed);
+    }
+
+    /// <summary>
+    /// Reads an artifact's manifest, which is what a citation resolves to.
+    /// </summary>
+    /// <param name="principal">Who is reading.</param>
+    /// <param name="evidenceId">The artifact.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The manifest, or why it does not resolve.</returns>
+    /// <remarks>
+    /// The manifest itself rather than a wrapper, because a 200 already means committed and the identity is stamped onto
+    /// the manifest: pending answers with its own refusal and so does purged, so a wrapper could only repeat what the
+    /// status already said.
+    /// </remarks>
+    public async ValueTask<WireEvidenceManifestResult> ReadEvidenceManifestAsync(
+        EvidencePrincipal principal,
+        string evidenceId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+
+        if (await ResolveAsync(principal, evidenceId, "manifest", null, null, cancellationToken).ConfigureAwait(false)
+            is { } refusal)
+        {
+            return refusal;
+        }
+
+        var artifact = await _evidence.GetAsync(principal.Tenant, evidenceId, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException(
+                $"artifact '{evidenceId}' resolved and then could not be read; the store changed underneath a read");
+
+        return artifact.Manifest with { EvidenceId = artifact.EvidenceId };
+    }
+
+    /// <summary>
+    /// Reads a bounded window over an artifact's rows, in the order they were sealed.
+    /// </summary>
+    /// <param name="principal">Who is reading.</param>
+    /// <param name="evidenceId">The artifact.</param>
+    /// <param name="from">The first row, zero-based.</param>
+    /// <param name="limit">How many rows, or 0 for the default.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The page, or why the artifact does not resolve.</returns>
+    /// <remarks>
+    /// Served for the canonical CSV form only. A Parquet artifact is sealed and replayed byte for byte but not decoded
+    /// here: pulling a Parquet reader into the image to paginate rows would be a large dependency for a convenience,
+    /// and what matters - that the bytes are intact - holds either way. A caller wanting Parquet rows reads the
+    /// artifact.
+    /// </remarks>
+    public async ValueTask<WireEvidenceRowsResult> ReadEvidenceRowsAsync(
+        EvidencePrincipal principal,
+        string evidenceId,
+        long from = 0,
+        long limit = 0,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+
+        var start = Math.Max(0, from);
+        var window = limit <= 0
+            ? EvidenceContract.DefaultRowLimit
+            : Math.Min(limit, EvidenceContract.MaxRowLimit);
+
+        if (await ResolveAsync(principal, evidenceId, "rows", start, window, cancellationToken).ConfigureAwait(false)
+            is { } refusal)
+        {
+            return refusal;
+        }
+
+        var artifact = await _evidence.GetAsync(principal.Tenant, evidenceId, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException(
+                $"artifact '{evidenceId}' resolved and then could not be read; the store changed underneath a read");
+
+        if (!string.Equals(artifact.Manifest.MediaType, EvidenceContract.MediaTypeCsv, StringComparison.Ordinal))
+        {
+            return new WireProblem(
+                InvalidRequestProblem,
+                $"rows are served for '{EvidenceContract.MediaTypeCsv}' artifacts only; this artifact is "
+                    + $"'{artifact.Manifest.MediaType}'. Its bytes are sealed and replayable, but this server does not "
+                    + "decode them",
+                Status: 400,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        var stored = await _evidenceBytes
+            .GetAsync(EvidenceKey(principal.Tenant, artifact.BlobPath, artifact.Manifest.ArtifactHash), cancellationToken)
+            .ConfigureAwait(false);
+
+        var columns = artifact.Manifest.Schema.Columns.Select(column => column.Name).ToList();
+        var lines = Encoding.UTF8.GetString(stored).Split('\n');
+        var rows = new List<IReadOnlyDictionary<string, string?>>();
+        long total = 0;
+
+        // The canonical form is a header row and then data. The header is dropped and the manifest's column NAMES are
+        // used instead: the schema is the contract, and a header that disagreed with it would be the schema drifting
+        // silently. One pass counts every data row for the total and keeps only the page's.
+        foreach (var line in lines.Skip(1))
+        {
+            var row = line.TrimEnd('\r');
+
+            if (row.Length == 0)
+            {
+                continue;
+            }
+
+            if (total >= start && rows.Count < window)
+            {
+                var cells = CanonicalCsv.Cells(row);
+                var keyed = new Dictionary<string, string?>(StringComparer.Ordinal);
+
+                for (var column = 0; column < columns.Count; column++)
+                {
+                    keyed[columns[column]] = column < cells.Count ? cells[column] : null;
+                }
+
+                rows.Add(keyed);
+            }
+
+            total++;
+        }
+
+        return new WireEvidenceRows(evidenceId, start, start + rows.Count < total, rows, total);
+    }
+
+    /// <summary>
+    /// Reads the resolutions of an artifact, newest first.
+    /// </summary>
+    /// <param name="tenant">The tenant.</param>
+    /// <param name="evidenceId">The artifact.</param>
+    /// <param name="limit">How many, or 0 for the default.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The resolutions.</returns>
+    /// <remarks>
+    /// An operator's question about the deployment rather than a participant's question about the data, which is why the
+    /// route above it is management-gated rather than evidence-scoped: a service that can seal evidence has no business
+    /// enumerating who read it. It reports <em>that</em> reads happened and never the rows themselves.
+    /// </remarks>
+    public async ValueTask<WireEvidenceAccessResult> ReadEvidenceAccessesAsync(
+        string tenant,
+        string evidenceId,
+        long limit = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var window = limit <= 0
+            ? EvidenceContract.DefaultRowLimit
+            : Math.Min(limit, EvidenceContract.MaxRowLimit);
+
+        var accesses = await _evidence
+            .AccessesAsync(tenant, evidenceId, (int)window, cancellationToken)
+            .ConfigureAwait(false);
+
+        return new WireEvidenceAccessList(
+            evidenceId,
+            [
+                .. accesses.Select(access => new WireEvidenceAccess(
+                    access.Uid,
+                    access.Kind,
+                    access.RowFrom,
+                    access.RowLimit,
+                    access.Outcome,
+                    access.At)),
+            ]);
+    }
+
+    /// <summary>
+    /// Purges one artifact's bytes now, leaving the row so citations keep resolving as expired.
+    /// </summary>
+    /// <param name="tenant">The tenant.</param>
+    /// <param name="evidenceId">The artifact.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What happened, or why nothing did.</returns>
+    /// <remarks>
+    /// The operator-facing twin of the janitor, and the reason a hold is a reachable refusal rather than dead
+    /// vocabulary: an artifact under hold refuses deletion here, which is the whole point of a hold. The order is the
+    /// sweep's - bytes first, then the row.
+    /// </remarks>
+    public async ValueTask<WireEvidencePurgeResult> PurgeEvidenceAsync(
+        string tenant,
+        string evidenceId,
+        CancellationToken cancellationToken = default)
+    {
+        var artifact = await _evidence.GetAsync(tenant, evidenceId, cancellationToken).ConfigureAwait(false);
+
+        if (artifact is null)
+        {
+            return NotFound(evidenceId);
+        }
+
+        if (artifact.Manifest.Retention is { LegalHold: true })
+        {
+            return new WireProblem(
+                EvidenceOnHoldProblem,
+                $"artifact '{evidenceId}' is under a legal hold, so its bytes may not be deleted.",
+                Status: 409,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        if (artifact.State == EvidenceState.Purged)
+        {
+            return new WireEvidencePurge(evidenceId, Purged: false, EvidenceState.Purged.ToWireName());
+        }
+
+        await _evidenceBytes
+            .DeleteAsync(EvidenceKey(tenant, artifact.BlobPath, artifact.Manifest.ArtifactHash), cancellationToken)
+            .ConfigureAwait(false);
+
+        var purged = await _evidence
+            .MarkPurgedAsync(tenant, evidenceId, Rfc3339(DateTimeOffset.UtcNow), cancellationToken)
+            .ConfigureAwait(false);
+
+        return new WireEvidencePurge(evidenceId, purged, EvidenceState.Purged.ToWireName());
+    }
+
+    /// <summary>
+    /// Places or lifts a legal hold.
+    /// </summary>
+    /// <param name="tenant">The tenant.</param>
+    /// <param name="evidenceId">The artifact.</param>
+    /// <param name="hold">Whether to hold it.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Nothing, or why nothing changed.</returns>
+    /// <remarks>
+    /// A hold blocks deletion and nothing else. Reads stay governed by the authorization class exactly as before: an
+    /// instruction to preserve evidence that also hid it would be a strange instruction.
+    /// </remarks>
+    public async ValueTask<WireProblem?> SetEvidenceLegalHoldAsync(
+        string tenant,
+        string evidenceId,
+        bool hold,
+        CancellationToken cancellationToken = default)
+    {
+        var held = await _evidence
+            .SetLegalHoldAsync(tenant, evidenceId, hold, cancellationToken)
+            .ConfigureAwait(false);
+
+        return held ? null : NotFound(evidenceId);
+    }
+
     // ---- helpers ----
+
+    /// <summary>
+    /// Answers whether an artifact resolves for a reader, and records the resolution.
+    /// </summary>
+    /// <param name="principal">Who is reading.</param>
+    /// <param name="evidenceId">The artifact.</param>
+    /// <param name="kind">What is being read: <c>manifest</c> or <c>rows</c>.</param>
+    /// <param name="rowFrom">The first row asked for, or none.</param>
+    /// <param name="rowLimit">How many rows asked for, or none.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns><see langword="null"/> when it resolves, otherwise why it does not.</returns>
+    /// <remarks>
+    /// One helper for both read routes, so the four questions they ask - does it exist, may this reader have it, is it
+    /// committed, is it still there - cannot drift apart between them. The audit row is written on the denial paths as
+    /// well as on success, which is where an audit log earns its keep; a <em>missing</em> artifact is deliberately not
+    /// recorded, because there is no artifact to attach the row to and recording every miss would let a scan fill the
+    /// table.
+    /// </remarks>
+    private async ValueTask<WireProblem?> ResolveAsync(
+        EvidencePrincipal principal,
+        string evidenceId,
+        string kind,
+        long? rowFrom,
+        long? rowLimit,
+        CancellationToken cancellationToken)
+    {
+        var artifact = await _evidence.GetAsync(principal.Tenant, evidenceId, cancellationToken).ConfigureAwait(false);
+
+        if (artifact is null)
+        {
+            return NotFound(evidenceId);
+        }
+
+        // A refusal says nothing about the artifact: learning "this exists and is above you" is itself a disclosure.
+        if (!artifact.Manifest.AuthorizationClass.DominatedBy(
+            principal.Level, principal.Compartments, principal.AllCompartments))
+        {
+            await RecordAsync(principal, evidenceId, kind, rowFrom, rowLimit, "denied", cancellationToken)
+                .ConfigureAwait(false);
+
+            return new WireProblem(
+                EvidenceForbiddenProblem,
+                "this reader does not dominate the artifact's authorization class.",
+                Status: 403,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        if (artifact.State == EvidenceState.Purged)
+        {
+            await RecordAsync(principal, evidenceId, kind, rowFrom, rowLimit, "expired", cancellationToken)
+                .ConfigureAwait(false);
+
+            return new WireProblem(
+                EvidenceExpiredProblem,
+                $"artifact '{evidenceId}' was purged under its retention policy, so its bytes are gone.",
+                Status: 410,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        if (artifact.State != EvidenceState.Committed)
+        {
+            await RecordAsync(principal, evidenceId, kind, rowFrom, rowLimit, "denied", cancellationToken)
+                .ConfigureAwait(false);
+
+            return Pending(evidenceId);
+        }
+
+        await RecordAsync(principal, evidenceId, kind, rowFrom, rowLimit, "ok", cancellationToken)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    private ValueTask RecordAsync(
+        EvidencePrincipal principal,
+        string evidenceId,
+        string kind,
+        long? rowFrom,
+        long? rowLimit,
+        string outcome,
+        CancellationToken cancellationToken) =>
+        _evidence.RecordAccessAsync(
+            new EvidenceAccess
+            {
+                EvidenceId = evidenceId,
+                Tenant = principal.Tenant,
+                Uid = principal.Uid,
+                Kind = kind,
+                RowFrom = rowFrom,
+                RowLimit = rowLimit,
+                Outcome = outcome,
+                At = Rfc3339(DateTimeOffset.UtcNow),
+            },
+            cancellationToken);
+
+    private static WireProblem NotFound(string evidenceId) => new(
+        EvidenceNotFoundProblem,
+        $"no artifact '{evidenceId}' exists in this tenant.",
+        Status: 404,
+        ExpectedHead: 0,
+        ActualHead: 0);
+
+    private static WireProblem Pending(string evidenceId) => new(
+        EvidencePendingProblem,
+        $"artifact '{evidenceId}' is sealed and its bytes have not been committed, so nothing resolves yet.",
+        Status: 409,
+        ExpectedHead: 0,
+        ActualHead: 0);
+
+    private static WireProblem NotCommitted(string evidenceId) => new(
+        EvidenceNotCommittedProblem,
+        $"artifact '{evidenceId}' has no bytes to commit; upload them first.",
+        Status: 409,
+        ExpectedHead: 0,
+        ActualHead: 0);
+
+    private static WireProblem GrantInvalid() => new(
+        EvidenceGrantInvalidProblem,
+        "the grant is unknown, expired or already spent.",
+        Status: 403,
+        ExpectedHead: 0,
+        ActualHead: 0);
+
+    private static WireProblem Mismatch(ArtifactVerification mismatch) => new(
+        EvidenceHashMismatchProblem,
+        $"artifact_hash mismatch: the manifest declares {mismatch.ExpectedHash} over {mismatch.ExpectedLength} "
+            + $"byte(s), and the bytes hash to {mismatch.ActualHash} over {mismatch.ActualLength}",
+        Status: 409,
+        ExpectedHead: 0,
+        ActualHead: 0);
+
+    /// <summary>Formats an instant the way the plane's own stamps are written.</summary>
+    private static string Rfc3339(DateTimeOffset moment) =>
+        moment.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Builds the source key an artifact's bytes live under.
+    /// </summary>
+    /// <remarks>
+    /// The object store keys blobs by content hash, and the manifest carries the <c>sha256:</c> prefix the store does not
+    /// want, so the prefix comes off here. Authorization is never inferred from this path - it comes from the artifact's
+    /// row - which is why the path can be this boring.
+    /// </remarks>
+    private static SourceKey EvidenceKey(string tenant, string blobPath, string artifactHash) =>
+        SourceKey.New(
+            tenant,
+            blobPath,
+            artifactHash.StartsWith("sha256:", StringComparison.Ordinal)
+                ? artifactHash["sha256:".Length..]
+                : artifactHash);
 
     /// <summary>
     /// Reads what a command made under a key was answered the first time, if it was.

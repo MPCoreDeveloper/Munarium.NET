@@ -1,5 +1,7 @@
 namespace Munarium.Wire;
 
+using Munarium.Evidence;
+
 /// <summary>
 /// The values the contract's <c>ClaimStatus</c> can carry.
 /// </summary>
@@ -823,5 +825,92 @@ public readonly union WireIndexResult(WireIndexVersion, WireProblem);
 
 /// <summary>The result of resolving an envelope: the resolution, or why it could not be attempted.</summary>
 public readonly union WireEnvelopeResult(WireEnvelopeResolution, WireProblem);
+
+/// <summary>A manifest offered for sealing, with the bytes when they are small enough to travel with it.</summary>
+/// <param name="Manifest">The manifest as the sealer derived it.</param>
+/// <param name="BytesBase64">
+/// The canonical bytes, base64, or empty to take an upload grant instead - which is what a set of bytes too large to
+/// travel inline has to do.
+/// </param>
+public sealed record WireSealEvidenceRequest(EvidenceManifest Manifest, string? BytesBase64 = null);
+
+/// <summary>What a seal did.</summary>
+/// <param name="EvidenceId">The identity the server assigned.</param>
+/// <param name="State">The artifact's state, which is the created artifact's and not a constant.</param>
+/// <param name="Created">Whether this call created the artifact rather than finding the seal already made.</param>
+/// <param name="Grant">The upload grant, present only on the grant path.</param>
+public sealed record WireSealResponse(
+    string EvidenceId,
+    string State,
+    bool Created,
+    WireEvidenceGrant? Grant = null);
+
+/// <summary>A single-use capability to upload an artifact's bytes.</summary>
+/// <param name="GrantId">The grant's identity.</param>
+/// <param name="ExpiresAt">When it stops being usable.</param>
+public sealed record WireEvidenceGrant(string GrantId, string ExpiresAt);
+
+/// <summary>One resolution, as the audit reports it.</summary>
+/// <param name="Uid">Who read it.</param>
+/// <param name="Kind">What was read: <c>manifest</c> or <c>rows</c>.</param>
+/// <param name="RowFrom">The first row the caller asked for, or none.</param>
+/// <param name="RowLimit">How many rows the caller asked for, or none.</param>
+/// <param name="Outcome">How it went: <c>ok</c>, <c>denied</c>, <c>expired</c> or <c>on-hold</c>.</param>
+/// <param name="At">When the read happened.</param>
+public sealed record WireEvidenceAccess(
+    string Uid,
+    string Kind,
+    long? RowFrom,
+    long? RowLimit,
+    string Outcome,
+    string At);
+
+/// <summary>An artifact's resolutions, newest first.</summary>
+/// <param name="EvidenceId">The artifact they resolved.</param>
+/// <param name="Accesses">The resolutions.</param>
+public sealed record WireEvidenceAccessList(string EvidenceId, IReadOnlyList<WireEvidenceAccess> Accesses);
+
+/// <summary>A page of an artifact's rows, each keyed by the column names the manifest declares.</summary>
+/// <param name="EvidenceId">The artifact the rows belong to.</param>
+/// <param name="From">The first row of this page.</param>
+/// <param name="HasMore">Whether there are rows after this page.</param>
+/// <param name="Rows">The page.</param>
+/// <param name="Total">How many rows the artifact holds in all.</param>
+public sealed record WireEvidenceRows(
+    string EvidenceId,
+    long From,
+    bool HasMore,
+    IReadOnlyList<IReadOnlyDictionary<string, string?>> Rows,
+    long Total);
+
+/// <summary>What a commit did.</summary>
+/// <param name="EvidenceId">The artifact.</param>
+/// <param name="State">The state it is in now.</param>
+/// <param name="Committed">Whether this call committed it rather than finding it committed already.</param>
+public sealed record WireEvidenceCommit(string EvidenceId, string State, bool Committed);
+
+/// <summary>What a purge did.</summary>
+/// <param name="EvidenceId">The artifact.</param>
+/// <param name="Purged">Whether this call purged it rather than finding it purged already.</param>
+/// <param name="State">The state it is in now, which is purged either way.</param>
+public sealed record WireEvidencePurge(string EvidenceId, bool Purged, string State);
+
+/// <summary>The result of a seal: the artifact as recorded, or why nothing was.</summary>
+public readonly union WireSealResult(WireSealResponse, WireProblem);
+
+/// <summary>The result of reading a manifest: the manifest itself, or why it does not resolve.</summary>
+public readonly union WireEvidenceManifestResult(EvidenceManifest, WireProblem);
+
+/// <summary>The result of reading rows: the page, or why the artifact does not resolve.</summary>
+public readonly union WireEvidenceRowsResult(WireEvidenceRows, WireProblem);
+
+/// <summary>The result of reading the audit: the resolutions, or why they may not be read.</summary>
+public readonly union WireEvidenceAccessResult(WireEvidenceAccessList, WireProblem);
+
+/// <summary>The result of committing: what happened, or why it did not.</summary>
+public readonly union WireEvidenceCommitResult(WireEvidenceCommit, WireProblem);
+
+/// <summary>The result of purging: what happened, or why it did not.</summary>
+public readonly union WireEvidencePurgeResult(WireEvidencePurge, WireProblem);
 
 

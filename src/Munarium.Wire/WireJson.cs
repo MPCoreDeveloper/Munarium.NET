@@ -1,6 +1,7 @@
 namespace Munarium.Wire;
 
 using System.Text.Json.Serialization;
+using Munarium.Evidence;
 
 /// <summary>
 /// The JSON shape of the wire contract.
@@ -58,6 +59,15 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(WireSourceList))]
 [JsonSerializable(typeof(WireIndexVersionList))]
 [JsonSerializable(typeof(WireIndexManifest))]
+[JsonSerializable(typeof(WireSealEvidenceRequest))]
+[JsonSerializable(typeof(WireSealResponse))]
+[JsonSerializable(typeof(WireEvidenceGrant))]
+[JsonSerializable(typeof(WireEvidenceAccess))]
+[JsonSerializable(typeof(WireEvidenceAccessList))]
+[JsonSerializable(typeof(WireEvidenceRows))]
+[JsonSerializable(typeof(WireEvidenceCommit))]
+[JsonSerializable(typeof(WireEvidencePurge))]
+[JsonSerializable(typeof(EvidenceManifest))]
 [JsonSerializable(typeof(WireIndexVersion))]
 [JsonSerializable(typeof(WireIndexBuild))]
 [JsonSerializable(typeof(WireIndexActivation))]
