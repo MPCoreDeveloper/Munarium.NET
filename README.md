@@ -175,7 +175,10 @@ in the order it is planned:
   `POST .../promises/{key}/fulfill`, and `POST/GET /v1/versions/{id}/counters`, where the read answers with the
   directives a writer would be given rather than only the totals. What is missing: nothing on the wire records an
   entity (upstream resolves entities through a model capability this port has not ported, so writing them would be
-  raw plumbing), and no route rebuilds an index version from the rows a deployment already has.
+  raw plumbing). One thing that looked missing is settled by how the build is written: it reads the rows a deployment
+  already holds - the prefix's rows from the registry, then each one's bytes out of the store - rather than taking a
+  window of freshly ingested documents, so `POST /v1/indexes` over a prefix somebody ingested last week *is* a rebuild,
+  and it derives the same version, because a version's identity is a hash of everything the build would do.
 - **Idempotency keys on every command that records.** A command can carry an `idempotency_key` (a ULID, the same shape
   this port mints everywhere else), and every route that writes honours it: claims and batches, locks and releases,
   promises and fulfilments, counters, and version creation. The second attempt writes nothing, is judged by nothing, and
