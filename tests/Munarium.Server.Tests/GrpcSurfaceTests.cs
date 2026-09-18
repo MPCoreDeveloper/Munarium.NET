@@ -259,6 +259,74 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
             Assert.True(snapshot.Data.AsOfSequence > 0);
         });
 
+    /// <summary>The lock, the release and the promise travel over gRPC as they do over JSON.</summary>
+    [Fact]
+    public async Task TheAuthoringCommandsTravelOverGrpc() =>
+        await WithClient(async client =>
+        {
+            var locked = await client.LockAnchorAsync(new LockAnchorRequest
+            {
+                VersionId = "grpc-authoring",
+                Body = new AnchorLock
+                {
+                    Subject = "service",
+                    Key = "api_version",
+                    Value = "v2",
+                    ScopePath = "release",
+                },
+            });
+
+            Assert.Equal("service.api_version", locked.Data.DetailKey);
+            Assert.Equal("v2", locked.Data.LockedValue);
+            Assert.Equal(AnchorStatus.Locked, locked.Data.Status);
+
+            var anchors = await client.ListAnchorsAsync(new ListAnchorsRequest { VersionId = "grpc-authoring" });
+
+            Assert.Equal("v2", Assert.Single(anchors.Data.Anchors).LockedValue);
+
+            var released = await client.ReleaseAnchorAsync(new ReleaseAnchorRequest
+            {
+                VersionId = "grpc-authoring",
+                DetailKey = "service.api_version",
+            });
+
+            Assert.True(released.Data.Released);
+            Assert.Empty((await client.ListAnchorsAsync(new ListAnchorsRequest { VersionId = "grpc-authoring" })).Data.Anchors);
+
+            var opened = await client.OpenPromiseAsync(new OpenPromiseRequest
+            {
+                VersionId = "grpc-authoring",
+                Body = new PromiseRegistration
+                {
+                    Key = "audit-report",
+                    Kind = "deliverable",
+                    Description = "an audit report",
+                    OriginScope = "release",
+                    DueScope = "compliance",
+                },
+            });
+
+            Assert.Equal(PromiseStatus.Open, opened.Data.Status);
+
+            var promises = await client.ListPromisesAsync(new ListPromisesRequest
+            {
+                VersionId = "grpc-authoring",
+                OverdueScope = "compliance",
+                Final = true,
+            });
+
+            Assert.Single(promises.Data.Promises);
+            Assert.Equal("gate.promise-unfulfilled", Assert.Single(promises.Data.Findings).RuleId);
+
+            var fulfilled = await client.FulfillPromiseAsync(new FulfillPromiseRequest
+            {
+                VersionId = "grpc-authoring",
+                Key = "audit-report",
+            });
+
+            Assert.True(fulfilled.Data.Fulfilled);
+        });
+
     /// <summary>The same batch a JSON caller would send, built for the gRPC surface.</summary>
     private static ClaimBatchRequest Batch(params (string Subject, string Key, string Value)[] claims)
     {

@@ -10,6 +10,7 @@ using Munarium.Facts;
 using Munarium.Governance;
 using Munarium.Ledger;
 using Munarium.Providers;
+using Munarium.Promises;
 using Munarium.Retrieval;
 using Munarium.Shapes;
 using Munarium.Versions;
@@ -27,6 +28,8 @@ public sealed class MunariumOperations(
     ClaimLedger claims,
     CandidateLedger candidates,
     FindingsLedger findings,
+    AnchorLedger anchors,
+    PromiseLedger promises,
     FactLedger facts,
     ShapeRegistry shapes,
     IRetrievalBackend retrieval,
@@ -51,6 +54,8 @@ public sealed class MunariumOperations(
     private readonly ClaimLedger _claims = claims ?? throw new ArgumentNullException(nameof(claims));
     private readonly CandidateLedger _candidates = candidates ?? throw new ArgumentNullException(nameof(candidates));
     private readonly FindingsLedger _findings = findings ?? throw new ArgumentNullException(nameof(findings));
+    private readonly AnchorLedger _anchors = anchors ?? throw new ArgumentNullException(nameof(anchors));
+    private readonly PromiseLedger _promises = promises ?? throw new ArgumentNullException(nameof(promises));
     private readonly FactLedger _facts = facts ?? throw new ArgumentNullException(nameof(facts));
     private readonly ShapeRegistry _shapes = shapes ?? throw new ArgumentNullException(nameof(shapes));
     private readonly IRetrievalBackend _retrieval = retrieval ?? throw new ArgumentNullException(nameof(retrieval));
@@ -294,6 +299,180 @@ public sealed class MunariumOperations(
             [.. snapshot.Promises.Select(PromiseOf)],
             [.. snapshot.Counters.Select(CounterOf)],
             [.. snapshot.Entities.Select(EntityOf)]);
+    }
+
+    /// <summary>Locks a detail, so no claim may contradict it.</summary>
+    /// <param name="versionId">The version the lock is taken in.</param>
+    /// <param name="request">The lock as asked for.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The lock as recorded, or why it was not taken.</returns>
+    public async ValueTask<WireAnchorResult> LockAnchorAsync(
+        string versionId,
+        WireAnchorLock request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (FirstMissing((request.Subject, "subject"), (request.Key, "key"), (request.Value, "value")) is { } invalid)
+        {
+            return new WireProblem(InvalidRequestProblem, invalid, Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        // The detail key is derived here rather than passed whole, so the dot that makes a lock matchable against a
+        // claim is structural: the kernel refuses a key that names no property, and this cannot produce one.
+        var outcome = await _anchors
+            .LockAsync(
+                versionId,
+                string.Concat(request.Subject, ".", request.Key),
+                request.Value,
+                Optional(request.ScopePath),
+                Optional(request.Evidence),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return outcome switch
+        {
+            Anchor anchor => AnchorOf(anchor),
+            WriteContended contended => Contended(contended),
+        };
+    }
+
+    /// <summary>Releases a lock, if there is one.</summary>
+    /// <param name="versionId">The version the release is recorded in.</param>
+    /// <param name="detailKey">The locked detail, as <c>subject.key</c>.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Whether anything was released, or why nothing was.</returns>
+    public async ValueTask<WireReleaseResult> ReleaseAnchorAsync(
+        string versionId,
+        string detailKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (DetailKeyRefusal(detailKey) is { } refusal)
+        {
+            return refusal;
+        }
+
+        var outcome = await _anchors
+            .ReleaseAsync(versionId, detailKey, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+
+        return outcome switch
+        {
+            Anchor => new WireAnchorRelease(Released: true),
+            AnchorNotLocked => new WireAnchorRelease(Released: false),
+            WriteContended contended => Contended(contended),
+        };
+    }
+
+    /// <summary>Reads the locked details at a pin.</summary>
+    /// <param name="versionId">The version whose locked details are read.</param>
+    /// <param name="asOf">The position to read as of, or 0 for the present.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The locks, later version winning and released ones absent.</returns>
+    public async ValueTask<WireAnchorList> ListAnchorsAsync(
+        string versionId,
+        long asOf = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var snapshot = await SnapshotAsync(versionId, asOf, cancellationToken).ConfigureAwait(false);
+
+        return new WireAnchorList([.. snapshot.Anchors.Values.Select(AnchorOf)]);
+    }
+
+    /// <summary>Registers a promise one scope owes to another.</summary>
+    /// <param name="versionId">The version the promise is made in.</param>
+    /// <param name="request">The promise as asked for.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The promise as recorded, or why it was not registered.</returns>
+    public async ValueTask<WirePromiseResult> OpenPromiseAsync(
+        string versionId,
+        WirePromiseRegistration request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (FirstMissing((request.Key, "key"), (request.Kind, "kind"), (request.Description, "description")) is { } invalid)
+        {
+            return new WireProblem(InvalidRequestProblem, invalid, Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        var outcome = await _promises
+            .RegisterAsync(
+                versionId,
+                request.Key,
+                request.Kind,
+                request.Description,
+                Optional(request.OriginScope),
+                Optional(request.DueScope),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return outcome switch
+        {
+            Promise promise => PromiseOf(promise),
+            WriteContended contended => Contended(contended),
+        };
+    }
+
+    /// <summary>Fulfils the first open promise with a key.</summary>
+    /// <param name="versionId">The version the promise is fulfilled in.</param>
+    /// <param name="key">The coordination key.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Whether anything was fulfilled, or why nothing was.</returns>
+    public async ValueTask<WireFulfilResult> FulfilPromiseAsync(
+        string versionId,
+        string key,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return new WireProblem(InvalidRequestProblem, "key is required.", Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        var outcome = await _promises
+            .FulfilAsync(versionId, key, cancellationToken)
+            .ConfigureAwait(false);
+
+        return outcome switch
+        {
+            Promise => new WirePromiseFulfilment(Fulfilled: true),
+            PromiseNotOpen => new WirePromiseFulfilment(Fulfilled: false),
+            WriteContended contended => Contended(contended),
+        };
+    }
+
+    /// <summary>Reads the promises at a pin, and the overdue findings when they are asked for.</summary>
+    /// <param name="versionId">The version whose promises are read.</param>
+    /// <param name="asOf">The position to read as of, or 0 for the present.</param>
+    /// <param name="status">The status to select, or empty for every status.</param>
+    /// <param name="overdueScope">The scope to compute the promise check for, or empty to skip it.</param>
+    /// <param name="isFinalUnit">Whether this read is the final unit, where every open promise is overdue.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The promises, and the overdue findings when they were asked for.</returns>
+    /// <remarks>
+    /// The overdue view is computed over the full pinned slice, before the status filter narrows it: a finding a
+    /// filter could hide would be a finding nobody sees, which is the opposite of what a check is for.
+    /// </remarks>
+    public async ValueTask<WirePromiseList> ListPromisesAsync(
+        string versionId,
+        long asOf = 0,
+        string? status = null,
+        string? overdueScope = null,
+        bool isFinalUnit = false,
+        CancellationToken cancellationToken = default)
+    {
+        var snapshot = await SnapshotAsync(versionId, asOf, cancellationToken).ConfigureAwait(false);
+        var scope = Optional(overdueScope);
+
+        var overdue = scope is not null || isFinalUnit
+            ? PromiseRegistry.FindOverdue(snapshot.Promises, scope, isFinalUnit)
+            : [];
+
+        var selected = PromiseStatusOf(status) is { } wanted
+            ? snapshot.Promises.Where(promise => promise.Status == wanted)
+            : snapshot.Promises;
+
+        return new WirePromiseList([.. selected.Select(PromiseOf)], [.. overdue.Select(FindingOf)]);
     }
 
     /// <summary>Creates a version, which is itself a governed claim.</summary>
@@ -677,6 +856,45 @@ public sealed class MunariumOperations(
 
     private static WireStoredFinding StoredOf(StoredFinding stored) =>
         new(stored.Sequence.Value, FindingOf(stored.Finding));
+
+    private async ValueTask<MeshSnapshot> SnapshotAsync(
+        string versionId,
+        long asOf,
+        CancellationToken cancellationToken) =>
+        await _snapshots
+            .BuildAsync(versionId, asOf > 0 ? new SequenceNumber(asOf) : null, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+
+    private static WireProblem Contended(WriteContended contended) => new(
+        ContendedWriteProblem,
+        "Every retry lost to a moving head; nothing was written.",
+        Status: 409,
+        contended.Expected.Value,
+        contended.Actual.Value);
+
+    // The release route carries the detail key whole, so the boundary checks the same rule the kernel enforces: a
+    // key that names no property could never have been locked, and a request that cannot be understood is a 400
+    // rather than a server error.
+    private static WireProblem? DetailKeyRefusal(string? detailKey) =>
+        string.IsNullOrWhiteSpace(detailKey) || !detailKey.Contains('.', StringComparison.Ordinal)
+            ? new WireProblem(
+                InvalidRequestProblem,
+                "detail_key is 'subject.key', and this one names no property to release.",
+                Status: 400,
+                ExpectedHead: 0,
+                ActualHead: 0)
+            : null;
+
+    // The plane holds what was recorded, so a read can select a status it actually contains; an unrecognised word
+    // selects nothing rather than everything, because the caller asked for a state.
+    private static PromiseStatus? PromiseStatusOf(string? status) => status switch
+    {
+        WirePromiseStatuses.Open => PromiseStatus.Open,
+        WirePromiseStatuses.Fulfilled => PromiseStatus.Fulfilled,
+        WirePromiseStatuses.Expired => PromiseStatus.Expired,
+        WirePromiseStatuses.Violated => PromiseStatus.Violated,
+        _ => null,
+    };
 
     // The instant a snapshot carries, in the format the evidence contract validates a timestamp against: one
     // spelling of a timestamp in this port rather than one per surface.

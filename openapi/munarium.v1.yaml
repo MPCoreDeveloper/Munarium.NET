@@ -308,6 +308,252 @@ paths:
               schema:
                 $ref: "#/components/schemas/FindingList"
 
+  /v1/versions/{version_id}/anchors:
+    post:
+      operationId: LockAnchor
+      tags: [command]
+      summary: Lock a detail, so no claim may contradict it.
+      description: |
+        A lock asserts nothing and forbids one thing: that the locked value changes. That is why it is a command
+        and not a claim - a claim is judged, a lock is a decision - and why a claim that contradicts a lock is
+        reported as an anchor finding rather than as a ledger conflict.
+
+        Locking a detail that is already locked replaces the earlier lock: the anchors plane is keyed by detail and
+        the later event wins, so a re-lock is a deliberate restatement. The position in the answer is the position
+        the write settled at inside the version's stream; a read of the plane reports the global position a pin is
+        on.
+      parameters:
+        - name: version_id
+          in: path
+          required: true
+          description: The version the lock is taken in.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnchorLock"
+      responses:
+        "200":
+          description: The lock as recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Anchor"
+        "400":
+          description: The request is missing something the contract requires, or names no property to lock.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: Every retry lost to a moving head. Retryable, never data loss.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    get:
+      operationId: ListAnchors
+      tags: [query]
+      summary: The locked details as they stand at a pin.
+      description: |
+        Later version wins and released locks are absent: the plane is a state and not a log, which is what a gate
+        can be judged against without second-guessing an entry.
+      parameters:
+        - name: version_id
+          in: path
+          required: true
+          description: The version whose locked details are read.
+          schema:
+            type: string
+        - name: as_of
+          in: query
+          required: false
+          description: The position to read as of, or 0 for the present.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: The locked anchors.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnchorList"
+
+  /v1/versions/{version_id}/anchors/{detail_key}/release:
+    post:
+      operationId: ReleaseAnchor
+      tags: [command]
+      summary: Release a lock, if there is one.
+      description: |
+        A release of a detail nobody locked is not a write: it would change nothing and still look like a command
+        that did, so the answer says whether anything was released rather than pretending.
+      parameters:
+        - name: version_id
+          in: path
+          required: true
+          description: The version the release is recorded in.
+          schema:
+            type: string
+        - name: detail_key
+          in: path
+          required: true
+          description: The locked detail, as "subject.key".
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Whether a lock was released.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnchorRelease"
+        "400":
+          description: The detail key names no property, so it cannot have been locked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: Every retry lost to a moving head. Retryable, never data loss.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/versions/{version_id}/promises:
+    post:
+      operationId: OpenPromise
+      tags: [command]
+      summary: Register a promise one scope owes to another.
+      description: |
+        A promise is the mesh's own commitment, so it is recorded rather than judged: no gate refuses one, while
+        the promise check reports one that is still open when its due scope is reached. Registering a key that is
+        already registered restates it, because the plane is keyed by the coordination key.
+      parameters:
+        - name: version_id
+          in: path
+          required: true
+          description: The version the promise is made in.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PromiseRegistration"
+      responses:
+        "200":
+          description: The promise as recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Promise"
+        "400":
+          description: The request is missing something the contract requires.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: Every retry lost to a moving head. Retryable, never data loss.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    get:
+      operationId: ListPromises
+      tags: [query]
+      summary: The promises as they stand at a pin.
+      description: |
+        The plane holds what was recorded, so a promise is open or fulfilled here - expiry and violation are
+        judgements the promise check makes, not states the ledger stores. A fulfilment recorded after the pin reads
+        back open, because a report over a past date must not use answers from the future.
+
+        Asking for the overdue view computes the promise check's findings over the FULL pinned slice, before any
+        status filter narrows it: a finding a filter could hide would be a finding nobody sees.
+      parameters:
+        - name: version_id
+          in: path
+          required: true
+          description: The version whose promises are read.
+          schema:
+            type: string
+        - name: as_of
+          in: query
+          required: false
+          description: The position to read as of, or 0 for the present.
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          required: false
+          description: |-
+            The status to select - "open" or "fulfilled" - or empty for every status.
+          schema:
+            type: string
+        - name: overdue_scope
+          in: query
+          required: false
+          description: |-
+            Compute the promise check's findings for open promises due at this scope, or empty to skip it.
+          schema:
+            type: string
+        - name: final
+          in: query
+          required: false
+          description: Treat this read as the final unit, where every open promise is overdue.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: The promises, and the overdue findings when they were asked for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromiseList"
+
+  /v1/versions/{version_id}/promises/{key}/fulfill:
+    post:
+      operationId: FulfillPromise
+      tags: [command]
+      summary: Fulfil the first open promise with a key.
+      description: |
+        Only an open promise is fulfilled, and only the first: fulfilling one that is already settled would record
+        a settled obligation as settled again. A key with nothing open is answered with "not fulfilled" rather than
+        an error, because the caller is told what happened instead of being punished for asking.
+      parameters:
+        - name: version_id
+          in: path
+          required: true
+          description: The version the promise is fulfilled in.
+          schema:
+            type: string
+        - name: key
+          in: path
+          required: true
+          description: The promise's coordination key.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Whether a promise was fulfilled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromiseFulfilment"
+        "409":
+          description: Every retry lost to a moving head. Retryable, never data loss.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
   /v1/snapshots:
     get:
       operationId: LoadSnapshot
@@ -645,6 +891,97 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Entity"
+
+    AnchorLock:
+      type: object
+      description: |-
+        A lock, as the caller asks for it. The detail key is derived from subject and key rather than passed whole,
+        so a lock always names a property a claim can be matched against.
+      required: [subject, key, value]
+      properties:
+        subject:
+          type: string
+          description: The thing whose detail is locked.
+        key:
+          type: string
+          description: The property of the subject.
+        value:
+          type: string
+          description: The value the detail is pinned to.
+        scope_path:
+          type: string
+          description: The scope the lock is taken at, or empty.
+        evidence:
+          type: string
+          description: The evidence the lock is taken on, as JSON text, or empty.
+
+    PromiseRegistration:
+      type: object
+      required: [key, kind, description]
+      properties:
+        key:
+          type: string
+          description: |-
+            The coordination key. It identifies the obligation, so two obligations alive at once need two keys.
+        kind:
+          type: string
+          description: What kind of promise it is.
+        description:
+          type: string
+          description: The promise in words.
+        origin_scope:
+          type: string
+          description: The scope it is made in, or empty.
+        due_scope:
+          type: string
+          description: The scope it is owed to, or empty.
+
+    AnchorRelease:
+      type: object
+      required: [released]
+      properties:
+        released:
+          type: boolean
+          description: |-
+            False when nothing was locked. The answer says so rather than pretending, and nothing was written: a
+            release that changed nothing must not look like a command that did.
+
+    PromiseFulfilment:
+      type: object
+      required: [fulfilled]
+      properties:
+        fulfilled:
+          type: boolean
+          description: |-
+            False when no promise with that key was open. A settled obligation is not settled twice, and a key with
+            nothing open is not an error.
+
+    AnchorList:
+      type: object
+      required: [anchors]
+      properties:
+        anchors:
+          type: array
+          description: The locked details, later version winning and released ones absent.
+          items:
+            $ref: "#/components/schemas/Anchor"
+
+    PromiseList:
+      type: object
+      required: [promises]
+      properties:
+        promises:
+          type: array
+          description: The promises as they stand at the pin.
+          items:
+            $ref: "#/components/schemas/Promise"
+        findings:
+          type: array
+          description: |-
+            The promise check's overdue findings, when the read asked for them; empty otherwise. They are computed
+            over the full pinned slice before any status filter narrows it.
+          items:
+            $ref: "#/components/schemas/Finding"
 
     AnchorStatus:
       type: string

@@ -114,6 +114,141 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
     }
 
     /// <inheritdoc />
+    public override async Task<LockAnchorResponse> LockAnchorAsync(
+        LockAnchorRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .LockAnchorAsync(
+                request.VersionId,
+                new WireAnchorLock(
+                    request.Body?.Subject ?? string.Empty,
+                    request.Body?.Key ?? string.Empty,
+                    request.Body?.Value ?? string.Empty,
+                    request.Body?.ScopePath ?? string.Empty,
+                    request.Body?.Evidence ?? string.Empty),
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireAnchor anchor => new LockAnchorResponse { Data = ToMessage(anchor) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ListAnchorsResponse> ListAnchorsAsync(
+        ListAnchorsRequest request,
+        ServerCallContext context)
+    {
+        var anchors = await _operations
+            .ListAnchorsAsync(request.VersionId, request.AsOf, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var message = new AnchorList();
+
+        foreach (var anchor in anchors.Anchors)
+        {
+            message.Anchors.Add(ToMessage(anchor));
+        }
+
+        return new ListAnchorsResponse { Data = message };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ReleaseAnchorResponse> ReleaseAnchorAsync(
+        ReleaseAnchorRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .ReleaseAnchorAsync(request.VersionId, request.DetailKey, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireAnchorRelease released => new ReleaseAnchorResponse
+            {
+                Data = new AnchorRelease { Released = released.Released },
+            },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<OpenPromiseResponse> OpenPromiseAsync(
+        OpenPromiseRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .OpenPromiseAsync(
+                request.VersionId,
+                new WirePromiseRegistration(
+                    request.Body?.Key ?? string.Empty,
+                    request.Body?.Kind ?? string.Empty,
+                    request.Body?.Description ?? string.Empty,
+                    request.Body?.OriginScope ?? string.Empty,
+                    request.Body?.DueScope ?? string.Empty),
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WirePromise promise => new OpenPromiseResponse { Data = ToMessage(promise) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ListPromisesResponse> ListPromisesAsync(
+        ListPromisesRequest request,
+        ServerCallContext context)
+    {
+        var promises = await _operations
+            .ListPromisesAsync(
+                request.VersionId,
+                request.AsOf,
+                request.Status,
+                request.OverdueScope,
+                request.Final,
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var message = new PromiseList();
+
+        foreach (var promise in promises.Promises)
+        {
+            message.Promises.Add(ToMessage(promise));
+        }
+
+        foreach (var finding in promises.Findings)
+        {
+            message.Findings.Add(ToMessage(finding));
+        }
+
+        return new ListPromisesResponse { Data = message };
+    }
+
+    /// <inheritdoc />
+    public override async Task<FulfillPromiseResponse> FulfillPromiseAsync(
+        FulfillPromiseRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .FulfilPromiseAsync(request.VersionId, request.Key, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WirePromiseFulfilment fulfilled => new FulfillPromiseResponse
+            {
+                Data = new PromiseFulfilment { Fulfilled = fulfilled.Fulfilled },
+            },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
     public override async Task<LoadSnapshotResponse> LoadSnapshotAsync(
         LoadSnapshotRequest request,
         ServerCallContext context)

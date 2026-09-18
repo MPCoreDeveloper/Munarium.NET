@@ -150,6 +150,116 @@ public static class MunariumEndpoints
                         cancellationToken)
                     .ConfigureAwait(false));
 
+        app.MapPost(
+            "/v1/versions/{version_id}/anchors",
+            async (
+                [FromRoute(Name = "version_id")] string versionId,
+                WireAnchorLock request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.LockAnchorAsync(versionId, request, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireAnchor anchor => TypedResults.Json(anchor, WireJson.Default.WireAnchor),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet(
+            "/v1/versions/{version_id}/anchors",
+            async (
+                [FromRoute(Name = "version_id")] string versionId,
+                [FromQuery(Name = "as_of")] long? asOf,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+                await operations
+                    .ListAnchorsAsync(versionId, asOf ?? 0, cancellationToken)
+                    .ConfigureAwait(false));
+
+        app.MapPost(
+            "/v1/versions/{version_id}/anchors/{detail_key}/release",
+            async (
+                [FromRoute(Name = "version_id")] string versionId,
+                [FromRoute(Name = "detail_key")] string detailKey,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .ReleaseAnchorAsync(versionId, detailKey, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireAnchorRelease released => TypedResults.Json(released, WireJson.Default.WireAnchorRelease),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapPost(
+            "/v1/versions/{version_id}/promises",
+            async (
+                [FromRoute(Name = "version_id")] string versionId,
+                WirePromiseRegistration request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.OpenPromiseAsync(versionId, request, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WirePromise promise => TypedResults.Json(promise, WireJson.Default.WirePromise),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet(
+            "/v1/versions/{version_id}/promises",
+            async (
+                [FromRoute(Name = "version_id")] string versionId,
+                [FromQuery(Name = "as_of")] long? asOf,
+                [FromQuery(Name = "status")] string? status,
+                [FromQuery(Name = "overdue_scope")] string? overdueScope,
+                [FromQuery(Name = "final")] bool? isFinalUnit,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+                await operations
+                    .ListPromisesAsync(versionId, asOf ?? 0, status, overdueScope, isFinalUnit ?? false, cancellationToken)
+                    .ConfigureAwait(false));
+
+        app.MapPost(
+            "/v1/versions/{version_id}/promises/{key}/fulfill",
+            async (
+                [FromRoute(Name = "version_id")] string versionId,
+                [FromRoute(Name = "key")] string key,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .FulfilPromiseAsync(versionId, key, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WirePromiseFulfilment fulfilled => TypedResults.Json(
+                        fulfilled, WireJson.Default.WirePromiseFulfilment),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
         app.MapGet(
             "/v1/snapshots",
             async (

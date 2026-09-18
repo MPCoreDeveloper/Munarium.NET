@@ -551,6 +551,158 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Empty(elsewhere.Facts);
     }
 
+    /// <summary>
+    /// A lock is a command, not a claim: it is recorded, it shows up in the plane, and a claim that contradicts it
+    /// is refused by the anchor check rather than by the ledger conflict it would otherwise look like.
+    /// </summary>
+    [Fact]
+    public async Task ALockedDetailCannotBeContradicted()
+    {
+        using var locked = await _client.PostAsJsonAsync(
+            "/v1/versions/version-anchor/anchors",
+            new WireAnchorLock("service", "api_version", "v2", "release", "{}"),
+            WireJson.Default.WireAnchorLock);
+
+        Assert.Equal(HttpStatusCode.OK, locked.StatusCode);
+
+        var anchor = (await locked.Content.ReadFromJsonAsync(WireJson.Default.WireAnchor))!;
+
+        Assert.Equal("service.api_version", anchor.DetailKey);
+        Assert.Equal("v2", anchor.LockedValue);
+        Assert.Equal(WireAnchorStatuses.Locked, anchor.Status);
+
+        var anchors = await GetAsync("/v1/versions/version-anchor/anchors", WireJson.Default.WireAnchorList);
+
+        Assert.Equal("v2", Assert.Single(anchors.Anchors).LockedValue);
+
+        var batch = await ProposeBatchAsync("version-anchor", Batch(("service", "api_version", "v3")));
+
+        var claim = Assert.Single(batch.Claims);
+        var finding = Assert.Single(batch.Findings, item => item.Severity == WireSeverities.Block);
+
+        Assert.Equal(WireClaimStatus.Disputed, claim.Status);
+        Assert.Equal(finding.RuleId, claim.Gate);
+        Assert.Equal("service.api_version", finding.ClaimKey);
+    }
+
+    [Fact]
+    public async Task ReleasingALockTwiceSaysSoTheSecondTime()
+    {
+        await _client.PostAsJsonAsync(
+            "/v1/versions/version-anchor-release/anchors",
+            new WireAnchorLock("service", "api_version", "v2", string.Empty, string.Empty),
+            WireJson.Default.WireAnchorLock);
+
+        using var released = await _client.PostAsync(
+            "/v1/versions/version-anchor-release/anchors/service.api_version/release",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.OK, released.StatusCode);
+
+        var first = (await released.Content.ReadFromJsonAsync(WireJson.Default.WireAnchorRelease))!;
+
+        Assert.True(first.Released);
+
+        var anchors = await GetAsync("/v1/versions/version-anchor-release/anchors", WireJson.Default.WireAnchorList);
+
+        Assert.Empty(anchors.Anchors);
+
+        using var again = await _client.PostAsync(
+            "/v1/versions/version-anchor-release/anchors/service.api_version/release",
+            content: null);
+
+        var second = (await again.Content.ReadFromJsonAsync(WireJson.Default.WireAnchorRelease))!;
+
+        Assert.False(second.Released);
+    }
+
+    /// <summary>A detail key that names no property could never have been locked, so the release is refused.</summary>
+    [Fact]
+    public async Task ReleasingAKeyThatNamesNoPropertyIsRefused()
+    {
+        using var response = await _client.PostAsync(
+            "/v1/versions/version-anchor-key/anchors/service/release",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task APromiseIsOpenUntilItIsFulfilled()
+    {
+        using var opened = await _client.PostAsJsonAsync(
+            "/v1/versions/version-promise/promises",
+            new WirePromiseRegistration(
+                "audit-report", "deliverable", "an audit report for the release", "release", "compliance"),
+            WireJson.Default.WirePromiseRegistration);
+
+        Assert.Equal(HttpStatusCode.OK, opened.StatusCode);
+
+        var promise = (await opened.Content.ReadFromJsonAsync(WireJson.Default.WirePromise))!;
+
+        Assert.Equal(WirePromiseStatuses.Open, promise.Status);
+        Assert.Equal("compliance", promise.DueScope);
+
+        var open = await GetAsync("/v1/versions/version-promise/promises", WireJson.Default.WirePromiseList);
+
+        Assert.Equal(WirePromiseStatuses.Open, Assert.Single(open.Promises).Status);
+
+        using var fulfilled = await _client.PostAsync(
+            "/v1/versions/version-promise/promises/audit-report/fulfill",
+            content: null);
+
+        var done = (await fulfilled.Content.ReadFromJsonAsync(WireJson.Default.WirePromiseFulfilment))!;
+
+        Assert.True(done.Fulfilled);
+
+        var after = await GetAsync(
+            "/v1/versions/version-promise/promises?status=fulfilled",
+            WireJson.Default.WirePromiseList);
+
+        Assert.Equal(WirePromiseStatuses.Fulfilled, Assert.Single(after.Promises).Status);
+
+        // Fulfilling it again settles nothing, and says so rather than failing.
+        using var again = await _client.PostAsync(
+            "/v1/versions/version-promise/promises/audit-report/fulfill",
+            content: null);
+
+        var nothing = (await again.Content.ReadFromJsonAsync(WireJson.Default.WirePromiseFulfilment))!;
+
+        Assert.False(nothing.Fulfilled);
+    }
+
+    /// <summary>
+    /// The overdue view is computed over the full pinned slice, before the status filter narrows it: a finding a
+    /// filter could hide would be a finding nobody sees.
+    /// </summary>
+    [Fact]
+    public async Task TheOverdueViewSurvivesTheStatusFilter()
+    {
+        await _client.PostAsJsonAsync(
+            "/v1/versions/version-promise-overdue/promises",
+            new WirePromiseRegistration("audit-report", "deliverable", "an audit report", "release", "compliance"),
+            WireJson.Default.WirePromiseRegistration);
+
+        var overdue = await GetAsync(
+            "/v1/versions/version-promise-overdue/promises?overdue_scope=compliance&final=true",
+            WireJson.Default.WirePromiseList);
+
+        Assert.Single(overdue.Promises);
+
+        var finding = Assert.Single(overdue.Findings);
+
+        Assert.Equal("gate.promise-unfulfilled", finding.RuleId);
+        Assert.Equal(WireSeverities.Warn, finding.Severity);
+        Assert.Contains("audit-report", finding.Message, StringComparison.Ordinal);
+
+        var filtered = await GetAsync(
+            "/v1/versions/version-promise-overdue/promises?overdue_scope=compliance&status=fulfilled",
+            WireJson.Default.WirePromiseList);
+
+        Assert.Empty(filtered.Promises);
+        Assert.Single(filtered.Findings);
+    }
+
     private static string Vendor(string vendorId, string status = "approved") =>
         $$"""{"vendor_id":"{{vendorId}}","status":"{{status}}"}""";
 

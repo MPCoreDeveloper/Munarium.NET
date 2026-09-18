@@ -522,6 +522,63 @@ public sealed record WireEntity(
     long Sequence,
     string MergedInto);
 
+/// <summary>A lock as the caller asks for it: the detail key is derived from subject and key.</summary>
+/// <param name="Subject">The thing whose detail is locked.</param>
+/// <param name="Key">The property of the subject.</param>
+/// <param name="Value">The value the detail is pinned to.</param>
+/// <param name="ScopePath">The scope the lock is taken at, or empty.</param>
+/// <param name="Evidence">The evidence the lock is taken on, as JSON text, or empty.</param>
+public sealed record WireAnchorLock(
+    string Subject,
+    string Key,
+    string Value,
+    string ScopePath,
+    string Evidence);
+
+/// <summary>A promise as the caller asks for it.</summary>
+/// <param name="Key">The coordination key.</param>
+/// <param name="Kind">What kind of promise it is.</param>
+/// <param name="Description">The promise in words.</param>
+/// <param name="OriginScope">The scope it is made in, or empty.</param>
+/// <param name="DueScope">The scope it is owed to, or empty.</param>
+public sealed record WirePromiseRegistration(
+    string Key,
+    string Kind,
+    string Description,
+    string OriginScope,
+    string DueScope);
+
+/// <summary>Whether a lock was released.</summary>
+/// <param name="Released">False when nothing was locked, in which case nothing was written either.</param>
+public sealed record WireAnchorRelease(bool Released);
+
+/// <summary>Whether a promise was fulfilled.</summary>
+/// <param name="Fulfilled">False when no promise with that key was open.</param>
+public sealed record WirePromiseFulfilment(bool Fulfilled);
+
+/// <summary>The locked details as they stand at a pin.</summary>
+/// <param name="Anchors">The locks, later version winning and released ones absent.</param>
+public sealed record WireAnchorList(IReadOnlyList<WireAnchor> Anchors);
+
+/// <summary>The promises as they stand at a pin, and the overdue findings when they were asked for.</summary>
+/// <param name="Promises">The promises at the pin.</param>
+/// <param name="Findings">The promise check's findings, or empty when the read did not ask for them.</param>
+public sealed record WirePromiseList(
+    IReadOnlyList<WirePromise> Promises,
+    IReadOnlyList<WireFinding> Findings);
+
+/// <summary>The result of locking a detail: the lock as recorded, or why it was not.</summary>
+public readonly union WireAnchorResult(WireAnchor, WireProblem);
+
+/// <summary>The result of releasing a lock: whether anything was released, or why nothing was.</summary>
+public readonly union WireReleaseResult(WireAnchorRelease, WireProblem);
+
+/// <summary>The result of registering a promise: the promise as recorded, or why it was not.</summary>
+public readonly union WirePromiseResult(WirePromise, WireProblem);
+
+/// <summary>The result of fulfilling a promise: whether anything was fulfilled, or why nothing was.</summary>
+public readonly union WireFulfilResult(WirePromiseFulfilment, WireProblem);
+
 public readonly union WireClaimResult(WireClaimOutcome, WireProblem);
 
 /// <summary>The result of creating a version: the version, or why it could not be created.</summary>

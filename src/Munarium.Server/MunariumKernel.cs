@@ -7,6 +7,7 @@ using Munarium.Facts;
 using Munarium.Governance;
 using Munarium.Ledger;
 using Munarium.Providers;
+using Munarium.Promises;
 using Munarium.Retrieval;
 using Munarium.Shapes;
 using Munarium.Store.SharpCoreDb;
@@ -92,11 +93,19 @@ public sealed class MunariumKernel : IAsyncDisposable
         // of step: there is no second table to disagree with.
         var findings = new FindingsLedger(storage);
 
+        // The authoring paths for the two keyed planes a snapshot reads: a lock, and a promise one scope owes to
+        // another. Both read the plane they write through the same builder, so a release or a fulfilment answers
+        // from what is actually there rather than from what the caller believed.
+        var anchors = new AnchorLedger(storage, snapshots);
+        var promises = new PromiseLedger(storage, snapshots);
+
         var operations = new MunariumOperations(
             storage,
             claims,
             candidates,
             findings,
+            anchors,
+            promises,
             facts,
             shapes,
             retriever,

@@ -150,15 +150,15 @@ in the order it is planned:
   corpus is what a host put in the index rather than something the deployment ingested and can rebuild on demand.
   The source identity, the path rules and the `ISourceStore` seam are in place; the ingest surface, the source
   metadata row and the extractors that turn DOCX or PDF into the text a chunker cuts are the ingest slice.
-- **A snapshot is served, and the two planes behind it have write paths in the kernel; none of that is on the wire
-  yet.** `GET /v1/snapshots` (and the `LoadSnapshot` RPC) answers with one pin across every plane: facts
+- **The keyed planes are readable and two of them are authorable; counters and entities are not yet.** Every plane
+  a snapshot carries is served: `GET /v1/snapshots` answers with one pin across all of them - facts
   resolved-current, the digest ladder rebuilt from them, the scope filter and fact limit applied after resolution,
-  and the keyed planes - anchors, promises, counters, entities - as they stood at that position, plus the instant
-  derived from the snapshot's own identities rather than from a clock. `AnchorLedger` locks and releases a detail,
-  `PromiseLedger` registers and fulfils one, and both report a lost race as a retryable outcome rather than
-  throwing; a lock is refused when its detail key names no property, and a release of a detail nobody locked writes
-  nothing at all. What is missing is the surface: no route locks an anchor, registers a promise or records a counter
-  or an entity, so those planes are reached through the storage seam today.
+  and the keyed planes as they stood at that position, plus the instant derived from the snapshot's own identities
+  rather than from a clock. Anchors and promises have their own routes too: `POST/GET /v1/versions/{id}/anchors`,
+  `POST .../anchors/{detail_key}/release`, `POST/GET /v1/versions/{id}/promises` - with the promise check's overdue
+  findings computed over the full pinned slice before any filter narrows it - and `POST .../promises/{key}/fulfill`.
+  What is missing is the rest of the authoring side: nothing on the wire records a counter or an entity, and no
+  route ingests a document.
 - **Idempotency keys.** The original requires an `idempotency-key` metadata entry on every command RPC and
   replays the stored result. Here a retry writes a second claim; the `ledger-conflict` gate treats a
   re-sent claim as a retry only when nothing about it changed, which is an approximation and is written
