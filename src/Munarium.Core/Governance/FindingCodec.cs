@@ -3,6 +3,7 @@ namespace Munarium.Governance;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Munarium.Claims;
+using Munarium.Ledger;
 
 /// <summary>
 /// The canonical encoding of a write's findings, for the ledger payload.
@@ -42,8 +43,7 @@ public static class FindingCodec
     {
         ArgumentNullException.ThrowIfNull(findings);
 
-        using var buffer = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(buffer))
+        return PayloadJson.Write(writer =>
         {
             writer.WriteStartArray();
 
@@ -71,9 +71,7 @@ public static class FindingCodec
             }
 
             writer.WriteEndArray();
-        }
-
-        return buffer.ToArray();
+        });
     }
 
     /// <summary>
@@ -115,14 +113,14 @@ public static class FindingCodec
             throw new FormatException("A finding is a JSON object.");
         }
 
-        var ruleId = Text(element, "rule_id") ?? throw new FormatException("A finding needs a rule id.");
+        var ruleId = PayloadJson.Text(element, "rule_id") ?? throw new FormatException("A finding needs a rule id.");
 
         return new GateFinding
         {
             RuleId = ruleId,
             Severity = SeverityOf(element),
-            Message = Text(element, "message") ?? string.Empty,
-            ScopePath = Text(element, "scope_path"),
+            Message = PayloadJson.Text(element, "message") ?? string.Empty,
+            ScopePath = PayloadJson.Text(element, "scope_path"),
             Detail = Detail(element),
         };
     }
@@ -143,11 +141,6 @@ public static class FindingCodec
             ? (Severity)number
             : throw new FormatException($"Unknown severity '{number}' in a findings payload.");
     }
-
-    private static string? Text(JsonElement element, string name) =>
-        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
 
     private static JsonObject? Detail(JsonElement element) =>
         element.TryGetProperty("detail", out var detail) && detail.ValueKind == JsonValueKind.Object
