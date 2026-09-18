@@ -229,6 +229,31 @@ public class EvidenceManifestCodecTests
         Assert.Equal(kind, EvidenceManifestCodec.FromJson(json, "test manifest").Kind);
     }
 
+    /// <summary>
+    /// The names are the contract's, not this port's: they are the same names the original's JSON schema declares, and
+    /// they travel on both transports and into the stored row. A name that drifted here would be a field no
+    /// implementation of the contract could read.
+    /// </summary>
+    [Fact]
+    public void TheNamesAreTheContracts()
+    {
+        var json = EvidenceManifestCodec.ToJson(
+            Manifest() with { Retention = new Retention { ExpiresAt = "2026-10-01T00:00:00Z", LegalHold = true } });
+
+        Assert.Contains("\"contract_version\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"logical_result_hash\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"artifact_hash\"", json, StringComparison.Ordinal);
+
+        // `bytes_len`, not `bytes_length`: the contract spells it that way, and so does the column it is lifted into.
+        Assert.Contains("\"bytes_len\":12", json, StringComparison.Ordinal);
+        Assert.Contains("\"media_type\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"row_id_rule\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"replay_level\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"access_level\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"legal_hold\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"snapshot_vector\"", json, StringComparison.Ordinal);
+    }
+
     private static EvidenceManifest ReadAfter(string replace, string with) =>
         EvidenceManifestCodec.FromJson(
             EvidenceManifestCodec.ToJson(Manifest()).Replace(replace, with, StringComparison.Ordinal),

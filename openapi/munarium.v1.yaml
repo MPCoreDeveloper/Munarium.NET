@@ -1109,6 +1109,407 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/evidence:
+    post:
+      operationId: SealEvidence
+      tags: [evidence]
+      summary: Seal an artifact, or take a grant to upload one.
+      description: |-
+        A manifest is a statement about work the sealer did: it executed this exact statement, against this exact source,
+        and got exactly these bytes. Sealing is deliberately absent from every client - an SDK that offered it would
+        invite an application to assert provenance it cannot vouch for - and is served here for the producer that actually
+        did the work.
+
+        Inline when `bytes_base64` is present and at or under the inline cap; otherwise the response carries a single-use
+        grant for `PUT /v1/evidence/{evidence_id}/bytes`. Idempotent by the domain tuple - tenant, logical result, policy
+        version and authorization class - rather than by an idempotency key, because the tuple holds across replicas and
+        across headers, which is the stronger guarantee for a producer retrying a seal.
+
+        A caller may not seal above itself: every later reader trusts the class a manifest declares, so a principal that
+        could seal into a class it does not itself dominate would be minting evidence nobody was ever authorized to
+        assert. The identity is the server's to assign, and a caller-supplied one is ignored rather than honoured.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceSeal"
+      responses:
+        "200":
+          description: The artifact's identity and state, with a grant when one was issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SealedEvidence"
+        "400":
+          description: The manifest is not one this contract defines, or it names another tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The caller may not seal into the class the manifest declares.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The bytes are not the ones the manifest declares, so nothing was stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "413":
+          description: The bytes are over the inline cap; take a grant and upload them.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/evidence/{evidence_id}/bytes:
+    put:
+      operationId: PutEvidenceBytes
+      tags: [evidence]
+      summary: Upload an artifact's bytes under a single-use grant.
+      description: |-
+        The grant flow's upload step. The bytes are verified against the manifest before the grant is spent, so a corrupt
+        upload can be retried: burning a single-use capability on a client-side mistake would turn a recoverable error
+        into an unrecoverable one.
+
+        An unknown artifact answers exactly what an invalid grant answers, so a caller without a valid grant learns
+        nothing about which identities exist.
+      parameters:
+        - name: evidence_id
+          in: path
+          required: true
+          description: The identity the seal assigned.
+          schema:
+            type: string
+        - name: grant
+          in: query
+          required: true
+          description: The grant identifier handed back by the seal.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceBytesUpload"
+      responses:
+        "204":
+          description: Stored. The artifact stays pending until it is committed.
+        "403":
+          description: The grant is unknown, expired, already spent, or for another artifact.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The bytes are not the ones the manifest declares, and the grant was not spent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/evidence/{evidence_id}/commit:
+    post:
+      operationId: CommitEvidence
+      tags: [evidence]
+      summary: Commit an uploaded artifact, so it becomes citable.
+      description: |-
+        This is the moment an artifact becomes citable, so it is the moment "these bytes are that hash" has to be true -
+        not the moment an upload happened to return a success. The stored bytes are re-read and both declared facts are
+        verified again.
+
+        Only absence is the caller's state to fix: a backend that failed to read is a storage error rather than an
+        instruction to upload again.
+      parameters:
+        - name: evidence_id
+          in: path
+          required: true
+          description: The artifact.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Whether this call committed it rather than finding it committed already.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommittedEvidence"
+        "403":
+          description: The caller does not dominate the artifact's class.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: No artifact by that identity in this tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The bytes are missing, or are not the ones the manifest declares.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/evidence/{evidence_id}:
+    get:
+      operationId: GetEvidenceManifest
+      tags: [evidence]
+      summary: Resolve a citation to the manifest it names.
+      description: |-
+        The manifest is a statement about how the rows were produced: kind, source and engine, the contract or semantic
+        provider version, the snapshot marker, whether the read was complete or truncated, both hashes, and its retention
+        state. Check `completeness` before quoting a total - a truncated result supports "at least", never "exactly".
+
+        A 200 already means committed: a pending artifact answers 409 and a purged one 410, because the metadata survives
+        a purge so a citation keeps resolving to what it was rather than to nothing. A session that does not dominate the
+        artifact's authorization class is refused, and the refusal says nothing about the artifact: learning "this exists
+        and is above you" is itself a disclosure.
+      parameters:
+        - name: evidence_id
+          in: path
+          required: true
+          description: The artifact a citation names.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The manifest, with the identity the server assigned stamped onto it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceManifest"
+        "403":
+          description: The caller does not dominate the artifact's class.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: No artifact by that identity in this tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: Sealed, and its bytes were never committed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "410":
+          description: Purged under its retention policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    delete:
+      operationId: PurgeEvidence
+      tags: [evidence]
+      summary: Purge an artifact's bytes now.
+      description: |-
+        The operator-facing twin of the retention sweep, and the reason a legal hold is a reachable refusal rather than
+        dead vocabulary: an artifact under hold refuses deletion here, which is what makes a hold mean anything.
+
+        Retention is an operator's decision, not a participant's: a service that can seal evidence must not be able to
+        destroy it. The metadata row survives with its purge instant, so every citation to this artifact keeps resolving -
+        as `evidence-expired`, an honest statement about retention, rather than as `not-found`, which would read as though
+        the citation had been fabricated. The bytes are deleted before the row is marked, so a crash leaves a row the next
+        sweep still sees as due rather than a row reporting itself purged over bytes that are still there.
+      parameters:
+        - name: evidence_id
+          in: path
+          required: true
+          description: The artifact.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Whether this call purged it, rather than finding it purged already.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurgedEvidence"
+        "403":
+          description: An operator's decision, refused for a participant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: No artifact by that identity in this tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: A legal hold is in force, so the bytes may not be deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/evidence/{evidence_id}/legal-hold:
+    post:
+      operationId: SetEvidenceLegalHold
+      tags: [evidence]
+      summary: Place or lift a legal hold.
+      description: |-
+        A hold blocks deletion and nothing else. Reads stay governed by the authorization class exactly as before: an
+        instruction to preserve evidence that also hid it would be a strange instruction. A hold survives an expiry - an
+        artifact past its retention date but under hold is skipped by the sweep indefinitely, which is exactly what a hold
+        is for.
+      parameters:
+        - name: evidence_id
+          in: path
+          required: true
+          description: The artifact.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LegalHoldRequest"
+      responses:
+        "204":
+          description: The hold was placed or lifted.
+        "403":
+          description: An operator's decision, refused for a participant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: No artifact by that identity in this tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/evidence/{evidence_id}/rows:
+    get:
+      operationId: GetEvidenceRows
+      tags: [evidence]
+      summary: Read a bounded window over an artifact's rows.
+      description: |-
+        The sealed rows themselves, in the order they were sealed, paged and capped. The header row is dropped and the
+        column names come from the manifest's schema, because the schema is the contract: a header that disagreed with it
+        would be the schema drifting silently.
+
+        Served for the canonical CSV form only. A Parquet artifact is sealed and replayed byte for byte but not decoded
+        here - pulling a Parquet reader into the image to paginate rows would be a large dependency for a convenience -
+        so its rows are refused by name, and the bytes stay intact either way.
+
+        **This route is JSON-only, as it is in the original**: the gRPC transport answers `unsupported` for it by name
+        rather than pretending, the same rule every route without a faithful protobuf form follows. A row keyed by the
+        names a manifest declares has no protobuf equivalent that keeps the names, and nothing about a row read wants a
+        streaming RPC.
+      parameters:
+        - name: evidence_id
+          in: path
+          required: true
+          description: The artifact a citation names.
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          description: The zero-based first row. Defaults to 0.
+          schema:
+            type: integer
+            format: int64
+        - name: limit
+          in: query
+          required: false
+          description: How many rows. Defaults to 100 and is capped at 1000.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: The page, with the total the artifact holds so a caller knows whether to come back.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceRows"
+        "400":
+          description: The artifact's bytes are not the canonical CSV form, so this server does not decode them.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The caller does not dominate the artifact's class.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: No artifact by that identity in this tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: Sealed, and its bytes were never committed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "410":
+          description: Purged under its retention policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/evidence/{evidence_id}/accesses:
+    get:
+      operationId: ListEvidenceAccesses
+      tags: [evidence]
+      summary: Who resolved an artifact, and how it went.
+      description: |-
+        An operator's question about the deployment rather than a participant's question about the data: a service that
+        can seal evidence has no business enumerating who read it. It reports that reads happened - who, what kind, how it
+        went, when - and never the rows themselves, because an audit table holding the regulated data it audits would be a
+        second copy of the problem the audit exists to describe.
+      parameters:
+        - name: evidence_id
+          in: path
+          required: true
+          description: The artifact.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: How many resolutions, newest first. Defaults to 100 and is capped at 1000.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: The resolutions, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceAccesses"
+        "403":
+          description: An operator's question, refused for a participant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
 components:
   schemas:
     Problem:
@@ -2266,3 +2667,454 @@ components:
           description: The collection's versions, live and superseded, latest build first.
           items:
             $ref: "#/components/schemas/IndexVersionState"
+
+    EvidenceSeal:
+      type: object
+      required: [manifest]
+      properties:
+        manifest:
+          $ref: "#/components/schemas/EvidenceManifest"
+        bytes_base64:
+          type: string
+          description: |-
+            The canonical bytes, base64, when they travel with the seal. Omit them to take a grant instead, which is what
+            a set of bytes over the inline cap has to do.
+
+    SealedEvidence:
+      type: object
+      required: [evidence_id, state, created]
+      properties:
+        evidence_id:
+          type: string
+          description: The identity the server assigned.
+        state:
+          type: string
+          description: |-
+            The recorded artifact's state, not a constant: a seal that lost the domain-key race to another one hands back
+            the winner's identity, and that artifact is pending until its own bytes are committed.
+          enum: [pending, committed, purged]
+        created:
+          type: boolean
+          description: Whether this call created the artifact rather than finding the seal already made.
+        grant:
+          $ref: "#/components/schemas/EvidenceUploadGrant"
+
+    EvidenceUploadGrant:
+      type: object
+      required: [grant_id, expires_at]
+      properties:
+        grant_id:
+          type: string
+        expires_at:
+          type: string
+          description: When the grant stops being usable.
+
+    EvidenceBytesUpload:
+      type: object
+      required: [bytes_base64]
+      properties:
+        bytes_base64:
+          type: string
+          description: |-
+            The artifact's bytes, base64. Base64 rather than the octet stream the original takes, because this port's
+            surfaces are JSON by design - the same choice its ingest route makes for a document - and the canonical form
+            includes Parquet, which is not text.
+
+    CommittedEvidence:
+      type: object
+      required: [evidence_id, state, committed]
+      properties:
+        evidence_id:
+          type: string
+        state:
+          type: string
+          enum: [pending, committed, purged]
+        committed:
+          type: boolean
+          description: |-
+            Whether this call committed it. False when it was committed already, or when its bytes are gone - a purge is
+            not undone by a commit arriving late, and calling that committed would be the lie the row exists to prevent.
+
+    EvidenceManifest:
+      type: object
+      description: |-
+        Everything needed to prove what an answer was computed from, decide who may read it, and say honestly whether it
+        can be replayed. The bytes are separate: this names them by `artifact_hash` and never embeds them. Absent fields
+        mean "not applicable to this kind", never "unknown" - the two are different claims and a reader deciding whether
+        to trust a result needs to know which one it has.
+      required: [contract_version, canon, tenant, kind, logical_result_hash, artifact_hash, bytes_len, media_type, source, versions, schema, identity, completeness, snapshot_vector, execution, authorization_class]
+      properties:
+        contract_version:
+          type: string
+          description: The contract version the producer built against. A major that differs from this server's is a wire break.
+        canon:
+          type: string
+          description: The canonicalization version. This contract major implements exactly one.
+          enum: [canon@1]
+        evidence_id:
+          type: string
+          description: |-
+            Assigned by the server at seal: absent in a seal request and present in every read, which is what makes the
+            identity a property of the deployment rather than a claim by the caller.
+        tenant:
+          type: string
+        kind:
+          type: string
+          description: |-
+            Closed: a new member is a major contract bump, because a reader that does not recognize a kind cannot say
+            what it is holding.
+          enum: [table, count, observations]
+        logical_result_hash:
+          type: string
+          description: |-
+            The hash of the logical result, which is what makes two seals of one answer the same seal. It does not move
+            when the same logical result is re-serialized.
+        artifact_hash:
+          type: string
+          description: The hash of the serialized bytes as they were written.
+        bytes_len:
+          type: integer
+          format: int64
+        media_type:
+          type: string
+          description: How the bytes are serialized. Both are canonical forms; the CSV one exists so a small artifact is readable without a Parquet reader.
+          enum: ["application/vnd.apache.parquet", "text/csv; charset=utf-8"]
+        source:
+          $ref: "#/components/schemas/EvidenceSource"
+        versions:
+          $ref: "#/components/schemas/EvidenceVersions"
+        plan:
+          $ref: "#/components/schemas/EvidencePlan"
+
+    EvidenceSource:
+      type: object
+      description: Which source a result came from, and what executed it - provenance, not identity.
+      required: [source_id, source_version, adapter]
+      properties:
+        source_id:
+          type: string
+        source_version:
+          type: integer
+          format: int64
+        adapter:
+          type: string
+          description: "An open vocabulary: postgres, databricks, landing, and whatever comes next."
+        adapter_version:
+          type: string
+        engine:
+          type: string
+          description: What actually executed it, as the engine reports itself. Part of the provenance, not of the logical identity.
+        driver:
+          type: string
+
+    EvidenceVersions:
+      type: object
+      description: Every versioned artifact that shaped a result. An absent one means "not applicable to this kind", never "unknown".
+      properties:
+        query_contract:
+          type: string
+          description: A verified query contract executed the statement its author wrote; the model never wrote SQL.
+        claim_mapping:
+          type: string
+        semantic_provider:
+          type: string
+          description: A metric view or native data view answered a bounded semantic intent.
+        render:
+          type: string
+        policy:
+          type: string
+        compiler:
+          type: string
+
+    EvidencePlan:
+      type: object
+      description: Hashes of the compiled plan and the bound parameters. The statement text is never sealed and never leaves the engine.
+      properties:
+        canonical_plan_hash:
+          type: string
+        bound_parameters_hash:
+          type: string
+
+    EvidenceSchema:
+      type: object
+      required: [columns]
+      properties:
+        columns:
+          type: array
+          description: The columns, in result order. These names are what the row read keys its rows by.
+          items:
+            $ref: "#/components/schemas/EvidenceColumn"
+
+    EvidenceColumn:
+      type: object
+      description: |-
+        One column of a sealed result. The identity and the name are separate because a source may rename a column
+        without changing what it means: a consumer keyed on the name would see a new column where nothing changed.
+      required: [id, name, type]
+      properties:
+        id:
+          type: string
+          description: The stable identity, which survives a rename of the source column.
+        name:
+          type: string
+          description: The column's name as the source reports it.
+        type:
+          type: string
+          description: |-
+            Closed, and deliberately logical rather than physical: the canonical scalar encodings are defined exactly over
+            this set, so a type that only exists in one engine's type system would have no encoding.
+          enum: [bool, int64, decimal, float64, string, bytes, date, timestamp_tz, timestamp_naive, interval, uuid, json, array]
+        nullable:
+          type: boolean
+          default: false
+        scale:
+          type: integer
+          format: int64
+          description: The decimal scale, when the type has one.
+        unit:
+          type: string
+          description: The unit, such as USD or seconds, carried so a number is never unitless.
+        additivity:
+          type: string
+          description: "An open vocabulary: additive, semi_additive, none."
+        key:
+          type: boolean
+          description: Whether the column is part of the row identity.
+        element_type:
+          type: string
+          description: The element type of an array column.
+
+    EvidenceIdentity:
+      type: object
+      required: [row_id_rule]
+      properties:
+        row_id_rule:
+          type: string
+          description: |-
+            How rows are identified. Positional row ids are legal only under a total ordering, which is why the server
+            refuses a manifest that declares them with nothing to order by.
+          enum: [keys, position]
+        order_by:
+          type: array
+          description: The declared ordering, which a positional rule requires to be total.
+          items:
+            type: string
+        rows:
+          type: integer
+          format: int64
+          description: How many rows the result held, when the producer says so.
+
+    EvidenceCompleteness:
+      type: object
+      required: [truncated]
+      properties:
+        truncated:
+          type: boolean
+          description: Whether rows were cut off. A truncated result supports "at least this many", never "exactly this many".
+        declared_max_rows:
+          type: integer
+          format: int64
+        rows_covered:
+          type: integer
+          format: int64
+          description: How many source rows the run covered.
+        rows_excluded:
+          type: integer
+          format: int64
+          description: How many rows policy or drift excluded, which are reported and never silently dropped.
+        exclusion_reason:
+          type: string
+
+    EvidenceRedaction:
+      type: object
+      description: |-
+        What a policy removed before the bytes were written. A denied column was never selected, so it is absent from the
+        bytes rather than blank; naming it here is how an operator sees why a column is missing instead of inferring it
+        from a gap.
+      properties:
+        denied_columns:
+          type: array
+          items:
+            type: string
+        masked:
+          type: boolean
+
+    EvidenceSnapshotMarker:
+      type: object
+      description: |-
+        One marker per source that contributed. A cross-source result carries a vector of markers precisely so it is never
+        described as one atomic snapshot: no single engine's snapshot covers two engines.
+      required: [source_id, replay_level]
+      properties:
+        source_id:
+          type: string
+        marker:
+          type: string
+          description: "Engine-native: a snapshot, a table version, a manifest id."
+        isolation:
+          type: string
+        started_at:
+          type: string
+        ended_at:
+          type: string
+        replay_level:
+          type: string
+          description: "What re-running would give you. An open vocabulary: sealed_result, source_time_travel, or less."
+        replay_expires_at:
+          type: string
+
+    EvidenceFreshness:
+      type: object
+      description: How current the data behind a result was.
+      properties:
+        watermark:
+          type: string
+          description: The source's watermark.
+        observed_at:
+          type: string
+          description: When the data was observed.
+        lag_seconds:
+          type: integer
+          format: int64
+
+    EvidenceExecution:
+      type: object
+      required: [started_at, ended_at]
+      properties:
+        started_at:
+          type: string
+        ended_at:
+          type: string
+        effective_principal:
+          type: string
+          description: |-
+            The identity the source saw, such as a row-level-security role - deliberately not the end user's: what matters
+            for reproducing a result is the principal the engine applied its own policy to, not who asked.
+        statement_id:
+          type: string
+
+    EvidenceAuthorizationClass:
+      type: object
+      description: |-
+        The equivalence class an artifact belongs to. A resolving session must dominate it: level at least the artifact's,
+        and every compartment it declares. The rule is the same one the collection access path applies, on purpose -
+        evidence is not a weaker class of data than the documents beside it.
+      required: [access_level]
+      properties:
+        name:
+          type: string
+        access_level:
+          type: integer
+          format: int64
+        compartments:
+          type: array
+          items:
+            type: string
+
+    EvidenceRetention:
+      type: object
+      properties:
+        expires_at:
+          type: string
+          description: When the artifact's bytes may be deleted, as an RFC 3339 instant.
+        legal_hold:
+          type: boolean
+          description: Whether a hold stops the purge. A hold blocks deletion and never reading.
+        purged_at:
+          type: string
+          description: |-
+            Set by the sweep or by an operator. A purged artifact keeps its row so a citation resolves `evidence-expired`
+            rather than `not-found`.
+
+    EvidenceRow:
+      type: object
+      description: |-
+        One sealed row, keyed by the column names the manifest's schema declares - the names are the contract, and a row
+        that disagreed with them would be the schema drifting silently. A value is a string or null: an empty value and no
+        value are different claims, and this plane exists to keep them apart.
+
+        This is the one shape in the contract with no faithful protobuf form, which is why the row read that returns it is
+        JSON-only: a protobuf map's values cannot be null, so a row carried over gRPC would have to collapse that
+        distinction to travel at all.
+      properties: {}
+
+    EvidenceRows:
+      type: object
+      required: [evidence_id, from, has_more, rows, total]
+      properties:
+        evidence_id:
+          type: string
+        from:
+          type: integer
+          format: int64
+          description: The first row this page starts at.
+        has_more:
+          type: boolean
+          description: Whether there are rows after this page, which is what a caller needs to know rather than an estimate.
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvidenceRow"
+        total:
+          type: integer
+          format: int64
+          description: How many rows the artifact holds in all, so a caller knows how far it can page.
+
+    EvidenceAccess:
+      type: object
+      required: [uid, kind, outcome, at]
+      properties:
+        uid:
+          type: string
+          description: Who resolved it.
+        kind:
+          type: string
+          description: |-
+            What was read. A resolution records *that* a read happened and never the rows read: an audit table holding the
+            regulated data it audits would be a second copy of the problem the audit exists to describe.
+          enum: [manifest, rows]
+        row_from:
+          type: integer
+          format: int64
+        row_limit:
+          type: integer
+          format: int64
+        outcome:
+          type: string
+          enum: [ok, denied, expired, on-hold]
+        at:
+          type: string
+          description: When the read happened.
+
+    EvidenceAccesses:
+      type: object
+      required: [evidence_id, accesses]
+      properties:
+        evidence_id:
+          type: string
+        accesses:
+          type: array
+          description: The resolutions, newest first.
+          items:
+            $ref: "#/components/schemas/EvidenceAccess"
+
+    PurgedEvidence:
+      type: object
+      required: [evidence_id, purged, state]
+      properties:
+        evidence_id:
+          type: string
+        purged:
+          type: boolean
+          description: Whether this call purged it, rather than finding it purged already.
+        state:
+          type: string
+          enum: [purged]
+
+    LegalHoldRequest:
+      type: object
+      required: [hold]
+      properties:
+        hold:
+          type: boolean
+          description: Whether to place the hold, or lift it.

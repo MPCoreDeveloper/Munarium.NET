@@ -41,7 +41,7 @@ public static class EvidenceManifestCodec
             writer.WriteString("kind", manifest.Kind.ToWireName());
             writer.WriteString("logical_result_hash", manifest.LogicalResultHash);
             writer.WriteString("artifact_hash", manifest.ArtifactHash);
-            writer.WriteNumber("bytes_length", manifest.BytesLength);
+            writer.WriteNumber("bytes_len", manifest.BytesLength);
             writer.WriteString("media_type", manifest.MediaType);
 
             WriteSource(writer, manifest.Source);
@@ -251,7 +251,7 @@ public static class EvidenceManifestCodec
             Kind = KindOf(PayloadJson.RequiredText(root, "kind", what), what),
             LogicalResultHash = PayloadJson.RequiredText(root, "logical_result_hash", what),
             ArtifactHash = PayloadJson.RequiredText(root, "artifact_hash", what),
-            BytesLength = PayloadJson.RequiredNumber(root, "bytes_length", what),
+            BytesLength = PayloadJson.RequiredNumber(root, "bytes_len", what),
             MediaType = PayloadJson.RequiredText(root, "media_type", what),
             Source = Source(PayloadJson.RequiredMember(root, "source", what), what),
             Versions = Versions(PayloadJson.RequiredMember(root, "versions", what)),
