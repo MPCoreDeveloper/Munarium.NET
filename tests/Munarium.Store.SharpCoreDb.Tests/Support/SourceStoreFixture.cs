@@ -28,7 +28,11 @@ internal sealed class SourceStoreFixture : IAsyncDisposable
         IndexVersions = new SharpCoreDbIndexVersionStore(database);
         Idempotency = new SharpCoreDbIdempotencyStore(database);
         Evidence = new SharpCoreDbEvidenceStore(database);
+        Sessions = new SharpCoreDbSessionStore(database);
     }
+
+    /// <summary>Gets the session store under test.</summary>
+    public SharpCoreDbSessionStore Sessions { get; }
 
     /// <summary>Gets the evidence store under test.</summary>
     public SharpCoreDbEvidenceStore Evidence { get; }

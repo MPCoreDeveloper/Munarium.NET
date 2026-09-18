@@ -329,27 +329,27 @@ public class SharpCoreDbEvidenceStoreTests
         EvidenceState state = EvidenceState.Committed,
         Retention? retention = null,
         string policy = "policy-1") => new()
-    {
-        EvidenceId = evidenceId,
-        Tenant = tenant,
-        State = state,
-        Manifest = Manifest(tenant, policy) with { Retention = retention },
-        BlobPath = $"{EvidenceContract.PathPrefix}{evidenceId}",
-        CreatedAt = "2026-09-17T00:00:00Z",
-        CommittedAt = state == EvidenceState.Committed ? "2026-09-17T00:00:01Z" : null,
-    };
+        {
+            EvidenceId = evidenceId,
+            Tenant = tenant,
+            State = state,
+            Manifest = Manifest(tenant, policy) with { Retention = retention },
+            BlobPath = $"{EvidenceContract.PathPrefix}{evidenceId}",
+            CreatedAt = "2026-09-17T00:00:00Z",
+            CommittedAt = state == EvidenceState.Committed ? "2026-09-17T00:00:01Z" : null,
+        };
 
     private static EvidenceGrant Grant(
         string evidenceId,
         string grantId,
         string expiresAt = "2026-09-17T01:00:00Z",
         string tenant = "acme") => new()
-    {
-        GrantId = grantId,
-        EvidenceId = evidenceId,
-        Tenant = tenant,
-        ExpiresAt = expiresAt,
-    };
+        {
+            GrantId = grantId,
+            EvidenceId = evidenceId,
+            Tenant = tenant,
+            ExpiresAt = expiresAt,
+        };
 
     private static EvidenceAccess Access(
         string evidenceId,
@@ -360,16 +360,16 @@ public class SharpCoreDbEvidenceStoreTests
         long? rowFrom = null,
         long? rowLimit = null,
         string tenant = "acme") => new()
-    {
-        EvidenceId = evidenceId,
-        Tenant = tenant,
-        Uid = uid,
-        Kind = kind,
-        RowFrom = rowFrom,
-        RowLimit = rowLimit,
-        Outcome = outcome,
-        At = at,
-    };
+        {
+            EvidenceId = evidenceId,
+            Tenant = tenant,
+            Uid = uid,
+            Kind = kind,
+            RowFrom = rowFrom,
+            RowLimit = rowLimit,
+            Outcome = outcome,
+            At = at,
+        };
 
     private static Retention RetentionUntil(string expiresAt) => new() { ExpiresAt = expiresAt };
 
