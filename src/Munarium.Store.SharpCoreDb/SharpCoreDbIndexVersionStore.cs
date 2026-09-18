@@ -131,6 +131,32 @@ public sealed class SharpCoreDbIndexVersionStore(
         }
     }
 
+    /// <inheritdoc />
+    public ValueTask<IReadOnlyList<IndexVersion>> ListAsync(
+        string tenant,
+        string collectionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenant);
+        ArgumentException.ThrowIfNullOrWhiteSpace(collectionId);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_gate)
+        {
+            IReadOnlyList<IndexVersion> versions =
+            [
+                .. Table().Select()
+                    .Select(Map)
+                    .Where(version => string.Equals(version.Tenant, tenant, StringComparison.Ordinal))
+                    .Where(version => string.Equals(version.CollectionId, collectionId, StringComparison.Ordinal))
+                    .OrderByDescending(version => version.Watermark.Value)
+                    .ThenByDescending(version => version.Id, StringComparer.Ordinal),
+            ];
+
+            return ValueTask.FromResult(versions);
+        }
+    }
+
     private ValueTask<IndexVersion?> MatchingAsync(
         string issuer,
         string tenant,

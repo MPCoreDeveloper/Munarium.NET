@@ -185,6 +185,30 @@ public class SharpCoreDbIndexVersionStoreTests
         Assert.Empty(await fixture.IndexVersions.ListActiveAsync("other"));
     }
 
+    /// <summary>
+    /// A collection's versions are listed with the superseded ones, ordered by the ledger position they were built
+    /// against: an operator looking for what to cut back to needs both.
+    /// </summary>
+    [Fact]
+    public async Task ACollectionsVersionsAreListedLatestBuildFirst()
+    {
+        await using var fixture = SourceStoreFixture.Create();
+        await fixture.IndexVersions.RegisterAsync(Version("idx-old", 2));
+        await fixture.IndexVersions.RegisterAsync(Version("idx-new", 5));
+        await fixture.IndexVersions.RegisterAsync(Version("idx-other", 9) with { CollectionId = "col-other" });
+
+        await fixture.IndexVersions.ActivateAsync("acme", "col-docs", "idx-old");
+        await fixture.IndexVersions.ActivateAsync("acme", "col-docs", "idx-new");
+
+        var versions = await fixture.IndexVersions.ListAsync("acme", "col-docs");
+
+        Assert.Equal(["idx-new", "idx-old"], versions.Select(version => version.Id));
+        Assert.True(versions[0].Active);
+        Assert.True(versions[1].Superseded);
+        Assert.Empty(await fixture.IndexVersions.ListAsync("acme", "col-nothing"));
+        Assert.Empty(await fixture.IndexVersions.ListAsync("other", "col-docs"));
+    }
+
     private static IndexVersion Version(string id, long watermark) => new()
     {
         Id = id,

@@ -851,6 +851,29 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+    get:
+      operationId: ListSources
+      tags: [ingest]
+      summary: The sources this deployment holds.
+      description: |
+        Source metadata, never the bytes: which paths exist, which bytes each holds now and where they went. An empty
+        prefix selects everything - a collection binds its sources by prefix, and reading what a prefix covers is how an
+        operator checks the binding before building over it.
+      parameters:
+        - name: path_prefix
+          in: query
+          required: false
+          description: The path prefix to select, or empty for every source.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The source rows, in path order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceList"
+
   /v1/sources/{source_id}:
     get:
       operationId: GetSource
@@ -919,6 +942,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Problem"
+
+    get:
+      operationId: ListIndexVersions
+      tags: [retrieval]
+      summary: A collection's versions, live and superseded.
+      description: |
+        What an operator reads before cutting over: the versions a collection can be moved to. A superseded version is
+        listed because it is still readable - cutting back to one is a cutover, not a restore - and the list is ordered
+        by the ledger position each was built against, latest first, because a version has no creation instant of its
+        own. A collection nobody has built for answers with an empty list rather than a problem: this port has no
+        collection registry to tell "no such collection" from "no versions yet".
+      parameters:
+        - name: collection_id
+          in: query
+          required: true
+          description: The collection whose versions are read.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The collection's versions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexVersionList"
 
   /v1/indexes/active:
     get:
@@ -2158,3 +2206,25 @@ components:
             envelope cannot fake.
           items:
             type: string
+
+    SourceList:
+      type: object
+      required: [sources]
+      properties:
+        sources:
+          type: array
+          description: The source rows, in path order, and never the bytes.
+          items:
+            $ref: "#/components/schemas/SourceInfo"
+
+    IndexVersionList:
+      type: object
+      required: [collection_id, versions]
+      properties:
+        collection_id:
+          type: string
+        versions:
+          type: array
+          description: The collection's versions, live and superseded, latest build first.
+          items:
+            $ref: "#/components/schemas/IndexVersionState"

@@ -63,6 +63,24 @@ public interface IIndexVersionStore
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reads a collection's versions, live and superseded.
+    /// </summary>
+    /// <remarks>
+    /// What an operator reads before cutting over: the versions a collection can be moved to. A superseded version is
+    /// listed because it is still readable - cutting back to one is a cutover, not a restore - and it is listed by the
+    /// ledger position it was built against, latest first, because a version has no creation instant of its own and a
+    /// later build read a later state.
+    /// </remarks>
+    /// <param name="tenant">The tenant.</param>
+    /// <param name="collectionId">The collection.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The versions, by the position they were built against, latest first.</returns>
+    ValueTask<IReadOnlyList<IndexVersion>> ListAsync(
+        string tenant,
+        string collectionId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Cuts a collection over to a version: exactly one version is active per collection.
     /// </summary>
     /// <remarks>

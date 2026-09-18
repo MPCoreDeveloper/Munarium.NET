@@ -562,6 +562,43 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
         });
     }
 
+    /// <summary>The two list reads over the other transport, which is where their messages are generated from.</summary>
+    [Fact]
+    public async Task TheSourceAndVersionListsTravelOverGrpc() =>
+        await WithClient(async client =>
+        {
+            await client.IngestSourceAsync(new IngestSourceRequest
+            {
+                Body = new SourceIngest
+                {
+                    Path = "grpc-list/a.txt",
+                    MediaType = "text/plain",
+                    Content = "The Bell rang twice at the north gate.",
+                },
+            });
+
+            var built = await client.BuildIndexVersionAsync(new BuildIndexVersionRequest
+            {
+                Body = new IndexBuild
+                {
+                    CollectionId = "col-grpc-list",
+                    ShapeRef = "vendor@1",
+                    PathPrefix = "grpc-list/",
+                    Activate = true,
+                },
+            });
+
+            var sources = await client.ListSourcesAsync(new ListSourcesRequest { PathPrefix = "grpc-list/" });
+
+            Assert.Equal("grpc-list/a.txt", Assert.Single(sources.Data.Sources).Path);
+
+            var versions = await client.ListIndexVersionsAsync(
+                new ListIndexVersionsRequest { CollectionId = "col-grpc-list" });
+
+            Assert.Equal("col-grpc-list", versions.Data.CollectionId);
+            Assert.Equal(built.Data.IndexVersionId, Assert.Single(versions.Data.Versions).IndexVersionId);
+        });
+
     private async Task<WireComposedContext> ComposeOverJsonAsync(string version)
     {
         using var http = _factory.CreateClient();

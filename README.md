@@ -149,14 +149,17 @@ in the order it is planned:
   dropped, so a corpus cannot be activated with the documents the build got to before it stopped. The surface is
   there too: `POST /v1/indexes` builds, `POST /v1/indexes/{id}/activate` cuts a collection over (refusing a version
   this process never built, because it cannot answer from chunks it does not have), `GET /v1/indexes/active` and
-  `GET /v1/indexes/{id}` read the state, and `POST /v1/indexes/resolve` takes an answer's envelope and says whether
-  the bytes it cites were in the version it names. What is not there is a persisted index: the chunks live in the
-  process that built them, so a deployment that restarts rebuilds every live version from the rows before the first
-  question arrives - which is why a version records the prefix it was built from - and a very large corpus pays for that
-  rebuild at every start rather than reading its vectors back from disk.
-- **Ingestion is on the wire; rebuilding an index is not.** `PUT /v1/sources` stores a document's bytes, records the
+  `GET /v1/indexes/{id}` read the state, `GET /v1/indexes?collection_id=` lists a collection's versions - superseded
+  ones included, since cutting back to one is a cutover rather than a restore - and `POST /v1/indexes/resolve` takes an
+  answer's envelope and says whether the bytes it cites were in the version it names. What is not there is a persisted
+  index: the chunks live in the process that built them, so a deployment that restarts rebuilds every live version from
+  the rows before the first question arrives - which is why a version records the prefix it was built from - and a very
+  large corpus pays for that rebuild at every start rather than reading its vectors back from disk.
+- **Ingestion is on the wire.** `PUT /v1/sources` stores a document's bytes, records the
   source row, cuts the text into `chunk@1` chunks, embeds them and writes them into the index version `/v1/search`
-  answers from; `GET /v1/sources/{source_id}` answers where the bytes went, never the bytes. A re-put of the same bytes
+  answers from; `GET /v1/sources/{source_id}` answers where the bytes went, never the bytes, and `GET /v1/sources` lists
+  what the deployment holds, optionally under one prefix - which is how an operator checks a collection's binding before
+  building over it. A re-put of the same bytes
   writes nothing and indexes nothing, a changed document at one path is one source replaced, and the citation an answer
   carries resolves to the path and the hash it was stored under. Two limits are stated rather than hidden: the contract
   carries a document's **text**, because this port reads text - a PDF or a DOCX is refused by name, since the upstream

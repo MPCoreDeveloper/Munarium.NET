@@ -55,6 +55,8 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(WireSourceIngest))]
 [JsonSerializable(typeof(WireIngestedSource))]
 [JsonSerializable(typeof(WireSourceInfo))]
+[JsonSerializable(typeof(WireSourceList))]
+[JsonSerializable(typeof(WireIndexVersionList))]
 [JsonSerializable(typeof(WireIndexManifest))]
 [JsonSerializable(typeof(WireIndexVersion))]
 [JsonSerializable(typeof(WireIndexBuild))]

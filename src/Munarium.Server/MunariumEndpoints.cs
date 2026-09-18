@@ -486,6 +486,26 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+        app.MapGet(
+            "/v1/sources",
+            async (
+                [FromQuery(Name = "path_prefix")] string? pathPrefix,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+                await operations
+                    .ListSourcesAsync(pathPrefix ?? string.Empty, cancellationToken)
+                    .ConfigureAwait(false));
+
+        app.MapGet(
+            "/v1/indexes",
+            async (
+                [FromQuery(Name = "collection_id")] string collectionId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+                await operations
+                    .ListIndexVersionsAsync(collectionId, cancellationToken)
+                    .ConfigureAwait(false));
+
         app.MapGet("/v1/shapes", (MunariumOperations operations) => operations.ListShapes());
 
 

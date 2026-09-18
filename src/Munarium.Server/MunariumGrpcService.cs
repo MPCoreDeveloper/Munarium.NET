@@ -509,6 +509,44 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
     }
 
     /// <inheritdoc />
+    public override async Task<ListSourcesResponse> ListSourcesAsync(
+        ListSourcesRequest request,
+        ServerCallContext context)
+    {
+        var sources = await _operations
+            .ListSourcesAsync(request.PathPrefix, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var message = new SourceList();
+
+        foreach (var source in sources.Sources)
+        {
+            message.Sources.Add(ToMessage(source));
+        }
+
+        return new ListSourcesResponse { Data = message };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ListIndexVersionsResponse> ListIndexVersionsAsync(
+        ListIndexVersionsRequest request,
+        ServerCallContext context)
+    {
+        var versions = await _operations
+            .ListIndexVersionsAsync(request.CollectionId, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var message = new IndexVersionList { CollectionId = versions.CollectionId };
+
+        foreach (var version in versions.Versions)
+        {
+            message.Versions.Add(ToMessage(version));
+        }
+
+        return new ListIndexVersionsResponse { Data = message };
+    }
+
+    /// <inheritdoc />
     public override Task<ListShapesResponse> ListShapesAsync(ListShapesRequest request, ServerCallContext context) =>
         Task.FromResult(new ListShapesResponse { Data = ToMessage(_operations.ListShapes()) });
 

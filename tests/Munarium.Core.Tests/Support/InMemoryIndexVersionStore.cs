@@ -116,6 +116,29 @@ internal sealed class InMemoryIndexVersionStore(TimeProvider? time = null) : IIn
     }
 
     /// <inheritdoc />
+    public ValueTask<IReadOnlyList<IndexVersion>> ListAsync(
+        string tenant,
+        string collectionId,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_gate)
+        {
+            IReadOnlyList<IndexVersion> versions =
+            [
+                .. _versions.Values
+                    .Where(version => string.Equals(version.Tenant, tenant, StringComparison.Ordinal))
+                    .Where(version => string.Equals(version.CollectionId, collectionId, StringComparison.Ordinal))
+                    .OrderByDescending(version => version.Watermark.Value)
+                    .ThenByDescending(version => version.Id, StringComparer.Ordinal),
+            ];
+
+            return ValueTask.FromResult(versions);
+        }
+    }
+
+    /// <inheritdoc />
     public ValueTask<IndexVersion?> ActivateAsync(
         string tenant,
         string collectionId,

@@ -1087,6 +1087,69 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         put.EnsureSuccessStatusCode();
     }
 
+    /// <summary>
+    /// What was ingested is readable as a set, and a prefix selects what a collection would bind - which is how an
+    /// operator checks the binding before building over it.
+    /// </summary>
+    [Fact]
+    public async Task TheSourcesThatWereIngestedAreListed()
+    {
+        await IngestAsync("idx-list/a.txt", "The first document.");
+        await IngestAsync("idx-list/nested/b.txt", "The second document.");
+
+        var bound = await GetAsync("/v1/sources?path_prefix=idx-list/", WireJson.Default.WireSourceList);
+
+        Assert.Equal(["idx-list/a.txt", "idx-list/nested/b.txt"], bound.Sources.Select(source => source.Path));
+        Assert.All(bound.Sources, source => Assert.True(source.Bytes > 0));
+
+        var elsewhere = await GetAsync("/v1/sources?path_prefix=nothing-here/", WireJson.Default.WireSourceList);
+
+        Assert.Empty(elsewhere.Sources);
+    }
+
+    /// <summary>
+    /// A collection's versions are readable, so an operator can see what to cut over to - including the version that
+    /// stopped serving, because cutting back to one is a cutover rather than a restore.
+    /// </summary>
+    [Fact]
+    public async Task ACollectionsVersionsAreListed()
+    {
+        await IngestAsync("idx-versions/a.txt", "The Bell rang twice at the north gate.");
+
+        var first = await BuiltAsync(await _client.PostAsJsonAsync(
+            "/v1/indexes",
+            new WireIndexBuild("col-versions", string.Empty, "vendor@1", "idx-versions/", Activate: true),
+            WireJson.Default.WireIndexBuild));
+
+        // A second document changes the corpus, so the rebuild is a version of its own.
+        await IngestAsync("idx-versions/b.txt", "A second document about the south gate.");
+
+        var second = await BuiltAsync(await _client.PostAsJsonAsync(
+            "/v1/indexes",
+            new WireIndexBuild("col-versions", string.Empty, "vendor@1", "idx-versions/", Activate: true),
+            WireJson.Default.WireIndexBuild));
+
+        Assert.NotEqual(first.IndexVersionId, second.IndexVersionId);
+
+        var versions = await GetAsync(
+            "/v1/indexes?collection_id=col-versions", WireJson.Default.WireIndexVersionList);
+
+        Assert.Equal("col-versions", versions.CollectionId);
+        Assert.Equal(2, versions.Versions.Count);
+        Assert.Equal(second.IndexVersionId, versions.Versions[0].IndexVersionId);
+        Assert.True(versions.Versions[0].Active);
+        Assert.Equal(first.IndexVersionId, versions.Versions[1].IndexVersionId);
+        Assert.True(versions.Versions[1].Superseded);
+
+        var unknown = await GetAsync(
+            "/v1/indexes?collection_id=col-nothing", WireJson.Default.WireIndexVersionList);
+
+        Assert.Empty(unknown.Versions);
+    }
+
+    private static async Task<WireIndexVersion> BuiltAsync(HttpResponseMessage response) =>
+        (await response.Content.ReadFromJsonAsync(WireJson.Default.WireIndexVersion))!;
+
     [Fact]
     public async Task ASourceThatWasNeverIngestedHasNoRow()
     {

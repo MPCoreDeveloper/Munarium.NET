@@ -196,6 +196,17 @@ public sealed class IndexCatalog(IIndexVersionStore store)
         CancellationToken cancellationToken = default) =>
         _store.ListActiveAsync(tenant, cancellationToken);
 
+    /// <summary>Reads a collection's versions, live and superseded.</summary>
+    /// <param name="tenant">The tenant.</param>
+    /// <param name="collectionId">The collection.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The versions, by the position they were built against, latest first.</returns>
+    public ValueTask<IReadOnlyList<IndexVersion>> ListAsync(
+        string tenant,
+        string collectionId,
+        CancellationToken cancellationToken = default) =>
+        _store.ListAsync(tenant, collectionId, cancellationToken);
+
     /// <summary>
     /// Resolves an answer's envelope back to its index version, and checks that the two agree.
     /// </summary>

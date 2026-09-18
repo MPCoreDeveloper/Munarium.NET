@@ -693,6 +693,16 @@ public readonly union WireIngestResult(WireIngestedSource, WireProblem);
 /// <summary>The result of reading a source's row: the row, or why there is none.</summary>
 public readonly union WireSourceResult(WireSourceInfo, WireProblem);
 
+/// <summary>The sources a deployment holds, optionally under one prefix.</summary>
+/// <param name="Sources">The rows, in path order.</param>
+public sealed record WireSourceList(IReadOnlyList<WireSourceInfo> Sources);
+
+/// <summary>A collection's versions, live and superseded.</summary>
+/// <param name="CollectionId">The collection that was asked about.</param>
+/// <param name="Versions">The versions, by the position they were built against, latest first.</param>
+public sealed record WireIndexVersionList(string CollectionId, IReadOnlyList<WireIndexVersion> Versions);
+
+
 /// <summary>
 /// What an index version was built from, as an operator reads it.
 /// </summary>

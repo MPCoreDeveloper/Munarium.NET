@@ -1135,6 +1135,45 @@ public sealed class MunariumOperations(
             resolution.UnrecordedContentHashes);
     }
 
+    /// <summary>Reads the sources this deployment holds.</summary>
+    /// <param name="pathPrefix">The prefix to select, or empty for every source.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The rows, in path order.</returns>
+    public async ValueTask<WireSourceList> ListSourcesAsync(
+        string pathPrefix,
+        CancellationToken cancellationToken = default)
+    {
+        var rows = await _sources
+            .ListAsync(_tenant, string.IsNullOrWhiteSpace(pathPrefix) ? null : pathPrefix.Trim(), cancellationToken)
+            .ConfigureAwait(false);
+
+        return new WireSourceList([.. rows.Select(ToWire)]);
+    }
+
+    /// <summary>
+    /// Reads a collection's versions, so an operator can see what it can be cut over to.
+    /// </summary>
+    /// <remarks>
+    /// A collection nobody has built for answers with an empty list rather than with a problem: this port has no
+    /// collection registry to tell "no such collection" from "no versions yet", and inventing one would be answering
+    /// without knowing. The versions are listed with the superseded ones, because cutting back to one is a cutover.
+    /// </remarks>
+    /// <param name="collectionId">The collection.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The versions, by the position they were built against, latest first.</returns>
+    public async ValueTask<WireIndexVersionList> ListIndexVersionsAsync(
+        string collectionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(collectionId);
+
+        var versions = await _catalogue
+            .ListAsync(_tenant, collectionId, cancellationToken)
+            .ConfigureAwait(false);
+
+        return new WireIndexVersionList(collectionId, [.. versions.Select(ToWire)]);
+    }
+
     /// <summary>The shapes this deployment understands.</summary>
     /// <returns>The registered shapes, ordered by name.</returns>
     public WireShapeList ListShapes() =>
