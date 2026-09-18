@@ -8,6 +8,12 @@ using Munarium.Wire.Generated;
 // own here rather than an ambiguity at every use.
 using GeneratedVersion = Munarium.Wire.Generated.Version;
 
+// The kernel's evidence types and the generated evidence messages share several names - a manifest, a schema, a
+// column - so the kernel's namespace is aliased and the generated names stay unqualified everywhere below. The
+// generated side is where the messages are referenced, which is where the shorter name earns its keep.
+using Evidence = Munarium.Evidence;
+
+
 /// <summary>
 /// The gRPC surface of the wire contract: the service base SharpPortico generated from the same
 /// specification the JSON surface implements, over the same <see cref="MunariumOperations"/>.
@@ -577,6 +583,172 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         422 => StatusCode.InvalidArgument,
         _ => StatusCode.Unknown,
     };
+
+    /// <inheritdoc />
+    public override async Task<SealEvidenceResponse> SealEvidenceAsync(
+        SealEvidenceRequest request,
+        ServerCallContext context)
+    {
+        var declared = request.Body?.Manifest ?? throw EvidenceGrpcMapping.Missing("manifest");
+
+        var result = await _operations
+            .SealEvidenceAsync(
+                new WireSealEvidenceRequest(EvidenceGrpcMapping.ToEvidence(declared), request.Body.BytesBase64),
+                MunariumKernel.Principal,
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireSealResponse sealedEvidence => new SealEvidenceResponse { Data = EvidenceGrpcMapping.ToMessage(sealedEvidence) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<PutEvidenceBytesResponse> PutEvidenceBytesAsync(
+        PutEvidenceBytesRequest request,
+        ServerCallContext context)
+    {
+        if (Decode(request.Body?.BytesBase64) is not { } bytes)
+        {
+            throw Problem(new WireProblem(
+                MunariumOperations.InvalidRequestProblem,
+                "bytes_base64 is required and has to be base64.",
+                Status: 400,
+                ExpectedHead: 0,
+                ActualHead: 0));
+        }
+
+        var refusal = await _operations
+            .PutEvidenceBytesAsync(
+                MunariumKernel.Principal,
+                request.EvidenceId,
+                request.Grant,
+                bytes,
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return refusal is null ? new PutEvidenceBytesResponse() : throw Problem(refusal);
+    }
+
+    /// <inheritdoc />
+    public override async Task<CommitEvidenceResponse> CommitEvidenceAsync(
+        CommitEvidenceRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .CommitEvidenceAsync(MunariumKernel.Principal, request.EvidenceId, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireEvidenceCommit committed => new CommitEvidenceResponse { Data = EvidenceGrpcMapping.ToMessage(committed) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<GetEvidenceManifestResponse> GetEvidenceManifestAsync(
+        GetEvidenceManifestRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .ReadEvidenceManifestAsync(MunariumKernel.Principal, request.EvidenceId, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            Evidence.EvidenceManifest manifest => new GetEvidenceManifestResponse { Data = EvidenceGrpcMapping.ToMessage(manifest) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <summary>
+    /// Refuses the row read by name, which is what the original does with it and what this transport has to do.
+    /// </summary>
+    /// <remarks>
+    /// A row is keyed by the column names a manifest declares, and a protobuf map cannot carry a null value - so a row
+    /// carried over gRPC would have to collapse the difference between an empty value and no value, which is precisely
+    /// the distinction this plane exists to keep. Rather than answer with rows that lost a value, or with an empty list
+    /// that looks like a table nobody wrote, the call says it is not served here and names where it is.
+    /// </remarks>
+    public override Task<GetEvidenceRowsResponse> GetEvidenceRowsAsync(
+        GetEvidenceRowsRequest request,
+        ServerCallContext context) =>
+        throw new RpcException(new Status(
+            StatusCode.Unimplemented,
+            "the row read is JSON-only: a row keyed by the column names a manifest declares has no faithful protobuf "
+                + "form. Read it over HTTP at GET /v1/evidence/{evidence_id}/rows."));
+
+    /// <inheritdoc />
+    public override async Task<ListEvidenceAccessesResponse> ListEvidenceAccessesAsync(
+        ListEvidenceAccessesRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .ReadEvidenceAccessesAsync(
+                MunariumKernel.Tenant, request.EvidenceId, request.Limit, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireEvidenceAccessList accesses => EvidenceGrpcMapping.ToMessage(accesses),
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<PurgeEvidenceResponse> PurgeEvidenceAsync(
+        PurgeEvidenceRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .PurgeEvidenceAsync(MunariumKernel.Tenant, request.EvidenceId, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireEvidencePurge purged => new PurgeEvidenceResponse { Data = EvidenceGrpcMapping.ToMessage(purged) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<SetEvidenceLegalHoldResponse> SetEvidenceLegalHoldAsync(
+        SetEvidenceLegalHoldRequest request,
+        ServerCallContext context)
+    {
+        var refusal = await _operations
+            .SetEvidenceLegalHoldAsync(
+                MunariumKernel.Tenant, request.EvidenceId, request.Body?.Hold ?? false, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return refusal is null ? new SetEvidenceLegalHoldResponse() : throw Problem(refusal);
+    }
+
+    /// <summary>
+    /// Decodes the bytes a caller sent, or nothing when they did not send usable ones.
+    /// </summary>
+    /// <remarks>
+    /// Base64 rather than the octet stream the original takes, because this port's surfaces are JSON by design and the
+    /// canonical form includes Parquet, which is not text. Something that is not base64 is refused before the artifact
+    /// is looked at, so a malformed upload never spends a grant.
+    /// </remarks>
+    private static byte[]? Decode(string? value)
+    {
+        if (value is not { Length: > 0 })
+        {
+            return null;
+        }
+
+        var buffer = new byte[(value.Length / 4 * 3) + 3];
+
+        return Convert.TryFromBase64String(value, buffer, out var written)
+            ? buffer[..written]
+            : null;
+    }
+
 
     private static Health ToMessage(WireHealth health) => new()
     {

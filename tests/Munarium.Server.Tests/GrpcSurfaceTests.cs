@@ -10,6 +10,9 @@ using Munarium.Wire.Generated;
 // The kernel's source ingest type is not the contract's message of the same name; this file only needs the key.
 using SourceKey = Munarium.Sources.SourceKey;
 
+// The kernel's evidence types share names with the generated evidence messages, so the kernel's namespace is aliased.
+using Evidence = Munarium.Evidence;
+
 /// <summary>
 /// The gRPC surface, exercised through the client SharpPortico generated from the same specification
 /// the JSON surface implements.
@@ -652,6 +655,160 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
             Assert.Equal("col-grpc-list", versions.Data.CollectionId);
             Assert.Equal(built.Data.IndexVersionId, Assert.Single(versions.Data.Versions).IndexVersionId);
         });
+
+    /// <summary>
+    /// The evidence plane over the transport that carries it: a seal, the manifest it answers with, and the read that
+    /// deliberately has no protobuf form.
+    /// </summary>
+    [Fact]
+    public async Task AnArtifactSealsAndResolvesOverGrpc() =>
+        await WithClient(async client =>
+        {
+            var (manifest, bytes) = EvidenceFixture.Artifact("grpc-approved");
+
+            var sealedEvidence = await client.SealEvidenceAsync(new SealEvidenceRequest
+            {
+                Body = new EvidenceSeal
+                {
+                    Manifest = ManifestMessage(manifest),
+                    BytesBase64 = Convert.ToBase64String(bytes),
+                },
+            });
+
+            var evidenceId = sealedEvidence.Data.EvidenceId;
+
+            Assert.True(sealedEvidence.Data.Created);
+            Assert.Equal(StateEnum.Committed, sealedEvidence.Data.State);
+            Assert.StartsWith("ev-", evidenceId, StringComparison.Ordinal);
+
+            var read = await client.GetEvidenceManifestAsync(
+                new GetEvidenceManifestRequest { EvidenceId = evidenceId });
+
+            // Every assertion is against the fixture's own manifest: a round trip through the mapping that agreed only
+            // with itself would pass while the contract's spellings were wrong.
+            Assert.Equal(manifest.ContractVersion, read.Data.ContractVersion);
+            Assert.Equal(CanonEnum.Canon1, read.Data.Canon);
+            Assert.Equal(KindEnum.Table, read.Data.Kind);
+            Assert.Equal(MediaTypeEnum.TextCsvCharsetUtf8, read.Data.MediaType);
+            Assert.Equal(bytes.Length, read.Data.BytesLen);
+            Assert.Equal(manifest.LogicalResultHash, read.Data.LogicalResultHash);
+            Assert.Equal(manifest.ArtifactHash, read.Data.ArtifactHash);
+            Assert.Equal("postgres", read.Data.Source.Adapter);
+            Assert.Equal(3, read.Data.Source.SourceVersion);
+            Assert.Equal("policy-1", read.Data.Versions.Policy);
+            Assert.Equal(RowIdRuleEnum.Keys, read.Data.Identity.RowIdRule);
+            Assert.Equal(3, read.Data.AuthorizationClass.AccessLevel);
+            Assert.Equal("src-1", Assert.Single(read.Data.SnapshotVector).SourceId);
+            Assert.Equal("2026-09-17T00:00:00Z", read.Data.Execution.StartedAt);
+            Assert.False(read.Data.Completeness.Truncated);
+            Assert.Equal(
+                ["vendor_id", "status"],
+                read.Data.Schema.Columns.Select(column => column.Name));
+            Assert.Equal(TypeEnum.String, read.Data.Schema.Columns[0].Type);
+            Assert.True(read.Data.Schema.Columns[0].Key);
+
+            var accesses = await client.ListEvidenceAccessesAsync(
+                new ListEvidenceAccessesRequest { EvidenceId = evidenceId });
+
+            var resolution = Assert.Single(accesses.Data.Accesses);
+
+            Assert.Equal(EvidenceAccessKind.Manifest, resolution.Kind);
+            Assert.Equal(OutcomeEnum.Ok, resolution.Outcome);
+            Assert.NotEmpty(resolution.At);
+
+            // The row read has no faithful protobuf form - a row is keyed by the column names a manifest declares and a
+            // protobuf map cannot carry a null value - so it says so by name instead of answering with rows that lost a
+            // value.
+            var refusal = await Assert.ThrowsAsync<RpcException>(
+                () => client.GetEvidenceRowsAsync(new GetEvidenceRowsRequest { EvidenceId = evidenceId }));
+
+            Assert.Equal(StatusCode.Unimplemented, refusal.StatusCode);
+            Assert.Contains("JSON-only", refusal.Status.Detail, StringComparison.Ordinal);
+        });
+
+    /// <summary>An artifact whose bytes do not travel with the manifest takes an upload grant, and spends it once.</summary>
+    [Fact]
+    public async Task AnArtifactWithoutItsBytesTakesAGrantOverGrpc() =>
+        await WithClient(async client =>
+        {
+            var (manifest, bytes) = EvidenceFixture.Artifact("grpc-granted");
+
+            var offered = await client.SealEvidenceAsync(new SealEvidenceRequest
+            {
+                Body = new EvidenceSeal { Manifest = ManifestMessage(manifest) },
+            });
+
+            Assert.Equal(StateEnum.Pending, offered.Data.State);
+            Assert.NotEmpty(offered.Data.Grant.GrantId);
+            Assert.NotEmpty(offered.Data.Grant.ExpiresAt);
+
+            await client.PutEvidenceBytesAsync(new PutEvidenceBytesRequest
+            {
+                EvidenceId = offered.Data.EvidenceId,
+                Grant = offered.Data.Grant.GrantId,
+                Body = new EvidenceBytesUpload { BytesBase64 = Convert.ToBase64String(bytes) },
+            });
+
+            var committed = await client.CommitEvidenceAsync(
+                new CommitEvidenceRequest { EvidenceId = offered.Data.EvidenceId });
+
+            Assert.True(committed.Data.Committed);
+            Assert.Equal(StateEnum.Committed, committed.Data.State);
+
+            // A spent grant is refused rather than quietly honoured. Which problem it is belongs to the operation
+            // surface, where the JSON plane asserts the exact code, so this holds only that it is refused at all.
+            await Assert.ThrowsAsync<RpcException>(() => client.PutEvidenceBytesAsync(new PutEvidenceBytesRequest
+            {
+                EvidenceId = offered.Data.EvidenceId,
+                Grant = offered.Data.Grant.GrantId,
+                Body = new EvidenceBytesUpload { BytesBase64 = Convert.ToBase64String(bytes) },
+            }));
+
+            var read = await client.GetEvidenceManifestAsync(
+                new GetEvidenceManifestRequest { EvidenceId = offered.Data.EvidenceId });
+
+            Assert.Equal(bytes.Length, read.Data.BytesLen);
+        });
+
+    /// <summary>
+    /// Builds the message a seal carries from the kernel's own manifest.
+    /// </summary>
+    /// <remarks>
+    /// Written out here rather than reused from the server's mapping, on purpose: a round trip that mapped with the code
+    /// under test would agree with itself whatever that code did. This is a stand-in for a client that hand-builds a
+    /// manifest against the contract, which is the case the mapping has to survive.
+    /// </remarks>
+    private static EvidenceManifest ManifestMessage(Evidence.EvidenceManifest manifest) => new()
+    {
+        ContractVersion = manifest.ContractVersion,
+        Canon = CanonEnum.Canon1,
+        Tenant = manifest.Tenant,
+        Kind = KindEnum.Table,
+        LogicalResultHash = manifest.LogicalResultHash,
+        ArtifactHash = manifest.ArtifactHash,
+        BytesLen = manifest.BytesLength,
+        MediaType = MediaTypeEnum.TextCsvCharsetUtf8,
+        Source = new EvidenceSource
+        {
+            SourceId = manifest.Source.SourceId,
+            SourceVersion = manifest.Source.SourceVersion,
+            Adapter = manifest.Source.Adapter,
+        },
+        Versions = new EvidenceVersions { Policy = manifest.Versions.Policy ?? string.Empty },
+        Schema = new EvidenceSchema
+        {
+            Columns =
+            {
+                new EvidenceColumn { Id = "col-1", Name = "vendor_id", Type = TypeEnum.String, Key = true },
+                new EvidenceColumn { Id = "col-2", Name = "status", Type = TypeEnum.String },
+            },
+        },
+        Identity = new EvidenceIdentity { RowIdRule = RowIdRuleEnum.Keys },
+        Completeness = new EvidenceCompleteness { Truncated = false },
+        SnapshotVector = { new EvidenceSnapshotMarker { SourceId = "src-1", ReplayLevel = "source_time_travel" } },
+        Execution = new EvidenceExecution { StartedAt = "2026-09-17T00:00:00Z", EndedAt = "2026-09-17T00:00:01Z" },
+        AuthorizationClass = new EvidenceAuthorizationClass { AccessLevel = 3 },
+    };
 
     private async Task<WireComposedContext> ComposeOverJsonAsync(string version)
     {

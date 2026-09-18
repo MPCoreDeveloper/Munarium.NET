@@ -2785,6 +2785,29 @@ components:
           $ref: "#/components/schemas/EvidenceVersions"
         plan:
           $ref: "#/components/schemas/EvidencePlan"
+        schema:
+          $ref: "#/components/schemas/EvidenceSchema"
+        identity:
+          $ref: "#/components/schemas/EvidenceIdentity"
+        completeness:
+          $ref: "#/components/schemas/EvidenceCompleteness"
+        redaction:
+          $ref: "#/components/schemas/EvidenceRedaction"
+        snapshot_vector:
+          type: array
+          description: |-
+            One marker per source that contributed. It is a vector and not a single marker precisely so a cross-source
+            result is never described as one atomic snapshot: no single engine's snapshot covers two engines.
+          items:
+            $ref: "#/components/schemas/EvidenceSnapshotMarker"
+        freshness:
+          $ref: "#/components/schemas/EvidenceFreshness"
+        execution:
+          $ref: "#/components/schemas/EvidenceExecution"
+        authorization_class:
+          $ref: "#/components/schemas/EvidenceAuthorizationClass"
+        retention:
+          $ref: "#/components/schemas/EvidenceRetention"
 
     EvidenceSource:
       type: object
@@ -3068,11 +3091,7 @@ components:
           type: string
           description: Who resolved it.
         kind:
-          type: string
-          description: |-
-            What was read. A resolution records *that* a read happened and never the rows read: an audit table holding the
-            regulated data it audits would be a second copy of the problem the audit exists to describe.
-          enum: [manifest, rows]
+          $ref: "#/components/schemas/EvidenceAccessKind"
         row_from:
           type: integer
           format: int64
@@ -3085,6 +3104,13 @@ components:
         at:
           type: string
           description: When the read happened.
+
+    EvidenceAccessKind:
+      type: string
+      description: |-
+        What a resolution was about. A resolution records *that* a read happened and never the rows read: an audit
+        table holding the regulated data it audits would be a second copy of the problem the audit exists to describe.
+      enum: [manifest, rows]
 
     EvidenceAccesses:
       type: object
