@@ -603,3 +603,84 @@ public readonly union WireContextResult(WireComposedContext, WireProblem);
 
 /// <summary>The result of proposing a batch: the batch as recorded, or why it was not.</summary>
 public readonly union WireClaimBatchResult(WireClaimBatchOutcome, WireProblem);
+
+/// <summary>
+/// The values the contract's source ingest kinds can carry.
+/// </summary>
+/// <remarks>
+/// Strings rather than a C# enum, for the same reason the claim statuses are: the contract declares them as strings and
+/// both transports then carry the same spelling without a converter deciding it for them.
+/// </remarks>
+public static class WireSourceKinds
+{
+    /// <summary>The path was not a source before.</summary>
+    public const string New = "new";
+
+    /// <summary>The path was a source and now holds different bytes.</summary>
+    public const string Replaced = "replaced";
+
+    /// <summary>The path already held exactly these bytes, so nothing was written.</summary>
+    public const string Unchanged = "unchanged";
+}
+
+/// <summary>A document as it is offered for ingest.</summary>
+/// <param name="Path">The logical path, which is the source's identity.</param>
+/// <param name="MediaType">The media type of the text, with or without parameters.</param>
+/// <param name="Content">The document's text, which is read as UTF-8.</param>
+/// <param name="ContentSha256">The hash the caller declares, or empty to have the server hash what arrived.</param>
+public sealed record WireSourceIngest(
+    string Path,
+    string MediaType,
+    string Content,
+    string? ContentSha256);
+
+/// <summary>A document as it was stored, and how much of it reached the index.</summary>
+/// <param name="SourceId">The source's identity, derived from the tenant and the path.</param>
+/// <param name="Path">The logical path.</param>
+/// <param name="Kind">Whether the path was new, replaced, or already held these bytes.</param>
+/// <param name="MediaType">The media type the bytes were stored as.</param>
+/// <param name="ContentHash">The hash of the bytes stored.</param>
+/// <param name="Bytes">How many bytes of UTF-8 that is.</param>
+/// <param name="BlobUri">Where the bytes went, as the backend resolved it.</param>
+/// <param name="BackendId">The backend that holds them.</param>
+/// <param name="IngestedAt">When the row was written, as the backend recorded it.</param>
+/// <param name="ChunksIndexed">How many chunks were written into the index.</param>
+/// <param name="IndexVersion">The index version they were written into.</param>
+public sealed record WireIngestedSource(
+    string SourceId,
+    string Path,
+    string Kind,
+    string MediaType,
+    string ContentHash,
+    long Bytes,
+    string BlobUri,
+    string BackendId,
+    string? IngestedAt,
+    int ChunksIndexed,
+    string IndexVersion);
+
+/// <summary>Where a document actually went: metadata, never the bytes.</summary>
+/// <param name="SourceId">The source's identity.</param>
+/// <param name="Path">The logical path.</param>
+/// <param name="MediaType">The media type the bytes were stored as.</param>
+/// <param name="ContentHash">The hash of the bytes the path holds now.</param>
+/// <param name="Bytes">How many bytes that is.</param>
+/// <param name="BlobUri">Where the bytes went.</param>
+/// <param name="BackendId">The backend that holds them.</param>
+/// <param name="IngestedAt">When the row was last written.</param>
+public sealed record WireSourceInfo(
+    string SourceId,
+    string Path,
+    string MediaType,
+    string ContentHash,
+    long Bytes,
+    string BlobUri,
+    string BackendId,
+    string? IngestedAt);
+
+/// <summary>The result of ingesting a document: what was stored and indexed, or why nothing was.</summary>
+public readonly union WireIngestResult(WireIngestedSource, WireProblem);
+
+/// <summary>The result of reading a source's row: the row, or why there is none.</summary>
+public readonly union WireSourceResult(WireSourceInfo, WireProblem);
+

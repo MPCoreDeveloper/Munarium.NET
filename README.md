@@ -146,10 +146,15 @@ in the order it is planned:
   version is not yet persisted by a store adapter (the storage adapter holds events, and retrieval bookkeeping is
   deliberately not ledger data, so this wants a table rather than the event stream), and there is no
   `/v1/indexes` surface to build, activate or read one.
-- **Ingestion.** `/v1/search` answers with a real provenance envelope, but nothing writes a document yet, so a
-  corpus is what a host put in the index rather than something the deployment ingested and can rebuild on demand.
-  The source identity, the path rules and the `ISourceStore` seam are in place; the ingest surface, the source
-  metadata row and the extractors that turn DOCX or PDF into the text a chunker cuts are the ingest slice.
+- **Ingestion is on the wire; rebuilding an index is not.** `PUT /v1/sources` stores a document's bytes, records the
+  source row, cuts the text into `chunk@1` chunks, embeds them and writes them into the index version `/v1/search`
+  answers from; `GET /v1/sources/{source_id}` answers where the bytes went, never the bytes. A re-put of the same bytes
+  writes nothing and indexes nothing, a changed document at one path is one source replaced, and the citation an answer
+  carries resolves to the path and the hash it was stored under. Two limits are stated rather than hidden: the contract
+  carries a document's **text**, because this port reads text - a PDF or a DOCX is refused by name, since the upstream
+  extractors depend on a model capability this port has not ported - and the ingest writes into the retriever's single
+  index version, so a build that builds without serving (the catalogue, the derived identity and the cutover rules are
+  in the kernel) is still the next slice.
 - **Three of the four keyed planes are authorable; entities and ingest are not.** Every plane a snapshot carries is
   served: `GET /v1/snapshots` answers with one pin across all of them - facts resolved-current, the digest ladder
   rebuilt from them, the scope filter and fact limit applied after resolution, and the keyed planes as they stood at
@@ -160,7 +165,7 @@ in the order it is planned:
   `POST .../promises/{key}/fulfill`, and `POST/GET /v1/versions/{id}/counters`, where the read answers with the
   directives a writer would be given rather than only the totals. What is missing: nothing on the wire records an
   entity (upstream resolves entities through a model capability this port has not ported, so writing them would be
-  raw plumbing), and no route ingests a document.
+  raw plumbing), and no route rebuilds an index version from the rows a deployment already has.
 - **Idempotency keys.** The original requires an `idempotency-key` metadata entry on every command RPC and
   replays the stored result. Here a retry writes a second claim; the `ledger-conflict` gate treats a
   re-sent claim as a retry only when nothing about it changed, which is an approximation and is written

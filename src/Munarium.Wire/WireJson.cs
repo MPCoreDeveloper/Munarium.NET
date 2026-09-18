@@ -52,4 +52,7 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(WireSearchResult))]
 [JsonSerializable(typeof(WireShape))]
 [JsonSerializable(typeof(WireShapeList))]
+[JsonSerializable(typeof(WireSourceIngest))]
+[JsonSerializable(typeof(WireIngestedSource))]
+[JsonSerializable(typeof(WireSourceInfo))]
 public sealed partial class WireJson : JsonSerializerContext;

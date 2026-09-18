@@ -11,6 +11,7 @@ using Munarium.Providers;
 using Munarium.Promises;
 using Munarium.Retrieval;
 using Munarium.Shapes;
+using Munarium.Sources;
 using Munarium.Store.SharpCoreDb;
 using Munarium.Wire;
 using SharpCoreDB;
@@ -27,6 +28,17 @@ using SharpCoreDB.Interfaces;
 public sealed class MunariumKernel : IAsyncDisposable
 {
     private const int EmbeddingDimensions = 256;
+
+    /// <summary>
+    /// The tenant a deployment's sources belong to.
+    /// </summary>
+    /// <remarks>
+    /// One deployment, one tenant, until authorization and tenancy land: the kernel's seams are already tenant-keyed -
+    /// a source id is derived from the tenant and the path - so tenancy is a matter of threading a caller's tenant
+    /// through rather than reshaping anything. Composed here rather than invented per request, because a tenant that
+    /// varied by request would put one deployment's documents in several tenants' stores.
+    /// </remarks>
+    public const string Tenant = "default";
 
     private readonly ServiceProvider _provider;
     private readonly IDatabase _database;
@@ -104,6 +116,17 @@ public sealed class MunariumKernel : IAsyncDisposable
         // one is an upsert rather than a comparison against what is there.
         var counters = new CounterLedger(storage);
 
+        // The ingest slice: the source store and its rows, and the runner that takes a document from bytes to indexed
+        // chunks through the same retriever the search operation reads. The deployment is one tenant until authorization
+        // lands, and its name is composed here rather than guessed per request.
+        var sourceStore = new SharpCoreDbSourceStore(database);
+        var sourceRegistry = new SharpCoreDbSourceRegistry(database);
+        var ingest = new IngestRunner(
+            new SourceIngest(sourceStore, sourceRegistry),
+            embedder,
+            retriever,
+            DeterministicEmbeddingProvider.ModelName);
+
         var operations = new MunariumOperations(
             storage,
             claims,
@@ -118,7 +141,10 @@ public sealed class MunariumKernel : IAsyncDisposable
             embedder,
             new Composer(facts),
             snapshots,
-            DeterministicEmbeddingProvider.ModelName);
+            DeterministicEmbeddingProvider.ModelName,
+            ingest,
+            sourceRegistry,
+            Tenant);
 
         return new MunariumKernel(provider, database, retriever, embedder, operations, shapes);
     }

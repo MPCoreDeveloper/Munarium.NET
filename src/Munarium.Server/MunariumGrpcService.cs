@@ -371,6 +371,44 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
     }
 
     /// <inheritdoc />
+    public override async Task<IngestSourceResponse> IngestSourceAsync(
+        IngestSourceRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .IngestSourceAsync(
+                new WireSourceIngest(
+                    request.Body?.Path ?? string.Empty,
+                    request.Body?.MediaType ?? string.Empty,
+                    request.Body?.Content ?? string.Empty,
+                    request.Body?.ContentSha256 ?? string.Empty),
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireIngestedSource ingested => new IngestSourceResponse { Data = ToMessage(ingested) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<GetSourceResponse> GetSourceAsync(
+        GetSourceRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .GetSourceAsync(request.SourceId, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireSourceInfo info => new GetSourceResponse { Data = ToMessage(info) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
     public override Task<ListShapesResponse> ListShapesAsync(ListShapesRequest request, ServerCallContext context) =>
         Task.FromResult(new ListShapesResponse { Data = ToMessage(_operations.ListShapes()) });
 
@@ -389,6 +427,12 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         400 => StatusCode.InvalidArgument,
         404 => StatusCode.NotFound,
         409 => StatusCode.Aborted,
+
+        // The JSON surface can say which of "the document is not the one declared" and "no extractor reads that media
+        // type" it means, because HTTP has a status for each. gRPC does not have that fine a scale, so both are
+        // InvalidArgument here and the detail carries which: a coarser code is honest, an invented one would not be.
+        415 => StatusCode.InvalidArgument,
+        422 => StatusCode.InvalidArgument,
         _ => StatusCode.Unknown,
     };
 
@@ -678,6 +722,33 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
 
         return message;
     }
+
+    private static IngestedSource ToMessage(WireIngestedSource ingested) => new()
+    {
+        SourceId = ingested.SourceId,
+        Path = ingested.Path,
+        Kind = ingested.Kind,
+        MediaType = ingested.MediaType,
+        ContentHash = ingested.ContentHash,
+        Bytes = ingested.Bytes,
+        BlobUri = ingested.BlobUri,
+        BackendId = ingested.BackendId,
+        IngestedAt = ingested.IngestedAt ?? string.Empty,
+        ChunksIndexed = ingested.ChunksIndexed,
+        IndexVersion = ingested.IndexVersion,
+    };
+
+    private static SourceInfo ToMessage(WireSourceInfo info) => new()
+    {
+        SourceId = info.SourceId,
+        Path = info.Path,
+        MediaType = info.MediaType,
+        ContentHash = info.ContentHash,
+        Bytes = info.Bytes,
+        BlobUri = info.BlobUri,
+        BackendId = info.BackendId,
+        IngestedAt = info.IngestedAt ?? string.Empty,
+    };
 
     private static ShapeList ToMessage(WireShapeList shapes)
     {

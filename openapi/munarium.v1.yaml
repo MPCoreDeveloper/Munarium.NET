@@ -44,6 +44,8 @@ tags:
     description: Composing what a model would be given.
   - name: retrieval
     description: Evidence retrieval with provenance.
+  - name: ingest
+    description: Documents in, and where they went.
   - name: shapes
     description: What a claim is allowed to look like.
 
@@ -795,6 +797,89 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ShapeList"
+
+  /v1/sources:
+    put:
+      operationId: IngestSource
+      tags: [ingest]
+      summary: Ingest a document, and index what it says.
+      description: |
+        A source's identity is its logical path and not its content hash, so a re-ingest of one path is a new version
+        of one source rather than a second source: the row is replaced, and the index identity - which pairs a source
+        with its hash - notices that the bytes moved.
+
+        The order is the contract. The media type is checked first, so a document this port cannot read leaves nothing
+        behind; a declared hash is verified before the write, so a mismatch costs nothing; and nothing is indexed
+        before the row exists, so every citation resolves to a path and a hash. An ingest that changes nothing writes
+        nothing and embeds nothing, because a document indexed twice would answer twice and displace other documents by
+        existing.
+
+        The document travels as text rather than as bytes, because this port reads text: text/*, application/json and
+        application/xml, as UTF-8. A deployment that ingests PDFs or DOCX brings an extractor of its own - the upstream
+        extractors depend on a model capability this port has not ported - and until then a PDF is refused by name
+        rather than indexed as bytes no query can find. A deployment that has to stream a large document puts an object
+        store behind the source seam and hands over its location, which is what that seam is for.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceIngest"
+      responses:
+        "200":
+          description: The document as stored, and how much of it reached the index.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestedSource"
+        "400":
+          description: The request names no path, or a path a source may not hold.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "415":
+          description: No extractor reads that media type, so nothing was stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "422":
+          description: What arrived is not what the caller declared, so nothing was written.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/sources/{source_id}:
+    get:
+      operationId: GetSource
+      tags: [ingest]
+      summary: Where a document actually went.
+      description: |
+        Source metadata, and never the bytes. A row answers which path, which hash, which media type and which backend,
+        so an operator can tell whether a document landed and where without the answer ever carrying the document.
+      parameters:
+        - name: source_id
+          in: path
+          required: true
+          description: The source's identity, as "src-...".
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The source's metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceInfo"
+        "404":
+          description: No source with that identity was ingested.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
 components:
   schemas:
     Problem:
@@ -1676,3 +1761,91 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Shape"
+
+    SourceIngest:
+      type: object
+      required: [path, media_type, content]
+      properties:
+        path:
+          type: string
+          description: |
+            The logical path, which is the source's identity: the same bytes at two paths are two sources, and the same
+            path with different bytes is one source replaced.
+        media_type:
+          type: string
+          description: The media type of the text, with or without parameters, for example "text/plain; charset=utf-8".
+        content:
+          type: string
+          description: |
+            The document's text. It travels as text rather than as bytes because this port reads text, and a declared
+            hash is taken over its UTF-8 encoding.
+        content_sha256:
+          type: string
+          description: |
+            The hash the caller declares, in the canonical form ("sha256:" and lower-case hex), or empty to have the
+            server hash what arrived. A declaration that does not match is refused before anything is written.
+
+    IngestedSource:
+      type: object
+      required: [source_id, path, kind, content_hash, chunks_indexed, index_version]
+      properties:
+        source_id:
+          type: string
+          description: The source's identity, derived from the tenant and the path.
+        path:
+          type: string
+        kind:
+          type: string
+          description: |
+            What the ingest did to the path: "new" when it was not a source before, "replaced" when it held different
+            bytes, "unchanged" when it already held exactly these bytes - in which case nothing was written and nothing
+            was indexed.
+        media_type:
+          type: string
+        content_hash:
+          type: string
+          description: The hash of the bytes stored, in the canonical form.
+        bytes:
+          type: integer
+          format: int64
+          description: How many bytes of UTF-8 that is.
+        blob_uri:
+          type: string
+          description: Where the bytes went, as the backend resolved it, so an operator is not left guessing.
+        backend_id:
+          type: string
+        ingested_at:
+          type: string
+          description: When the row was written, as the backend recorded it.
+        chunks_indexed:
+          type: integer
+          format: int32
+          description: |
+            How many chunks were written into the index. Reported rather than assumed, because a document that is
+            stored and not indexed - because it held no text, or because it was already there - is a real state.
+        index_version:
+          type: string
+          description: The index version the chunks were written into, which is what an answer from them will cite.
+
+    SourceInfo:
+      type: object
+      required: [source_id, path, content_hash]
+      properties:
+        source_id:
+          type: string
+        path:
+          type: string
+        media_type:
+          type: string
+        content_hash:
+          type: string
+          description: The hash of the bytes this path holds now, which is not the same question as what it held.
+        bytes:
+          type: integer
+          format: int64
+        blob_uri:
+          type: string
+        backend_id:
+          type: string
+        ingested_at:
+          type: string

@@ -342,7 +342,49 @@ public static class MunariumEndpoints
                 CancellationToken cancellationToken) =>
                 await operations.SearchAsync(query, cancellationToken).ConfigureAwait(false));
 
+        app.MapPut(
+            "/v1/sources",
+            async (
+                WireSourceIngest request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.IngestSourceAsync(request, cancellationToken).ConfigureAwait(false);
+
+                // A document this port cannot read is 415 and one that is not the document declared is 422: a caller
+                // has to be able to tell a wrong upload from an unreadable one, and a bare "bad request" cannot.
+                IResult answer = result switch
+                {
+                    WireIngestedSource ingested => TypedResults.Json(
+                        ingested, WireJson.Default.WireIngestedSource),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet(
+            "/v1/sources/{source_id}",
+            async (
+                [FromRoute(Name = "source_id")] string sourceId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.GetSourceAsync(sourceId, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireSourceInfo info => TypedResults.Json(info, WireJson.Default.WireSourceInfo),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
         app.MapGet("/v1/shapes", (MunariumOperations operations) => operations.ListShapes());
+
 
         return app;
     }

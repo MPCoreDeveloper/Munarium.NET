@@ -5,6 +5,9 @@ using Grpc.Net.Client;
 using Munarium.Wire;
 using Munarium.Wire.Generated;
 
+// The kernel's source ingest type is not the contract's message of the same name; this file only needs the key.
+using SourceKey = Munarium.Sources.SourceKey;
+
 /// <summary>
 /// The gRPC surface, exercised through the client SharpPortico generated from the same specification
 /// the JSON surface implements.
@@ -140,6 +143,68 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
 
             Assert.Equal(1, vendor.Version);
             Assert.Equal(["vendor_id"], vendor.Identity);
+        });
+
+    /// <summary>
+    /// The ingest surface over the other transport: the same document, the same row, the same index version - and the
+    /// same answer when it is offered twice.
+    /// </summary>
+    [Fact]
+    public async Task ADocumentIngestedOverGrpcIsReadBackOverGrpc() =>
+        await WithClient(async client =>
+        {
+            var request = new IngestSourceRequest
+            {
+                Body = new SourceIngest
+                {
+                    Path = "grpc/bell.txt",
+                    MediaType = "text/plain",
+                    Content = "The Bell rang twice at the north gate.",
+                },
+            };
+
+            var ingested = await client.IngestSourceAsync(request);
+
+            Assert.Equal("new", ingested.Data.Kind);
+            Assert.True(ingested.Data.ChunksIndexed > 0, "the document should have been chunked and indexed");
+            Assert.Equal(SourceKey.Id(MunariumKernel.Tenant, "grpc/bell.txt"), ingested.Data.SourceId);
+            Assert.NotEmpty(ingested.Data.IndexVersion);
+
+            var info = await client.GetSourceAsync(
+                new GetSourceRequest { SourceId = ingested.Data.SourceId });
+
+            Assert.Equal("grpc/bell.txt", info.Data.Path);
+            Assert.Equal(ingested.Data.ContentHash, info.Data.ContentHash);
+            Assert.Equal("sharpcoredb", info.Data.BackendId);
+
+            // The same bytes again change nothing, over this transport as over the other.
+            var again = await client.IngestSourceAsync(request);
+
+            Assert.Equal("unchanged", again.Data.Kind);
+            Assert.Equal(0, again.Data.ChunksIndexed);
+        });
+
+    /// <summary>
+    /// A refusal travels as a refusal over gRPC too, and nothing is stored: the two surfaces are the same contract, so
+    /// a document one of them refuses cannot be one the other accepts.
+    /// </summary>
+    [Fact]
+    public async Task ADocumentWithNoExtractorIsRefusedOverGrpc() =>
+        await WithClient(async client =>
+        {
+            var refusal = await Assert.ThrowsAsync<RpcException>(async () =>
+                await client.IngestSourceAsync(new IngestSourceRequest
+                {
+                    Body = new SourceIngest
+                    {
+                        Path = "grpc/scan.pdf",
+                        MediaType = "application/pdf",
+                        Content = "%PDF-1.7",
+                    },
+                }));
+
+            Assert.Equal(StatusCode.InvalidArgument, refusal.StatusCode);
+            Assert.Contains("application/pdf", refusal.Status.Detail, StringComparison.Ordinal);
         });
 
     [Fact]

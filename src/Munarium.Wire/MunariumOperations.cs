@@ -14,6 +14,7 @@ using Munarium.Providers;
 using Munarium.Promises;
 using Munarium.Retrieval;
 using Munarium.Shapes;
+using Munarium.Sources;
 using Munarium.Versions;
 
 /// <summary>
@@ -38,7 +39,10 @@ public sealed class MunariumOperations(
     IModelProvider embedder,
     Composer composer,
     MeshSnapshotBuilder snapshots,
-    string embeddingModel)
+    string embeddingModel,
+    IngestRunner ingest,
+    ISourceRegistry sources,
+    string tenant)
 {
     /// <summary>The wire contract version this implementation speaks.</summary>
     public const string Contract = "mmp.v1";
@@ -51,6 +55,16 @@ public sealed class MunariumOperations(
 
     /// <summary>The problem identifier a request that cannot be understood answers with.</summary>
     public const string InvalidRequestProblem = "https://munarium.dev/problems/invalid-request";
+
+    /// <summary>The problem identifier a document this port cannot read answers with.</summary>
+    public const string UnsupportedMediaTypeProblem = "https://munarium.dev/problems/unsupported-media-type";
+
+    /// <summary>The problem identifier a document that is not the one declared answers with.</summary>
+    public const string ContentHashMismatchProblem = "https://munarium.dev/problems/content-hash-mismatch";
+
+    /// <summary>The problem identifier a source that was never ingested answers with.</summary>
+    public const string UnknownSourceProblem = "https://munarium.dev/problems/unknown-source";
+
 
     private readonly IStorageBackend _storage = storage ?? throw new ArgumentNullException(nameof(storage));
     private readonly ClaimLedger _claims = claims ?? throw new ArgumentNullException(nameof(claims));
@@ -66,6 +80,12 @@ public sealed class MunariumOperations(
     private readonly Composer _composer = composer ?? throw new ArgumentNullException(nameof(composer));
     private readonly MeshSnapshotBuilder _snapshots = snapshots ?? throw new ArgumentNullException(nameof(snapshots));
     private readonly string _embeddingModel = embeddingModel ?? throw new ArgumentNullException(nameof(embeddingModel));
+    private readonly IngestRunner _ingest = ingest ?? throw new ArgumentNullException(nameof(ingest));
+    private readonly ISourceRegistry _sources = sources ?? throw new ArgumentNullException(nameof(sources));
+    private readonly string _tenant = string.IsNullOrWhiteSpace(tenant)
+        ? throw new ArgumentException("The deployment's tenant must be named.", nameof(tenant))
+        : tenant;
+
 
     /// <summary>Liveness.</summary>
     /// <returns>Healthy, and which contract is answering.</returns>
@@ -743,6 +763,100 @@ public sealed class MunariumOperations(
                 [.. result.Envelope.Sources.Select(ToWire)]));
     }
 
+    /// <summary>
+    /// Ingests a document: the bytes are stored, the row is recorded, and the text is indexed.
+    /// </summary>
+    /// <remarks>
+    /// The deployment's tenant is used rather than a caller-supplied one, because the contract carries no tenant yet:
+    /// tenancy arrives with authorization, and the kernel's seams are already tenant-keyed, so nothing has to be
+    /// reshaped when it does - only threaded. Until then a deployment is one tenant, and saying so is better than
+    /// inventing a tenant per request.
+    /// </remarks>
+    /// <param name="request">The document as offered.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The document as stored and indexed, or why nothing was.</returns>
+    public async ValueTask<WireIngestResult> IngestSourceAsync(
+        WireSourceIngest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var path = (request.Path ?? string.Empty).Trim();
+
+        if (path.Length == 0)
+        {
+            return new WireProblem(
+                InvalidRequestProblem,
+                "path is required: it is the source's identity and the address its bytes are stored at.",
+                Status: 400,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        DocumentOutcome outcome;
+
+        try
+        {
+            outcome = await _ingest
+                .IngestAsync(
+                    _tenant,
+                    path,
+                    request.MediaType ?? string.Empty,
+                    Encoding.UTF8.GetBytes(request.Content ?? string.Empty),
+                    request.ContentSha256 is { Length: > 0 } declared ? declared : null,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (ArgumentException invalid)
+        {
+            // A path a source may not hold, or a media type that names nothing, is a malformed request rather than a
+            // document that was refused: nothing was attempted.
+            return new WireProblem(InvalidRequestProblem, invalid.Message, Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        return outcome switch
+        {
+            IngestedDocument ingested => ToWire(ingested),
+            IngestRefused refused => new WireProblem(
+                UnsupportedMediaTypeProblem,
+                refused.Reason,
+                Status: 415,
+                ExpectedHead: 0,
+                ActualHead: 0),
+            IngestRejected rejected => new WireProblem(
+                ContentHashMismatchProblem,
+                $"the declared hash {rejected.Declared} is not the hash of the document that arrived "
+                    + $"({rejected.Actual}), so nothing was written.",
+                Status: 422,
+                ExpectedHead: 0,
+                ActualHead: 0),
+        };
+    }
+
+    /// <summary>
+    /// Reads where a document actually went.
+    /// </summary>
+    /// <param name="sourceId">The source's identity.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The row, or why there is none.</returns>
+    public async ValueTask<WireSourceResult> GetSourceAsync(
+        string sourceId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceId);
+
+        var record = await _sources.GetAsync(_tenant, sourceId, cancellationToken).ConfigureAwait(false);
+
+        return record is null
+            ? new WireProblem(
+                UnknownSourceProblem,
+                $"no source '{sourceId}' was ingested.",
+                Status: 404,
+                ExpectedHead: 0,
+                ActualHead: 0)
+            : ToWire(record);
+    }
+
     /// <summary>The shapes this deployment understands.</summary>
     /// <returns>The registered shapes, ordered by name.</returns>
     public WireShapeList ListShapes() =>
@@ -809,6 +923,29 @@ public sealed class MunariumOperations(
             head.Value);
     }
 
+    private static WireIngestedSource ToWire(IngestedDocument ingested) => new(
+        ingested.Record.SourceId,
+        ingested.Record.Path,
+        KindOf(ingested.Kind),
+        ingested.Record.MediaType,
+        ingested.Record.ContentHash,
+        ingested.Record.BytesLength,
+        ingested.Record.BlobUri,
+        ingested.Record.BackendId,
+        ingested.Record.IngestedAt,
+        ingested.ChunksIndexed,
+        ingested.IndexVersion);
+
+    private static WireSourceInfo ToWire(SourceRecord record) => new(
+        record.SourceId,
+        record.Path,
+        record.MediaType,
+        record.ContentHash,
+        record.BytesLength,
+        record.BlobUri,
+        record.BackendId,
+        record.IngestedAt);
+
     private static WireFact ToWire(SlicedFact sliced) => new(
         sliced.Fact.VersionId,
         sliced.Fact.ClaimId,
@@ -827,6 +964,13 @@ public sealed class MunariumOperations(
         source.SourcePath,
         source.ContentHash,
         source.ChunkOrdinal);
+
+    private static string KindOf(SourceIngestKind kind) => kind switch
+    {
+        SourceIngestKind.Replaced => WireSourceKinds.Replaced,
+        SourceIngestKind.Unchanged => WireSourceKinds.Unchanged,
+        _ => WireSourceKinds.New,
+    };
 
     private static string ClaimTypeName(ClaimType claimType) => claimType switch
     {

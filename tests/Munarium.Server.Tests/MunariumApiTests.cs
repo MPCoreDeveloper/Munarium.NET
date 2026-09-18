@@ -1,6 +1,7 @@
 namespace Munarium.Server.Tests;
 
 using Munarium.Context;
+using Munarium.Sources;
 using Munarium.Wire;
 
 /// <summary>
@@ -847,5 +848,170 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         response.EnsureSuccessStatusCode();
 
         return (await response.Content.ReadFromJsonAsync(type))!;
+    }
+
+    /// <summary>
+    /// A document goes in and comes back out of retrieval, with the citation resolving to the path and hash it was
+    /// stored under. This is the whole chain in one test: source, row, chunks, index, envelope, watermark.
+    /// </summary>
+    [Fact]
+    public async Task AnIngestedDocumentIsStoredAndFoundBySearch()
+    {
+        using var put = await _client.PutAsJsonAsync(
+            "/v1/sources",
+            new WireSourceIngest(
+                "docs/bell.txt",
+                "text/plain",
+                "The Bell rang twice at the north gate.\n\nThe north gate is the loading bay.",
+                string.Empty),
+            WireJson.Default.WireSourceIngest);
+
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+
+        var ingested = (await put.Content.ReadFromJsonAsync(WireJson.Default.WireIngestedSource))!;
+
+        Assert.Equal("new", ingested.Kind);
+        Assert.True(ingested.ChunksIndexed > 0, "the document should have been chunked and indexed");
+        Assert.Equal(SourceKey.Id(MunariumKernel.Tenant, "docs/bell.txt"), ingested.SourceId);
+        Assert.Equal("sharpcoredb", ingested.BackendId);
+        Assert.NotEmpty(ingested.ContentHash);
+        Assert.NotEmpty(ingested.IngestedAt ?? string.Empty);
+        Assert.NotEmpty(ingested.IndexVersion);
+
+        // The row is readable by identity, and it carries where the bytes went - never the bytes.
+        var info = await GetAsync($"/v1/sources/{ingested.SourceId}", WireJson.Default.WireSourceInfo);
+
+        Assert.Equal("docs/bell.txt", info.Path);
+        Assert.Equal(ingested.ContentHash, info.ContentHash);
+        Assert.Equal(ingested.Bytes, info.Bytes);
+
+        // And retrieval finds it, citing the source and the bytes it held when indexed.
+        using var search = await _client.PostAsJsonAsync(
+            "/v1/search",
+            new WireSearchQuery("the bell at the north gate", 5),
+            WireJson.Default.WireSearchQuery);
+
+        var result = (await search.Content.ReadFromJsonAsync(WireJson.Default.WireSearchResult))!;
+        var chunk = Assert.Single(result.Chunks, found => found.Source.SourcePath == "docs/bell.txt");
+
+        Assert.Equal(ingested.SourceId, chunk.Source.SourceId);
+        Assert.Equal(ingested.ContentHash, chunk.Source.ContentHash);
+        Assert.StartsWith(ingested.SourceId, chunk.Source.ChunkId, StringComparison.Ordinal);
+        Assert.Equal(ingested.IndexVersion, result.Envelope.IndexVersion);
+    }
+
+    /// <summary>
+    /// A re-put of the same bytes is not a second ingest: nothing is written and nothing is indexed twice, because a
+    /// document indexed twice would answer twice and displace other documents by existing.
+    /// </summary>
+    [Fact]
+    public async Task ReIngestingTheSameDocumentChangesNothing()
+    {
+        var request = new WireSourceIngest(
+            "docs/steady.txt",
+            "text/plain",
+            "A document that does not move.",
+            string.Empty);
+
+        using var first = await _client.PutAsJsonAsync(
+            "/v1/sources", request, WireJson.Default.WireSourceIngest);
+
+        var ingested = (await first.Content.ReadFromJsonAsync(WireJson.Default.WireIngestedSource))!;
+        Assert.Equal("new", ingested.Kind);
+
+        using var second = await _client.PutAsJsonAsync(
+            "/v1/sources", request, WireJson.Default.WireSourceIngest);
+
+        var again = (await second.Content.ReadFromJsonAsync(WireJson.Default.WireIngestedSource))!;
+
+        Assert.Equal("unchanged", again.Kind);
+        Assert.Equal(0, again.ChunksIndexed);
+        Assert.Equal(ingested.ContentHash, again.ContentHash);
+    }
+
+    [Fact]
+    public async Task AChangedDocumentAtTheSamePathIsOneSourceReplaced()
+    {
+        using var first = await _client.PutAsJsonAsync(
+            "/v1/sources",
+            new WireSourceIngest("docs/moved.txt", "text/plain", "The Bell rang twice.", string.Empty),
+            WireJson.Default.WireSourceIngest);
+
+        var before = (await first.Content.ReadFromJsonAsync(WireJson.Default.WireIngestedSource))!;
+
+        using var second = await _client.PutAsJsonAsync(
+            "/v1/sources",
+            new WireSourceIngest("docs/moved.txt", "text/plain", "The Bell rang three times.", string.Empty),
+            WireJson.Default.WireSourceIngest);
+
+        var after = (await second.Content.ReadFromJsonAsync(WireJson.Default.WireIngestedSource))!;
+
+        Assert.Equal("replaced", after.Kind);
+        Assert.Equal(before.SourceId, after.SourceId);
+        Assert.NotEqual(before.ContentHash, after.ContentHash);
+    }
+
+    /// <summary>
+    /// A document this port cannot read is refused by name before anything is stored: an unreadable document that was
+    /// stored anyway would be a source that can never be retrieved.
+    /// </summary>
+    [Fact]
+    public async Task ADocumentWithNoExtractorIsRefusedAndNothingIsStored()
+    {
+        using var put = await _client.PutAsJsonAsync(
+            "/v1/sources",
+            new WireSourceIngest("docs/scan.pdf", "application/pdf", "%PDF-1.7", string.Empty),
+            WireJson.Default.WireSourceIngest);
+
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, put.StatusCode);
+
+        var problem = (await put.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
+
+        Assert.Equal(MunariumOperations.UnsupportedMediaTypeProblem, problem.Type);
+        Assert.Contains("application/pdf", problem.Detail, StringComparison.Ordinal);
+
+        using var missing = await _client.GetAsync(
+            new Uri($"/v1/sources/{SourceKey.Id(MunariumKernel.Tenant, "docs/scan.pdf")}", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+    }
+
+    [Fact]
+    public async Task ADeclaredHashThatDoesNotMatchIsRefused()
+    {
+        using var put = await _client.PutAsJsonAsync(
+            "/v1/sources",
+            new WireSourceIngest("docs/declared.txt", "text/plain", "The Bell rang twice.", "sha256:0000"),
+            WireJson.Default.WireSourceIngest);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, put.StatusCode);
+
+        var problem = (await put.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
+
+        Assert.Equal(MunariumOperations.ContentHashMismatchProblem, problem.Type);
+        Assert.Contains("sha256:0000", problem.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task APathASourceMayNotHoldIsRefused()
+    {
+        using var put = await _client.PutAsJsonAsync(
+            "/v1/sources",
+            new WireSourceIngest("../escape.txt", "text/plain", "The Bell rang twice.", string.Empty),
+            WireJson.Default.WireSourceIngest);
+
+        Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
+    }
+
+    [Fact]
+    public async Task ASourceThatWasNeverIngestedHasNoRow()
+    {
+        using var response = await _client.GetAsync(new Uri("/v1/sources/src-0000000000000000", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+        var problem = (await response.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
+
+        Assert.Equal(MunariumOperations.UnknownSourceProblem, problem.Type);
     }
 }
