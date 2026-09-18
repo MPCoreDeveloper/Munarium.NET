@@ -1,6 +1,7 @@
 namespace Munarium.Core.Tests.Evidence;
 
 using Munarium.Evidence;
+using static Munarium.Core.Tests.Support.ManifestFixture;
 
 /// <summary>
 /// Tests for the evidence contract's identity and access rules: the domain idempotency tuple, who may read an
@@ -199,34 +200,5 @@ public class EvidenceManifestTests
             Schema = new EvidenceSchema([new EvidenceColumn { Id = "c1", Name = "region", Type = ColumnType.Text }]),
         }).Validate());
     }
-
-    private static string Hash(char fill) => "sha256:" + new string(fill, 64);
-
-    private static AuthorizationClass Class(int level, params string[] compartments) =>
-        new() { AccessLevel = level, Compartments = compartments };
-
-    private static EvidenceManifest Manifest() => new()
-    {
-        ContractVersion = EvidenceContract.Version,
-        Canon = EvidenceContract.Canon,
-        Tenant = "demo",
-        Kind = EvidenceKind.Table,
-        LogicalResultHash = Hash('b'),
-        ArtifactHash = Hash('c'),
-        BytesLength = 12,
-        MediaType = EvidenceContract.MediaTypeCsv,
-        Source = new SourceRef("src-1", 3, "postgres"),
-        Versions = new Versions { Policy = "policy-1" },
-        Schema = new EvidenceSchema(
-        [
-            new EvidenceColumn { Id = "col-1", Name = "region", Type = ColumnType.Text, Key = true },
-            new EvidenceColumn { Id = "col-2", Name = "total", Type = ColumnType.ExactDecimal },
-        ]),
-        Identity = new EvidenceIdentity(RowIdRule.Keys),
-        Completeness = new Completeness { Truncated = false },
-        SnapshotVector = [new SnapshotMarker { SourceId = "src-1", ReplayLevel = "source_time_travel" }],
-        Execution = new Execution { StartedAt = "2026-09-17T00:00:00Z", EndedAt = "2026-09-17T00:00:01Z" },
-        AuthorizationClass = Class(3),
-    };
 }
 

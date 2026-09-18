@@ -16,7 +16,7 @@ using System.Text;
 /// deciding whether to trust a result needs to know which one it has.
 /// </para>
 /// </remarks>
-public sealed record EvidenceManifest
+public sealed record EvidenceManifest : IVerifiableArtifact
 {
     private const string UnitSeparator = "\u001f";
 
