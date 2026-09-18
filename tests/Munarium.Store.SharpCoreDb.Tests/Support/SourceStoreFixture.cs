@@ -25,7 +25,11 @@ internal sealed class SourceStoreFixture : IAsyncDisposable
         DatabaseName = "munarium-test";
         Store = new SharpCoreDbSourceStore(database);
         Registry = new SharpCoreDbSourceRegistry(database);
+        IndexVersions = new SharpCoreDbIndexVersionStore(database);
     }
+
+    /// <summary>Gets the index-version store under test.</summary>
+    public SharpCoreDbIndexVersionStore IndexVersions { get; }
 
     /// <summary>Gets the store under test.</summary>
     public SharpCoreDbSourceStore Store { get; }
