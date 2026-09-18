@@ -44,8 +44,8 @@ public sealed record TurnVerificationChecks(bool Quotes, bool Citations, int Max
 /// </summary>
 public sealed record TurnOutcome
 {
-    /// <summary>Gets what the hierarchy decided, which is the audit answer to "why did the model see this?".</summary>
-    public required EvidenceHierarchyDecision Decision { get; init; }
+    /// <summary>Gets what the hierarchy decided, or <see langword="null"/> when the turn ran outside any profile.</summary>
+    public EvidenceHierarchyDecision? Decision { get; init; }
 
     /// <summary>Gets the composed context the model was given.</summary>
     public required string Context { get; init; }
@@ -166,7 +166,7 @@ public static class TurnPipeline
 
         return executed switch
         {
-            HierarchyOutcome collected => await AnswerAsync(
+            HierarchyOutcome collected => await ComposeThenAnswerAsync(
                 plan,
                 request,
                 collected,
@@ -180,15 +180,9 @@ public static class TurnPipeline
     }
 
     /// <summary>
-    /// Composes the context, asks the model, and checks the answer.
+    /// Composes the hierarchy's context into a prompt and answers over it.
     /// </summary>
-    /// <remarks>
-    /// Two retries live here and they are different things. The truncation retry fires when the model stopped early -
-    /// a reasoning model spends hidden tokens from the same budget - and it re-asks once at four times the ceiling,
-    /// because a ceiling is not spend. The corrective retries fire on a failed check and re-ask with the violations
-    /// attached, riding whatever ceiling is current so a repaired answer gets the same headroom.
-    /// </remarks>
-    private static async ValueTask<TurnOutcome> AnswerAsync(
+    private static async ValueTask<TurnOutcome> ComposeThenAnswerAsync(
         EvidencePlan plan,
         TurnRequest request,
         HierarchyOutcome collected,
@@ -201,12 +195,89 @@ public static class TurnPipeline
         var composed = HierarchyComposer.Compose(plan, collected.Blocks, contextBudget);
         var documents = collected.Documents;
         var labels = documents is null ? [] : servedLabels(documents);
-        var servedTexts = documents is null ? [] : documents.Chunks.Select(chunk => chunk.Text).ToList();
+        var texts = documents is null ? [] : documents.Chunks.Select(chunk => chunk.Text).ToList();
 
-        var prompt = request.PromptTemplate
-            .Replace("{context}", composed.Context, StringComparison.Ordinal)
-            .Replace("{query}", request.Question, StringComparison.Ordinal);
+        return await AnswerAsync(
+            request,
+            Render(request, composed.Context),
+            composed.Context,
+            composed.LayersDropped,
+            collected.Blocks,
+            collected.Decision,
+            texts,
+            labels,
+            model,
+            modelId,
+            cancellationToken).ConfigureAwait(false);
+    }
 
+    /// <summary>
+    /// Answers over text that was already gathered, and made citable by the caller.
+    /// </summary>
+    /// <remarks>
+    /// The document path's half of the pipeline: no hierarchy ran, so the outcome carries no decision rather than a
+    /// synthetic one. An empty decision would claim a hierarchy ran and decided nothing, which is the one thing the
+    /// audit has to be able to tell apart from a turn that ran outside any profile.
+    /// </remarks>
+    /// <param name="request">What the turn is asked to do.</param>
+    /// <param name="context">The text the model is given, already rendered.</param>
+    /// <param name="servedTexts">Every text the answer may quote.</param>
+    /// <param name="servedLabels">Every label the answer may cite.</param>
+    /// <param name="model">The model to answer with.</param>
+    /// <param name="modelId">The model to ask for, as the provider names it.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The answer, what it cost, and what was checked.</returns>
+    public static async ValueTask<TurnOutcome> AnswerOverTextAsync(
+        TurnRequest request,
+        string context,
+        IReadOnlyList<string> servedTexts,
+        IReadOnlyList<string> servedLabels,
+        IModelProvider model,
+        string modelId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(servedTexts);
+        ArgumentNullException.ThrowIfNull(servedLabels);
+        ArgumentNullException.ThrowIfNull(model);
+
+        return await AnswerAsync(
+            request,
+            Render(request, context),
+            context,
+            [],
+            [],
+            null,
+            servedTexts,
+            servedLabels,
+            model,
+            modelId,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Asks the model, reads the answer back against what was served, and repairs it a bounded number of times.
+    /// </summary>
+    /// <remarks>
+    /// Two retries live here and they are different things. The truncation retry fires when the model stopped early -
+    /// a reasoning model spends hidden tokens from the same budget - and it re-asks once at four times the ceiling,
+    /// because a ceiling is not spend. The corrective retries fire on a failed check and re-ask with the violations
+    /// attached, riding whatever ceiling is current so a repaired answer gets the same headroom.
+    /// </remarks>
+    private static async ValueTask<TurnOutcome> AnswerAsync(
+        TurnRequest request,
+        string prompt,
+        string context,
+        IReadOnlyList<string> layersDropped,
+        IReadOnlyList<LayerBlock> blocks,
+        EvidenceHierarchyDecision? decision,
+        IReadOnlyList<string> servedTexts,
+        IReadOnlyList<string> labels,
+        IModelProvider model,
+        string modelId,
+        CancellationToken cancellationToken)
+    {
         var budget = request.MaxTokens;
         var answer = await CompleteAsync(model, modelId, prompt, budget, cancellationToken).ConfigureAwait(false);
         var completions = 1;
@@ -250,10 +321,10 @@ public static class TurnPipeline
 
         return new TurnOutcome
         {
-            Decision = collected.Decision,
-            Context = composed.Context,
-            LayersDropped = composed.LayersDropped,
-            Blocks = collected.Blocks,
+            Decision = decision,
+            Context = context,
+            LayersDropped = layersDropped,
+            Blocks = blocks,
             Answer = answer.Text,
             Checks = checks.Names,
             FirstPassViolations = firstPass,
@@ -265,6 +336,15 @@ public static class TurnPipeline
             RetriedForTruncation = retriedForTruncation,
         };
     }
+
+    /// <summary>Fills a template's context and question placeholders.</summary>
+    /// <param name="request">What the turn is asked to do.</param>
+    /// <param name="context">The rendered context.</param>
+    /// <returns>The prompt.</returns>
+    private static string Render(TurnRequest request, string context) =>
+        request.PromptTemplate
+            .Replace("{context}", context, StringComparison.Ordinal)
+            .Replace("{query}", request.Question, StringComparison.Ordinal);
 
     private static async ValueTask<CompletionResponse> CompleteAsync(
         IModelProvider model,

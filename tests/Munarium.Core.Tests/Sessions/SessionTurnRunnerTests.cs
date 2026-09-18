@@ -1,0 +1,374 @@
+namespace Munarium.Core.Tests.Sessions;
+
+using Munarium.Access;
+using Munarium.Evidence;
+using Munarium.Ledger;
+using Munarium.Providers;
+using Munarium.Retrieval;
+using Munarium.Runbooks;
+using Munarium.Sessions;
+
+/// <summary>
+/// Tests for the turn runner: what it searches, what it records, and what stops it before a model is paid for.
+/// </summary>
+public class SessionTurnRunnerTests
+{
+    private static SessionTurnExecuted Executed(SessionTurnResult result) =>
+        result is SessionTurnExecuted executed
+            ? executed
+            : throw new InvalidOperationException("The turn produced nothing.");
+
+    private static RequiredLayerUnavailable Refused(SessionTurnResult result) =>
+        result is RequiredLayerUnavailable refusal
+            ? refusal
+            : throw new InvalidOperationException("The turn produced something.");
+
+    private static SessionRefusal Declined(SessionTurnResult result) =>
+        result is SessionRefusal refusal
+            ? refusal
+            : throw new InvalidOperationException("The turn was not declined.");
+
+    private static SessionRecord Session() => new()
+    {
+        Tenant = "acme",
+        Id = SessionIds.New(),
+        Uid = "ada",
+        RunbookRef = "northgate@3",
+        Access = new AccessContext(2, []),
+        State = SessionState.Open,
+    };
+
+    private static RunbookDocument Document(bool withProfile = false) => new()
+    {
+        ApiVersion = "munarium.dev/v2",
+        Kind = "Runbook",
+        Metadata = new RunbookMeta { Name = "northgate", Version = 3 },
+        Spec = new RunbookSpec
+        {
+            Collections =
+            [
+                new CollectionSpec { Name = "contracts", Shape = "cuad-contracts@3", AccessLevel = 2 },
+                new CollectionSpec { Name = "minutes", Shape = "minutes@1", AccessLevel = 4 },
+            ],
+            Retrieval = new RetrievalSpec
+            {
+                TopK = 5,
+                DefaultResearchProfile = withProfile ? "register-first" : null,
+                ResearchProfiles = withProfile
+                    ?
+                    [
+                        new ResearchProfile
+                        {
+                            Name = "register-first",
+                            Layers =
+                            [
+                                new ResearchLayer
+                                {
+                                    Name = "register",
+                                    Sources = ["matrix:register"],
+                                    Requirement = LayerRequirement.Required,
+                                    Role = AnswerRole.Controlling,
+                                },
+                            ],
+                        },
+                    ]
+                    : [],
+            },
+            Completion = new CompletionSpec
+            {
+                PromptTemplate = "Context:\n{context}\n\nQ: {query}",
+                Verification = new VerificationSpec { Quotes = true, Citations = true, MaxRetries = 1 },
+            },
+        },
+    };
+
+    private static SessionTurnRunner Runner(ISessionStore sessions, IModelProvider model) =>
+        new(sessions, new StubIndexHost(), model, model, "test-embedder", [], "acme");
+
+    /// <summary>A model that embeds anything and answers with one canned answer.</summary>
+    private sealed class StubModel(string answer) : IModelProvider
+    {
+        public List<CompletionRequest> Completed { get; } = [];
+
+        public ProviderId Id => ProviderId.Local;
+
+        public ValueTask<CompletionResponse> CompleteAsync(
+            CompletionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            cancellationToken.ThrowIfCancellationRequested();
+            Completed.Add(request);
+
+            return ValueTask.FromResult(new CompletionResponse(answer, request.Model, new TokenUsage(10, 5)));
+        }
+
+        public ValueTask<EmbeddingResponse> EmbedAsync(
+            EmbeddingRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            return ValueTask.FromResult(
+                new EmbeddingResponse(
+                    [.. request.Inputs.Select(_ => new ReadOnlyMemory<float>(new float[3]))],
+                    request.Model,
+                    new TokenUsage(1, 0)));
+        }
+
+        public ValueTask<ProviderHealth> HealthAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            throw new NotSupportedException("This double answers and embeds only.");
+        }
+    }
+
+    /// <summary>An index host whose serving reader answers with one canned chunk.</summary>
+    private sealed class StubIndexHost : IIndexHost
+    {
+        public string Engine => "exact@1";
+
+        public string ServingVersion => "idx-test";
+
+        public IIndexWriter ServingWriter => throw new NotSupportedException("A turn writes nothing to an index.");
+
+        public IRetrievalBackend ServingReader => new StubReader();
+
+        public IndexInstance Build(string indexVersion, SequenceNumber watermark) =>
+            throw new NotSupportedException("A turn builds no index.");
+
+        public bool Discard(string indexVersion) => false;
+
+        public bool Serve(string indexVersion) => false;
+
+        private sealed class StubReader : IRetrievalBackend
+        {
+            public ValueTask<RetrievalResult> SearchAsync(
+                RetrievalQuery query,
+                CancellationToken cancellationToken = default)
+            {
+                ArgumentNullException.ThrowIfNull(query);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var chunk = new RetrievedChunk(
+                    new SourceReference("doc-1", "source-1", "docs/policy.pdf", "sha256:abc", ChunkOrdinal: 0),
+                    Score: 0,
+                    "text of doc-1");
+
+                return ValueTask.FromResult(
+                    new RetrievalResult(
+                        [chunk],
+                        new ProvenanceEnvelope("idx-test", SequenceNumber.Zero, [chunk.Source])));
+            }
+        }
+    }
+
+    /// <summary>A session store held in memory: what the runner has to get right is the order of the turn, not the row.</summary>
+    private sealed class MemorySessions : ISessionStore
+    {
+        public List<TurnRecord> Turns { get; } = [];
+
+        public SessionRecord? Session { get; private set; }
+
+        public ValueTask<SessionRecord> CreateAsync(SessionRecord session, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Session ??= session with { CreatedAt = "2026-09-18T00:00:00Z" };
+
+            return ValueTask.FromResult(Session);
+        }
+
+        public ValueTask<SessionRecord?> GetAsync(
+            string tenant,
+            string sessionId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            return ValueTask.FromResult(Session);
+        }
+
+        public ValueTask<int> AppendTurnAsync(TurnRecord turn, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Turns.Add(turn with { Ordinal = Turns.Count + 1, CreatedAt = "2026-09-18T00:00:01Z" });
+
+            return ValueTask.FromResult(Turns.Count);
+        }
+
+        public ValueTask<bool> CloseAsync(
+            string tenant,
+            string sessionId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (Session is not { State: SessionState.Open } open)
+            {
+                return ValueTask.FromResult(false);
+            }
+
+            Session = open with { State = SessionState.Closed };
+
+            return ValueTask.FromResult(true);
+        }
+
+        public ValueTask<IReadOnlyList<TurnRecord>> TurnsAsync(
+            string tenant,
+            string sessionId,
+            int limit,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            return ValueTask.FromResult<IReadOnlyList<TurnRecord>>([.. Turns.Take(limit)]);
+        }
+
+        public ValueTask<IReadOnlyList<SessionRecord>> RecentAsync(
+            string tenant,
+            string uid,
+            int limit,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            return ValueTask.FromResult<IReadOnlyList<SessionRecord>>(Session is null ? [] : [Session]);
+        }
+    }
+
+    /// <summary>
+    /// A turn records the collections the clearance permitted, the hits and their provenance, and the answer with what
+    /// the checks found - and the question reaches the model with the served text in the prompt.
+    /// </summary>
+    [Fact]
+    public async Task ATurnRecordsWhatItSearchedAndWhatItAnswered()
+    {
+        var sessions = new MemorySessions();
+        var session = await sessions.CreateAsync(Session());
+        var model = new StubModel("The policy holds. \"text of doc-1\" [doc-1]");
+
+        var executed = Executed(await Runner(sessions, model).RunAsync(
+            session,
+            Document(),
+            "how many contracts lapse?",
+            requestedProfile: null,
+            new TurnModels("small-model", "big-model"),
+            complete: true,
+            topK: 0));
+
+        Assert.Equal(1, executed.Ordinal);
+        Assert.Equal("how many contracts lapse?", executed.Question);
+
+        // `contracts` is level 2 and permitted; `minutes` is level 4 and is not searched at all.
+        Assert.Equal(["contracts"], executed.CollectionsSearched);
+        Assert.Single(executed.Hits.Chunks);
+        Assert.Null(executed.Decision);
+
+        Assert.NotNull(executed.Completion);
+        Assert.Empty(executed.Completion.Violations);
+        Assert.Equal(1, executed.Completion.Completions);
+
+        var recorded = Assert.Single(sessions.Turns);
+
+        Assert.Equal(
+            """[{"chunk_id":"doc-1","source_path":"docs/policy.pdf","score":0,"text":"text of doc-1"}]""",
+            recorded.HitsJson);
+        Assert.Contains("idx-test", recorded.EnvelopeJson, StringComparison.Ordinal);
+        Assert.Null(recorded.HierarchyJson);
+        Assert.Contains("\"completions\":1", recorded.CompletionJson, StringComparison.Ordinal);
+
+        // The document path renders the hits as labelled blocks, and the prompt carries both the context and the task.
+        var sent = Assert.Single(model.Completed);
+
+        Assert.Contains("[doc-1] text of doc-1", sent.Prompt, StringComparison.Ordinal);
+        Assert.Contains("Q: how many contracts lapse?", sent.Prompt, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A session that is no longer open accepts no turns, and nothing is recorded and nobody is asked.
+    /// </summary>
+    [Fact]
+    public async Task AClosedSessionTakesNoTurns()
+    {
+        var sessions = new MemorySessions();
+        var session = await sessions.CreateAsync(Session());
+        Assert.True(await sessions.CloseAsync("acme", session.Id));
+
+        // The turn is run against the session as stored rather than the copy that was opened: a caller holding a stale
+        // open session does not get to keep asking.
+        var closed = await sessions.GetAsync("acme", session.Id);
+        Assert.NotNull(closed);
+
+        var model = new StubModel("never asked");
+
+        var refusal = Declined(await Runner(sessions, model).RunAsync(
+            closed,
+            Document(),
+            "anything",
+            requestedProfile: null,
+            new TurnModels("small-model", "big-model"),
+            complete: true));
+
+        Assert.Equal(SessionRefusalCodes.SessionClosed, refusal.Code);
+        Assert.Contains("is closed", refusal.Message, StringComparison.Ordinal);
+        Assert.Empty(sessions.Turns);
+        Assert.Empty(model.Completed);
+    }
+
+    /// <summary>
+    /// A turn that asks for no answer still records its hits, because the caller who asked for evidence only may still
+    /// ask why it got that evidence.
+    /// </summary>
+    [Fact]
+    public async Task ATurnWithoutTheCompletionFlagStillRecordsWhatItFound()
+    {
+        var sessions = new MemorySessions();
+        var session = await sessions.CreateAsync(Session());
+        var model = new StubModel("never asked");
+
+        var executed = Executed(await Runner(sessions, model).RunAsync(
+            session,
+            Document(),
+            "how many contracts lapse?",
+            requestedProfile: null,
+            new TurnModels("small-model", "big-model"),
+            complete: false));
+
+        Assert.Null(executed.Completion);
+        Assert.Single(executed.Hits.Chunks);
+
+        var recorded = Assert.Single(sessions.Turns);
+
+        Assert.Null(recorded.CompletionJson);
+        Assert.Contains("doc-1", recorded.HitsJson, StringComparison.Ordinal);
+        Assert.Empty(model.Completed);
+    }
+
+    /// <summary>
+    /// A required layer nobody can answer stops the turn before a model is paid for, and names the layer that could not
+    /// be reached - which is the answer a caller can act on.
+    /// </summary>
+    [Fact]
+    public async Task ARequiredLayerNobodyCanAnswerStopsTheTurnBeforeAnyCompletion()
+    {
+        var sessions = new MemorySessions();
+        var session = await sessions.CreateAsync(Session());
+        var model = new StubModel("never asked");
+
+        var refusal = Refused(await Runner(sessions, model).RunAsync(
+            session,
+            Document(withProfile: true),
+            "how many contracts lapse?",
+            requestedProfile: null,
+            new TurnModels("small-model", "big-model"),
+            complete: true));
+
+        Assert.Equal("register", refusal.Layer);
+        Assert.Equal(EvidenceRefusalCodes.SourceNotBound, refusal.RefusalCode);
+        Assert.Empty(sessions.Turns);
+        Assert.Empty(model.Completed);
+    }
+}
+
