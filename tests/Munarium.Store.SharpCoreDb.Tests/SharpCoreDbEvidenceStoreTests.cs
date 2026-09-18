@@ -334,7 +334,7 @@ public class SharpCoreDbEvidenceStoreTests
         Tenant = tenant,
         State = state,
         Manifest = Manifest(tenant, policy) with { Retention = retention },
-        BlobPath = $"{EvidenceContract.PathPrefix}{evidenceId}.csv",
+        BlobPath = $"{EvidenceContract.PathPrefix}{evidenceId}",
         CreatedAt = "2026-09-17T00:00:00Z",
         CommittedAt = state == EvidenceState.Committed ? "2026-09-17T00:00:01Z" : null,
     };

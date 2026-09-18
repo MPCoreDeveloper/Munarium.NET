@@ -38,7 +38,7 @@ public static class EvidenceManifestCodec
             writer.WriteString("canon", manifest.Canon);
             PayloadJson.Optional(writer, "evidence_id", manifest.EvidenceId);
             writer.WriteString("tenant", manifest.Tenant);
-            writer.WriteString("kind", KindName(manifest.Kind));
+            writer.WriteString("kind", manifest.Kind.ToWireName());
             writer.WriteString("logical_result_hash", manifest.LogicalResultHash);
             writer.WriteString("artifact_hash", manifest.ArtifactHash);
             writer.WriteNumber("bytes_length", manifest.BytesLength);
@@ -418,20 +418,9 @@ public static class EvidenceManifestCodec
             PurgedAt = PayloadJson.Text(retention, "purged_at"),
         };
 
-    private static string KindName(EvidenceKind kind) => kind switch
-    {
-        EvidenceKind.Table => "table",
-        EvidenceKind.Count => "count",
-        _ => "observations",
-    };
-
-    private static EvidenceKind KindOf(string name, string what) => name switch
-    {
-        "table" => EvidenceKind.Table,
-        "count" => EvidenceKind.Count,
-        "observations" => EvidenceKind.Observations,
-        _ => throw new FormatException($"{what} names an evidence kind this server does not know: '{name}'."),
-    };
+    private static EvidenceKind KindOf(string name, string what) =>
+        EvidenceKindNames.ParseKind(name)
+            ?? throw new FormatException($"{what} names an evidence kind this server does not know: '{name}'.");
 
     private static string RuleName(RowIdRule rule) => rule == RowIdRule.Position ? "position" : "keys";
 

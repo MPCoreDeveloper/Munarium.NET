@@ -2,7 +2,6 @@ namespace Munarium.Store.SharpCoreDb;
 
 using System.Globalization;
 using Munarium.Evidence;
-using Munarium.Ledger;
 using SharpCoreDB.Interfaces;
 
 /// <summary>
@@ -39,18 +38,48 @@ public sealed class SharpCoreDbEvidenceStore(
     IDatabase database,
     string tablePrefix = SharpCoreDbEvidenceStore.DefaultTablePrefix) : IEvidenceStore
 {
-    /// <summary>The table prefix a deployment gets when it does not choose one.</summary>
-    public const string DefaultTablePrefix = "munarium_evidence";
+    /// <summary>
+    /// The table prefix a deployment gets when it does not choose one.
+    /// </summary>
+    /// <remarks>
+    /// The names are the original's - <c>evidence_artifacts</c>, <c>evidence_grants</c>, <c>evidence_access</c> - so an
+    /// operator moving between the two deployments reads the same tables.
+    /// </remarks>
+    public const string DefaultTablePrefix = "evidence";
 
+    // The columns are the original's, including the ones lifted out of the manifest. The reason it gives for lifting
+    // them is the reason they are here: the JSON is the record, and the columns are what retention and authorization are
+    // decided on, because a decision must never depend on a JSON path lookup that a malformed document could bend. They
+    // are written from one artifact in one call, so a column can only disagree with the manifest if a row were edited
+    // by hand.
+    //
+    // Two columns are spelled differently from the original's, and both are the engine's doing rather than a choice:
+    // there is no timestamp type here, so instants are RFC 3339 text; and there is no array type, so compartments are
+    // joined with the unit separator the contract's identity material already uses, which cannot appear in a tag.
     private const string ArtifactSchema =
-        "tenant TEXT, evidence_id TEXT, domain_key TEXT, state TEXT, blob_path TEXT, created_at TEXT, "
-        + "committed_at TEXT, manifest TEXT";
+        "tenant_id TEXT, evidence_id TEXT, domain_key TEXT, state TEXT, kind TEXT, media_type TEXT, bytes_len LONG, "
+        + "logical_result_hash TEXT, artifact_hash TEXT, access_level LONG, compartments TEXT, expires_at TEXT, "
+        + "legal_hold LONG, purged_at TEXT, blob_path TEXT, created_at TEXT, committed_at TEXT, manifest TEXT";
 
-    private const string GrantSchema = "tenant TEXT, grant_id TEXT, evidence_id TEXT, expires_at TEXT, used_at TEXT";
+    // No created_at: the original's table carries one because its grant record does, and this port's EvidenceGrant has no
+    // such field - a column no reader can get back is a column nobody can check.
+    private const string GrantSchema =
+        "tenant_id TEXT, grant_id TEXT, evidence_id TEXT, expires_at TEXT, used_at TEXT";
 
+    // No identity of its own: an access is read as a list, newest first, and the original orders that list by the instant
+    // the read happened rather than by an id this adapter would have to mint.
     private const string AccessSchema =
-        "access_id TEXT, tenant TEXT, evidence_id TEXT, uid TEXT, kind TEXT, row_from LONG, row_limit LONG, "
-        + "outcome TEXT, at TEXT";
+        "tenant_id TEXT, evidence_id TEXT, uid TEXT, kind TEXT, row_from LONG, row_limit LONG, outcome TEXT, at TEXT";
+
+    /// <summary>
+    /// What joins the compartments in their column.
+    /// </summary>
+    /// <remarks>
+    /// The unit separator: the same character the contract's domain-key material uses, and for the same reason. Nothing
+    /// validates a compartment tag against it, which is what makes a join on it unambiguous - and a join that could be
+    /// read two ways would be a class two artifacts could share.
+    /// </remarks>
+    private const string UnitSeparator = "\u001f";
 
     private readonly Lock _gate = new();
     private readonly IDatabase _database = database ?? throw new ArgumentNullException(nameof(database));
@@ -198,7 +227,7 @@ public sealed class SharpCoreDbEvidenceStore(
             var row = grants
                 .Select(TableValues.Identity("grant_id", grantId))
                 .FirstOrDefault(found =>
-                    string.Equals(TableValues.StringValue(found, "tenant"), tenant, StringComparison.Ordinal)
+                    string.Equals(TableValues.StringValue(found, "tenant_id"), tenant, StringComparison.Ordinal)
                     && string.Equals(TableValues.StringValue(found, "evidence_id"), evidenceId, StringComparison.Ordinal));
 
             // Reading the row and spending it are one step under one lock, which is the whole reason this lives in the
@@ -246,11 +275,9 @@ public sealed class SharpCoreDbEvidenceStore(
         {
             Table(_accesses).Insert(new Dictionary<string, object>
             {
-                // The row's own identity is a ULID rather than the caller's instant, so "newest first" is the order the
-                // accesses were recorded in rather than the order a clock says they happened: a clock can go backwards,
-                // and two reads within one millisecond are still two reads.
-                ["access_id"] = LedgerIds.New(),
-                ["tenant"] = access.Tenant,
+                // What was read, never the rows: an audit table holding the regulated data it audits would be a second
+                // copy of the problem the audit exists to describe.
+                ["tenant_id"] = access.Tenant,
                 ["evidence_id"] = access.EvidenceId,
                 ["uid"] = access.Uid,
                 ["kind"] = access.Kind,
@@ -281,6 +308,14 @@ public sealed class SharpCoreDbEvidenceStore(
         }
     }
 
+    /// <summary>
+    /// An artifact's recent accesses, newest first.
+    /// </summary>
+    /// <remarks>
+    /// Ordered by the instant each read happened, as the original orders it, and over the parsed value rather than over
+    /// the text: this engine has no timestamp type, and two spellings of one instant would sort differently as text.
+    /// A row whose instant cannot be read sorts after the ones that can, which is the honest end for it.
+    /// </remarks>
     private IReadOnlyList<EvidenceAccess> Recent(string tenant, string evidenceId, int limit) =>
         limit <= 0 || string.IsNullOrWhiteSpace(evidenceId)
             ? []
@@ -288,8 +323,10 @@ public sealed class SharpCoreDbEvidenceStore(
                 .. Table(_accesses)
                     .Select(TableValues.Identity("evidence_id", evidenceId))
                     .Where(row => string.Equals(
-                        TableValues.StringValue(row, "tenant"), tenant, StringComparison.Ordinal))
-                    .OrderByDescending(row => TableValues.StringValue(row, "access_id"), StringComparer.Ordinal)
+                        TableValues.StringValue(row, "tenant_id"), tenant, StringComparison.Ordinal))
+                    .OrderByDescending(row => Instant(TableValues.StringValue(row, "at"), out var at)
+                        ? at
+                        : (DateTimeOffset?)null)
                     .Take(limit)
                     .Select(MapAccess),
             ];
@@ -310,20 +347,19 @@ public sealed class SharpCoreDbEvidenceStore(
             }
 
             // Every tenant, on purpose: the janitor is a deployment-wide obligation, and a sweep that ran for the tenants
-            // somebody remembered would not be a retention policy. The rows are read and judged rather than filtered by
-            // the engine, because the expiry lives in the manifest where it cannot disagree with what the artifact proves.
+            // somebody remembered would not be a retention policy. Which rows are due is decided on the columns rather
+            // than out of the manifests, so the sweep does not parse a document per artifact to find the handful it
+            // wants; only the rows it is about to hand back are read as artifacts.
             return ValueTask.FromResult<IReadOnlyList<EvidenceArtifact>>(
             [
                 .. Table(_artifacts)
                     .Select()
-                    .Select(MapArtifact)
-                    .Where(artifact => artifact.State == EvidenceState.Committed)
-                    .Select(artifact => (Artifact: artifact, Expiry: Expiry(artifact.Manifest.Retention)))
-                    .Where(due => due.Expiry is { } expires && clock >= expires)
-                    .OrderBy(due => due.Expiry)
-                    .ThenBy(due => due.Artifact.EvidenceId, StringComparer.Ordinal)
+                    .Select(row => (Row: row, Due: DueAt(row)))
+                    .Where(candidate => candidate.Due is { } expires && clock >= expires)
+                    .OrderBy(candidate => candidate.Due)
+                    .ThenBy(candidate => TableValues.StringValue(candidate.Row, "evidence_id"), StringComparer.Ordinal)
                     .Take(limit)
-                    .Select(due => due.Artifact),
+                    .Select(candidate => MapArtifact(candidate.Row)),
             ]);
         }
     }
@@ -343,9 +379,10 @@ public sealed class SharpCoreDbEvidenceStore(
             var found = Read(artifacts, tenant, evidenceId);
             var retention = found?.Manifest.Retention;
 
-            // Only committed bytes can be purged, and a hold stops it. The listing already leaves holds out, so this is a
-            // second gate rather than the only one - but a janitor that marked a held artifact purged would be asserting a
-            // deletion the hold forbade, and a hold that stops nothing is not a hold.
+            // Only committed bytes can be purged, and a hold stops it - both read from the columns through the mapping,
+            // which is where the decision is taken rather than out of the manifest. The listing already leaves holds out,
+            // so this is a second gate rather than the only one - but a janitor that marked a held artifact purged would
+            // be asserting a deletion the hold forbade, and a hold that stops nothing is not a hold.
             if (found is null || found.State != EvidenceState.Committed || retention is { LegalHold: true })
             {
                 return ValueTask.FromResult(false);
@@ -409,17 +446,30 @@ public sealed class SharpCoreDbEvidenceStore(
 
     private static void WriteArtifact(ITable table, EvidenceArtifact artifact)
     {
+        var manifest = artifact.Manifest with { EvidenceId = artifact.EvidenceId };
+        var retention = manifest.Retention;
+
         table.Delete(TableValues.Identity("evidence_id", artifact.EvidenceId));
         table.Insert(new Dictionary<string, object>
         {
-            ["tenant"] = artifact.Tenant,
+            ["tenant_id"] = artifact.Tenant,
             ["evidence_id"] = artifact.EvidenceId,
-            ["domain_key"] = artifact.Manifest.ComputeDomainKey(),
+            ["domain_key"] = manifest.ComputeDomainKey(),
             ["state"] = artifact.State.ToWireName(),
+            ["kind"] = manifest.Kind.ToWireName(),
+            ["media_type"] = manifest.MediaType,
+            ["bytes_len"] = manifest.BytesLength,
+            ["logical_result_hash"] = manifest.LogicalResultHash,
+            ["artifact_hash"] = manifest.ArtifactHash,
+            ["access_level"] = (long)manifest.AuthorizationClass.AccessLevel,
+            ["compartments"] = string.Join(UnitSeparator, manifest.AuthorizationClass.Compartments),
+            ["expires_at"] = retention?.ExpiresAt ?? string.Empty,
+            ["legal_hold"] = retention?.LegalHold == true ? 1L : 0L,
+            ["purged_at"] = retention?.PurgedAt ?? string.Empty,
             ["blob_path"] = artifact.BlobPath,
             ["created_at"] = artifact.CreatedAt,
             ["committed_at"] = artifact.CommittedAt ?? string.Empty,
-            ["manifest"] = EvidenceManifestCodec.ToJson(artifact.Manifest with { EvidenceId = artifact.EvidenceId }),
+            ["manifest"] = EvidenceManifestCodec.ToJson(manifest),
         });
     }
 
@@ -428,7 +478,7 @@ public sealed class SharpCoreDbEvidenceStore(
         table.Delete(TableValues.Identity("grant_id", grant.GrantId));
         table.Insert(new Dictionary<string, object>
         {
-            ["tenant"] = grant.Tenant,
+            ["tenant_id"] = grant.Tenant,
             ["grant_id"] = grant.GrantId,
             ["evidence_id"] = grant.EvidenceId,
             ["expires_at"] = grant.ExpiresAt,
@@ -443,19 +493,57 @@ public sealed class SharpCoreDbEvidenceStore(
             TableValues.StringValue(row, "manifest"),
             $"artifact '{evidenceId}'");
 
+        // The columns win over the manifest for everything a decision is made on - what kind of result this is, its two
+        // hashes and its length, who may read it, and when it goes. That is what lifting them out of the JSON is for: the
+        // decision is taken on a column rather than on a path through a document. The manifest keeps the rest, including
+        // the identity, which is filled in here for the same reason the store fills it in on the way down.
         return new EvidenceArtifact
         {
             EvidenceId = evidenceId,
-            Tenant = TableValues.StringValue(row, "tenant"),
+            Tenant = TableValues.StringValue(row, "tenant_id"),
             State = EvidenceStateNames.ParseState(TableValues.StringValue(row, "state"))
                 ?? throw new FormatException($"artifact '{evidenceId}' is in a state this server does not know"),
-            // The identity is the row's rather than the manifest's. The manifest is stored with it filled in, and reading
-            // it back from the column means a row written before that rule still comes back under the right identity.
-            Manifest = manifest with { EvidenceId = evidenceId },
+            Manifest = manifest with
+            {
+                EvidenceId = evidenceId,
+                Kind = Kind(row, evidenceId),
+                MediaType = TableValues.StringValue(row, "media_type"),
+                BytesLength = TableValues.LongValue(row, "bytes_len"),
+                LogicalResultHash = TableValues.StringValue(row, "logical_result_hash"),
+                ArtifactHash = TableValues.StringValue(row, "artifact_hash"),
+                AuthorizationClass = new AuthorizationClass
+                {
+                    Name = manifest.AuthorizationClass.Name,
+                    AccessLevel = (int)TableValues.LongValue(row, "access_level"),
+                    Compartments = Compartments(row),
+                },
+                Retention = Retention(row),
+            },
             BlobPath = TableValues.StringValue(row, "blob_path"),
             CreatedAt = TableValues.StringValue(row, "created_at"),
             CommittedAt = Moment(row, "committed_at"),
         };
+    }
+
+    private static EvidenceKind Kind(Dictionary<string, object> row, string evidenceId) =>
+        EvidenceKindNames.ParseKind(TableValues.StringValue(row, "kind"))
+            ?? throw new FormatException($"artifact '{evidenceId}' is of a kind this server does not know");
+
+    private static IReadOnlyList<string> Compartments(Dictionary<string, object> row) =>
+        TableValues.StringValue(row, "compartments") is { Length: > 0 } joined
+            ? joined.Split(UnitSeparator, StringSplitOptions.None)
+            : [];
+
+    /// <summary>Reads the retention the columns carry, which is the copy a purge is decided on.</summary>
+    private static Retention? Retention(Dictionary<string, object> row)
+    {
+        var expiresAt = Moment(row, "expires_at");
+        var purgedAt = Moment(row, "purged_at");
+        var held = TableValues.LongValue(row, "legal_hold") != 0;
+
+        return expiresAt is null && purgedAt is null && !held
+            ? null
+            : new Retention { ExpiresAt = expiresAt, LegalHold = held, PurgedAt = purgedAt };
     }
 
     private static EvidenceAccess MapAccess(Dictionary<string, object> row) => new()
@@ -487,13 +575,17 @@ public sealed class SharpCoreDbEvidenceStore(
         return value > 0 ? value : null;
     }
 
-    /// <summary>Gets when an artifact becomes purgeable, or <see langword="null"/> while it is not.</summary>
+    /// <summary>Gets when a row's bytes become deletable, or <see langword="null"/> while they may not be.</summary>
     /// <remarks>
-    /// A hold makes an artifact never due, and so does an expiry that cannot be read: an artifact nobody can show to be
-    /// expired is not expired, and deleting bytes on a guess is the one direction this cannot be wrong in.
+    /// Decided on the columns, which is the point of keeping them: only a committed artifact whose retention has come
+    /// round and which is not on hold is due, and an expiry nobody can read is not one this will act on - deleting
+    /// regulated bytes on a guess is the one direction this cannot be wrong in.
     /// </remarks>
-    private static DateTimeOffset? Expiry(Retention? retention) =>
-        retention is { LegalHold: false, ExpiresAt: { Length: > 0 } text } && Instant(text, out var expires)
+    private static DateTimeOffset? DueAt(Dictionary<string, object> row) =>
+        EvidenceStateNames.ParseState(TableValues.StringValue(row, "state")) is EvidenceState.Committed
+        && TableValues.LongValue(row, "legal_hold") == 0
+        && TableValues.StringValue(row, "purged_at").Length == 0
+        && Instant(TableValues.StringValue(row, "expires_at"), out var expires)
             ? expires
             : null;
 

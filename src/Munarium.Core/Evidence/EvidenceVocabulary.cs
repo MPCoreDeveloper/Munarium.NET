@@ -20,6 +20,39 @@ public enum EvidenceKind
 }
 
 /// <summary>
+/// The stored and wire names of <see cref="EvidenceKind"/>.
+/// </summary>
+/// <remarks>
+/// Spelled here rather than through the member names, for the reason <see cref="ColumnTypeNames"/> gives: this is a
+/// closed vocabulary on disk and on the wire, and a member renamed for a reader of C# must not rename either.
+/// </remarks>
+public static class EvidenceKindNames
+{
+    /// <summary>Returns the name the contract uses for a kind.</summary>
+    /// <param name="kind">The kind.</param>
+    /// <returns>The snake_case name.</returns>
+    public static string ToWireName(this EvidenceKind kind) => kind switch
+    {
+        EvidenceKind.Table => "table",
+        EvidenceKind.Count => "count",
+        _ => "observations",
+    };
+
+    /// <summary>
+    /// Parses a name.
+    /// </summary>
+    /// <param name="value">The name.</param>
+    /// <returns>The kind, or <see langword="null"/> when the name is not one of the closed set.</returns>
+    public static EvidenceKind? ParseKind(string? value) => value switch
+    {
+        "table" => EvidenceKind.Table,
+        "count" => EvidenceKind.Count,
+        "observations" => EvidenceKind.Observations,
+        _ => null,
+    };
+}
+
+/// <summary>
 /// Logical column types.
 /// </summary>
 /// <remarks>
