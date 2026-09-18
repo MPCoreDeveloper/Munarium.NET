@@ -98,6 +98,66 @@ public static class PayloadJson
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.True;
 
     /// <summary>
+    /// Reads an integer property, or <see langword="null"/> when it is absent or not a number.
+    /// </summary>
+    /// <param name="element">The object.</param>
+    /// <param name="name">The property name.</param>
+    /// <returns>The value, or <see langword="null"/>.</returns>
+    public static long? OptionalNumber(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number
+            ? value.GetInt64()
+            : null;
+
+    /// <summary>
+    /// Reads an object-valued member of a payload, or <see langword="null"/> when it is absent.
+    /// </summary>
+    /// <param name="element">The object.</param>
+    /// <param name="name">The member's name.</param>
+    /// <returns>The value, or <see langword="null"/>.</returns>
+    public static JsonElement? Member(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Object
+            ? value
+            : null;
+
+    /// <summary>
+    /// Reads an object-valued member that cannot be absent.
+    /// </summary>
+    /// <param name="element">The object.</param>
+    /// <param name="name">The member's name.</param>
+    /// <param name="what">What is being read, for the error.</param>
+    /// <returns>The value.</returns>
+    /// <exception cref="FormatException">Thrown when the member is absent or not an object.</exception>
+    public static JsonElement RequiredMember(JsonElement element, string name, string what) =>
+        Member(element, name) ?? throw new FormatException($"{what} needs an object '{name}'.");
+
+    /// <summary>
+    /// Reads a string array property, or an empty list when it is absent or not an array.
+    /// </summary>
+    /// <remarks>
+    /// An absent array and an empty one are the same thing to a reader here: both say that nothing was named, which is
+    /// what a missing optional list means.
+    /// </remarks>
+    /// <param name="element">The object.</param>
+    /// <param name="name">The property name.</param>
+    /// <returns>The values, in order.</returns>
+    public static IReadOnlyList<string> Strings(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var read = new List<string>(value.GetArrayLength());
+
+        foreach (var item in value.EnumerateArray())
+        {
+            read.Add(item.ValueKind == JsonValueKind.String ? item.GetString() ?? string.Empty : string.Empty);
+        }
+
+        return read;
+    }
+
+    /// <summary>
     /// Parses a payload into its root object.
     /// </summary>
     /// <param name="payload">The payload.</param>
