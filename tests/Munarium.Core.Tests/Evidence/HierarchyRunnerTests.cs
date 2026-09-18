@@ -3,6 +3,8 @@ namespace Munarium.Core.Tests.Evidence;
 using Munarium.Evidence;
 using Munarium.Ledger;
 using Munarium.Retrieval;
+using static Munarium.Core.Tests.Support.HierarchyFixture;
+
 
 /// <summary>
 /// Tests for the hierarchy runner: which layers run, what a source nobody claims does, and what stops a turn.
@@ -226,46 +228,6 @@ public class HierarchyRunnerTests
         Assert.Equal("due-diligence", profile?.Profile);
         Assert.Equal(["contracts"], profile?.Layers);
     }
-
-    private static EvidencePlan Plan(params EvidenceLayer[] layers) => new()
-    {
-        Profile = "due-diligence",
-        Intent = new QueryIntent
-        {
-            Question = "how many contracts lapse this quarter?",
-            Kind = "aggregation",
-            Explicit = true,
-        },
-        Layers = layers,
-    };
-
-    private static EvidenceLayer Layer(
-        string name,
-        string source,
-        LayerRequirement requirement,
-        AnswerRole role,
-        bool preserve = false) => new()
-        {
-            Name = name,
-            Sources = [source],
-            Requirement = requirement,
-            Role = role,
-            PreserveCompleteResult = preserve,
-        };
-
-    private static EvidenceBlock Table(bool truncated) => new TableBlock
-    {
-        Columns = ["region"],
-        Rows = [["r0"]],
-        Truncated = truncated,
-        EvidenceId = "ev-1",
-    };
-
-    private static EvidenceBlock Unavailable() => new EvidenceRefusal
-    {
-        Code = EvidenceRefusalCodes.SourceUnavailable,
-        Message = "the source could not be reached",
-    };
 
     private static HierarchyOutcome Produced(HierarchyResult result) =>
         result is HierarchyOutcome outcome
