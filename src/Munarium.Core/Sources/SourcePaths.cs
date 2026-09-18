@@ -20,10 +20,10 @@ public static class SourcePaths
     /// The keyspace sealed evidence artifacts live under.
     /// </summary>
     /// <remarks>
-    /// Declared here because this is where it is enforced; the evidence plane owns it, and the constant
-    /// moves there when that plane is ported rather than being written twice.
+    /// Owned by the evidence plane (<see cref="Evidence.EvidenceContract.PathPrefix"/>) and enforced here,
+    /// because this is where document ingress would otherwise be able to reach it.
     /// </remarks>
-    public const string EvidencePrefix = "evidence/";
+    public const string EvidencePrefix = Evidence.EvidenceContract.PathPrefix;
 
     private const int MaxBytes = 1024;
 
