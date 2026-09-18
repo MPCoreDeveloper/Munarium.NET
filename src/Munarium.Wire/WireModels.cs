@@ -58,13 +58,18 @@ public sealed record WireVersionHead(string VersionId, long Head);
 /// <param name="Body">The structured fact body, JSON-encoded.</param>
 /// <param name="Statement">The claim in the actor's words.</param>
 /// <param name="Actor">Who is asserting it.</param>
+/// <param name="IdempotencyKey">
+/// The key this command is made under, or empty for none. The same key on this operation and version is answered with
+/// what the first attempt was answered, and writes nothing a second time.
+/// </param>
 public sealed record WireClaimProposal(
     string ClaimId,
     string ClaimType,
     string Shape,
     string Body,
     string Statement,
-    string Actor);
+    string Actor,
+    string? IdempotencyKey = null);
 
 /// <summary>A claim as recorded, with the verdict it was recorded under.</summary>
 /// <param name="VersionId">The version it was written to.</param>
@@ -317,10 +322,14 @@ public sealed record WireClaimCandidate(
 /// <param name="Claims">The proposals, in the order they were produced.</param>
 /// <param name="Text">The unit of text the text-shaped gates judge, or empty.</param>
 /// <param name="ExpectedHead">The head the caller requires, or 0 to append at whatever the head is.</param>
+/// <param name="IdempotencyKey">
+/// The key this command is made under, or empty for none: a batch is a unit, so a retry of one must not judge it twice.
+/// </param>
 public sealed record WireClaimBatchRequest(
     IReadOnlyList<WireClaimCandidate> Claims,
     string Text,
-    long ExpectedHead);
+    long ExpectedHead,
+    string? IdempotencyKey = null);
 
 /// <summary>One thing a gate had to say about a batch.</summary>
 /// <param name="RuleId">The dotted rule identifier.</param>

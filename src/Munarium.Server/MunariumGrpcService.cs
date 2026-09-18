@@ -996,7 +996,11 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
             }
         }
 
-        return new WireClaimBatchRequest(claims, body?.Text ?? string.Empty, body?.ExpectedHead ?? 0);
+        return new WireClaimBatchRequest(
+            claims,
+            body?.Text ?? string.Empty,
+            body?.ExpectedHead ?? 0,
+            body?.IdempotencyKey ?? string.Empty);
     }
 
     private static WireClaimCandidate ToWire(ClaimCandidate candidate) => new(
@@ -1014,5 +1018,6 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         proposal?.Shape ?? string.Empty,
         proposal?.Body ?? string.Empty,
         proposal?.Statement ?? string.Empty,
-        proposal?.Actor ?? string.Empty);
+        proposal?.Actor ?? string.Empty,
+        proposal?.IdempotencyKey ?? string.Empty);
 }

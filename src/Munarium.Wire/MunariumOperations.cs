@@ -3,12 +3,14 @@ namespace Munarium.Wire;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Munarium.Claims;
 using Munarium.Commands;
 using Munarium.Context;
 using Munarium.Counters;
 using Munarium.Facts;
 using Munarium.Governance;
+using Munarium.Idempotency;
 using Munarium.Ledger;
 using Munarium.Providers;
 using Munarium.Promises;
@@ -42,6 +44,7 @@ public sealed class MunariumOperations(
     string embeddingModel,
     IngestRunner ingest,
     ISourceRegistry sources,
+    IIdempotencyStore idempotency,
     IndexBuilder indexBuilder,
     IndexCatalog catalogue,
     string tenant)
@@ -93,6 +96,7 @@ public sealed class MunariumOperations(
     private readonly string _embeddingModel = embeddingModel ?? throw new ArgumentNullException(nameof(embeddingModel));
     private readonly IngestRunner _ingest = ingest ?? throw new ArgumentNullException(nameof(ingest));
     private readonly ISourceRegistry _sources = sources ?? throw new ArgumentNullException(nameof(sources));
+    private readonly IIdempotencyStore _idempotency = idempotency ?? throw new ArgumentNullException(nameof(idempotency));
     private readonly IndexBuilder _builder = indexBuilder ?? throw new ArgumentNullException(nameof(indexBuilder));
     private readonly IndexCatalog _catalogue = catalogue ?? throw new ArgumentNullException(nameof(catalogue));
     private readonly string _tenant = string.IsNullOrWhiteSpace(tenant)
@@ -137,6 +141,24 @@ public sealed class MunariumOperations(
             return new WireProblem(InvalidRequestProblem, invalid, Status: 400, ExpectedHead: 0, ActualHead: 0);
         }
 
+        // A key that is not a ULID is the caller's fault, like any other malformed field - and it is answered before the
+        // write, so nothing is recorded for a request that was not understood.
+        var scope = IdempotencyKeys.Of(IdempotencyKeys.Claim, versionId);
+        var keyed = IdempotencyKeys.TryAccept(proposal.IdempotencyKey, out var unusable);
+
+        if (unusable is not null)
+        {
+            return new WireProblem(InvalidRequestProblem, unusable, Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        var key = (proposal.IdempotencyKey ?? string.Empty).Trim();
+
+        if (keyed && await AnsweredAsync<WireClaimOutcome>(scope, key, WireJson.Default.WireClaimOutcome, cancellationToken)
+            .ConfigureAwait(false) is { } answered)
+        {
+            return answered;
+        }
+
         var outcome = await _claims.RecordAsync(
             new RecordClaimCommand
             {
@@ -154,7 +176,7 @@ public sealed class MunariumOperations(
         // the kernel did not use.
         var lineage = _shapes.LineageOf(proposal.Shape, proposal.Body);
 
-        return outcome switch
+        WireClaimResult result = outcome switch
         {
             ClaimAsserted asserted => new WireClaimOutcome(
                 versionId, proposal.ClaimId, proposal.ClaimType, lineage,
@@ -170,7 +192,20 @@ public sealed class MunariumOperations(
                 Status: 409,
                 contended.Expected.Value,
                 contended.Actual.Value),
+
+            // Target-typed: the switch is one expression, and the union is what a caller receives.
+            _ => throw new InvalidOperationException("The ledger answered with an outcome this port does not know."),
         };
+
+        // Only an answer that recorded something is remembered: a contention wrote nothing, and a retry of one has to be
+        // able to reach the ledger rather than be answered forever with a failure that was transient.
+        if (keyed && result is WireClaimOutcome recorded)
+        {
+            await RememberAsync(scope, key, recorded, WireJson.Default.WireClaimOutcome, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return result;
     }
 
     /// <summary>Proposes a batch of claims, which governance then judges as one unit.</summary>
@@ -201,6 +236,25 @@ public sealed class MunariumOperations(
         }
 
         var proposals = new List<ProposedClaim>(request.Claims.Count);
+
+        // The batch is keyed like the single write: the scope names the operation and the version, so one caller's key
+        // for one batch cannot swallow another's, and the answer is replayed rather than the unit judged twice.
+        var scope = IdempotencyKeys.Of(IdempotencyKeys.ClaimBatch, versionId);
+        var keyed = IdempotencyKeys.TryAccept(request.IdempotencyKey, out var unusable);
+
+        if (unusable is not null)
+        {
+            return new WireProblem(InvalidRequestProblem, unusable, Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        var key = (request.IdempotencyKey ?? string.Empty).Trim();
+
+        if (keyed && await AnsweredAsync<WireClaimBatchOutcome>(
+                scope, key, WireJson.Default.WireClaimBatchOutcome, cancellationToken).ConfigureAwait(false)
+            is { } answered)
+        {
+            return answered;
+        }
 
         for (var index = 0; index < request.Claims.Count; index++)
         {
@@ -237,7 +291,7 @@ public sealed class MunariumOperations(
             .AppendAsync(versionId, proposals, request.Text, expectedHead, cancellationToken)
             .ConfigureAwait(false);
 
-        return outcome switch
+        WireClaimBatchResult result = outcome switch
         {
             CandidateRecorded recorded => new WireClaimBatchOutcome(
                 versionId,
@@ -256,6 +310,16 @@ public sealed class MunariumOperations(
                 contended.Expected.Value,
                 contended.Actual.Value),
         };
+
+        // A batch that was judged and recorded is remembered; a contention is not, because it recorded nothing and a
+        // retry has to be able to reach the ledger.
+        if (keyed && result is WireClaimBatchOutcome batch)
+        {
+            await RememberAsync(scope, key, batch, WireJson.Default.WireClaimBatchOutcome, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return result;
     }
 
     /// <summary>Reads the findings a version's writes produced.</summary>
@@ -1078,6 +1142,43 @@ public sealed class MunariumOperations(
             shape => new WireShape(shape.Name, shape.Version, shape.Identity, shape.Schema))]);
 
     // ---- helpers ----
+
+    /// <summary>
+    /// Reads what a command made under a key was answered the first time, if it was.
+    /// </summary>
+    /// <remarks>
+    /// A payload that cannot be read back throws rather than falling through to the write: answering a retry by doing the
+    /// command a second time is precisely what a key exists to prevent, and a corrupted answer must not become a second
+    /// claim.
+    /// </remarks>
+    private async ValueTask<T?> AnsweredAsync<T>(
+        string scope,
+        string key,
+        JsonTypeInfo<T> type,
+        CancellationToken cancellationToken)
+        where T : class
+    {
+        if (key.Length == 0)
+        {
+            return null;
+        }
+
+        var recorded = await _idempotency.FindAsync(_tenant, scope, key, cancellationToken).ConfigureAwait(false);
+
+        return recorded is null
+            ? null
+            : JsonSerializer.Deserialize(recorded, type)
+                ?? throw new InvalidOperationException(
+                    $"the answer recorded for key '{key}' cannot be read back, so a retry cannot be answered with it");
+    }
+
+    private ValueTask RememberAsync<T>(
+        string scope,
+        string key,
+        T answer,
+        JsonTypeInfo<T> type,
+        CancellationToken cancellationToken) =>
+        _idempotency.RecordAsync(_tenant, scope, key, JsonSerializer.Serialize(answer, type), cancellationToken);
 
     private async ValueTask<FactSlice> PresentAsync(CancellationToken cancellationToken)
     {

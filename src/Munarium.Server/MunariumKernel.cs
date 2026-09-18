@@ -153,6 +153,10 @@ public sealed class MunariumKernel : IAsyncDisposable
         // engine reference comes from the host, so a manifest cannot claim an engine that did not build the vectors.
         var versionStore = new SharpCoreDbIndexVersionStore(database);
         var catalogue = new IndexCatalog(versionStore);
+
+        // What a command answered, kept under the caller's key: a retry is answered rather than done twice, and only a
+        // write that was recorded is remembered.
+        var idempotency = new SharpCoreDbIdempotencyStore(database);
         var builder = new IndexBuilder(
             sourceStore,
             sourceRegistry,
@@ -181,6 +185,7 @@ public sealed class MunariumKernel : IAsyncDisposable
             DeterministicEmbeddingProvider.ModelName,
             ingest,
             sourceRegistry,
+            idempotency,
             builder,
             catalogue,
             Tenant);

@@ -1,6 +1,7 @@
 namespace Munarium.Server.Tests;
 
 using Munarium.Context;
+using Munarium.Ledger;
 using Munarium.Providers;
 using Munarium.Retrieval;
 using Munarium.Sources;
@@ -1210,6 +1211,84 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Null(live.DeactivatedAt);
         Assert.Equal(version.IndexVersionId, live.IndexVersionId);
     }
+
+    /// <summary>
+    /// A retry under the same key is answered rather than done again: the second attempt writes nothing, and the caller
+    /// is told exactly what it was told the first time - which is the whole point of a key.
+    /// </summary>
+    [Fact]
+    public async Task ARetriedClaimUnderOneKeyIsAnsweredRatherThanWrittenTwice()
+    {
+        var proposal = new WireClaimProposal(
+            "claim-keyed",
+            WireClaimTypes.Fact,
+            VendorShape,
+            Vendor("v-keyed"),
+            "the supplier is north",
+            "tester",
+            LedgerIds.New());
+
+        var first = await ProposeAsync("version-keyed", proposal);
+        var second = await ProposeAsync("version-keyed", proposal);
+
+        Assert.Equal(WireClaimStatus.Accepted, first.Status);
+        Assert.Equal(first.Status, second.Status);
+        Assert.Equal(first.Head, second.Head);
+
+        var head = await GetAsync("/v1/versions/version-keyed/head", WireJson.Default.WireVersionHead);
+
+        Assert.Equal(1, head.Head);
+    }
+
+    [Fact]
+    public async Task ADifferentKeyIsAnotherCommand()
+    {
+        var first = await ProposeAsync(
+            "version-two-keys",
+            Proposal("claim-first-key", LedgerIds.New()));
+
+        var second = await ProposeAsync(
+            "version-two-keys",
+            Proposal("claim-second-key", LedgerIds.New()));
+
+        Assert.Equal(WireClaimStatus.Accepted, first.Status);
+        Assert.Equal(WireClaimStatus.Accepted, second.Status);
+
+        var head = await GetAsync("/v1/versions/version-two-keys/head", WireJson.Default.WireVersionHead);
+
+        Assert.Equal(2, head.Head);
+    }
+
+    /// <summary>A key that is not a ULID is the caller's fault, and it is refused before anything is written.</summary>
+    [Fact]
+    public async Task AKeyThatIsNotAUlidIsRefusedBeforeAnythingIsWritten()
+    {
+        using var response = await _client.PostAsJsonAsync(
+            "/v1/versions/version-bad-key/claims",
+            Proposal("claim-bad-key", "not-a-key"),
+            WireJson.Default.WireClaimProposal);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var problem = (await response.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
+
+        Assert.Equal(MunariumOperations.InvalidRequestProblem, problem.Type);
+        Assert.Contains("idempotency_key", problem.Detail, StringComparison.Ordinal);
+
+        var head = await GetAsync("/v1/versions/version-bad-key/head", WireJson.Default.WireVersionHead);
+
+        Assert.Equal(0, head.Head);
+    }
+
+    private static WireClaimProposal Proposal(string claimId, string key) =>
+        new(
+            claimId,
+            WireClaimTypes.Fact,
+            VendorShape,
+            Vendor(claimId),
+            "the supplier is north",
+            "tester",
+            key);
 
     [Fact]
     public async Task AnIndexVersionThatIsNotRecordedIsNotFound()

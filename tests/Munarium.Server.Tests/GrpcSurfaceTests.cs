@@ -2,6 +2,7 @@ namespace Munarium.Server.Tests;
 
 using Grpc.Core;
 using Grpc.Net.Client;
+using Munarium.Ledger;
 using Munarium.Retrieval;
 using Munarium.Wire;
 using Munarium.Wire.Generated;
@@ -506,6 +507,60 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
             Assert.Equal(string.Empty, resolution.Data.Failure);
             Assert.Equal(built.Data.IndexVersionId, resolution.Data.Version.IndexVersionId);
         });
+
+    /// <summary>
+    /// A retry under one key is answered over gRPC too, and the key belongs to the command rather than to the transport:
+    /// the two surfaces share one record of what was answered, so a retry over the other one is answered as well.
+    /// </summary>
+    [Fact]
+    public async Task ARetriedClaimOverGrpcIsAnsweredRatherThanWrittenTwice()
+    {
+        string key = LedgerIds.New();
+
+        await WithClient(async client =>
+        {
+            var proposal = Proposal("claim-grpc-keyed", """{"vendor_id":"g-keyed","status":"approved"}""");
+
+            proposal.IdempotencyKey = key;
+
+            var first = await client.ProposeClaimAsync(
+                new ProposeClaimRequest { VersionId = "grpc-keyed", Body = proposal });
+
+            Assert.Equal(ClaimStatus.Accepted, first.Data.Status);
+
+            var second = await client.ProposeClaimAsync(
+                new ProposeClaimRequest { VersionId = "grpc-keyed", Body = proposal });
+
+            Assert.Equal(first.Data.Status, second.Data.Status);
+            Assert.Equal(first.Data.Head, second.Data.Head);
+        });
+
+        // The same command, the same key, the other transport: still answered rather than written again.
+        using var http = _factory.CreateClient();
+        using var overJson = await http.PostAsJsonAsync(
+            "/v1/versions/grpc-keyed/claims",
+            new WireClaimProposal(
+                "claim-grpc-keyed",
+                WireClaimTypes.Fact,
+                "vendor",
+                """{"vendor_id":"g-keyed","status":"approved"}""",
+                "the supplier is north",
+                "tester",
+                key),
+            WireJson.Default.WireClaimProposal);
+
+        var answered = (await overJson.Content.ReadFromJsonAsync(WireJson.Default.WireClaimOutcome))!;
+
+        Assert.Equal(WireClaimStatus.Accepted, answered.Status);
+        Assert.Equal(1, answered.Head);
+
+        await WithClient(async client =>
+        {
+            var head = await client.GetHeadAsync(new GetHeadRequest { VersionId = "grpc-keyed" });
+
+            Assert.Equal(1, head.Data.Head);
+        });
+    }
 
     private async Task<WireComposedContext> ComposeOverJsonAsync(string version)
     {

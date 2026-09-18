@@ -1594,6 +1594,13 @@ components:
           description: |-
             The head the caller requires, or 0 to append at whatever the head is. A caller that pins one
             gets a contention instead of a re-gate.
+        idempotency_key:
+          type: string
+          description: |-
+            The key this command is made under, or empty for no key. A ULID, which a client can mint without a
+            round trip and which sorts by the instant it was made. The same key on the same operation and version
+            is answered with what the first attempt was answered, and writes nothing a second time; a different
+            key, or the same key on another operation or version, is another command.
 
     Provenance:
       type: string
@@ -1692,6 +1699,12 @@ components:
         actor:
           type: string
           description: Who is asserting it.
+        idempotency_key:
+          type: string
+          description: |-
+            The key this command is made under, or empty for no key. A ULID, which a client can mint without a
+            round trip and which sorts by the instant it was made. The same key on the same operation and version
+            is answered with what the first attempt was answered, and writes nothing a second time.
 
     ClaimOutcome:
       type: object

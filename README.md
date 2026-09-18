@@ -173,10 +173,14 @@ in the order it is planned:
   directives a writer would be given rather than only the totals. What is missing: nothing on the wire records an
   entity (upstream resolves entities through a model capability this port has not ported, so writing them would be
   raw plumbing), and no route rebuilds an index version from the rows a deployment already has.
-- **Idempotency keys.** The original requires an `idempotency-key` metadata entry on every command RPC and
-  replays the stored result. Here a retry writes a second claim; the `ledger-conflict` gate treats a
-  re-sent claim as a retry only when nothing about it changed, which is an approximation and is written
-  down as one.
+- **Idempotency keys on the claim writes.** A command can carry an `idempotency_key` (a ULID, the same shape this port
+  mints everywhere else), and the claim routes honour it: the second attempt writes nothing, is judged by nothing, and is
+  answered with exactly what the first attempt was answered - because the key belongs to the command and not to the
+  transport, a retry over the other surface is answered too. A key is scoped to the operation and the version, so one
+  caller's key for one write cannot swallow another's; only an answer that *recorded* something is remembered, so a
+  contention or a malformed request can still be retried into the ledger; and the first answer is the answer, because two
+  answers to one request is the situation the whole seam exists to prevent. What is not there yet: anchors, promises and
+  counters do not honour a key, though the machinery they would use is the same one.
 - **Pagination** (`PageRequest`/`PageResponse`), **authentication and tenancy**, **sessions and runbooks**,
   and the separate **`matrix/v1` semantic query** surface. The original carries roughly 49 RPCs across 8
   services; the kernel's core is what is served here.
