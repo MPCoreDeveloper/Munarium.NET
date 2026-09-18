@@ -20,6 +20,12 @@ public static class EvidencePlanes
     /// <summary>The provider id the document path reports.</summary>
     public const string Documents = "documents";
 
+    /// <summary>The provider id the fact plane reports.</summary>
+    public const string Facts = "facts";
+
+    /// <summary>The provider id the semantic data-view plane reports.</summary>
+    public const string Matrix = "matrix";
+
     /// <summary>The prefix of the semantic data-view plane.</summary>
     public const string MatrixPrefix = "matrix:";
 
