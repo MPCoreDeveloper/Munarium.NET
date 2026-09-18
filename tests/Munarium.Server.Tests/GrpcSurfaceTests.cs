@@ -209,6 +209,32 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
             Assert.Equal(finding.Message, claim.Reason);
         });
 
+    /// <summary>The findings a batch produced are readable per version over gRPC as well.</summary>
+    [Fact]
+    public async Task TheFindingsOfABatchTravelOverGrpc() =>
+        await WithClient(async client =>
+        {
+            await client.ProposeClaimBatchAsync(new ProposeClaimBatchRequest
+            {
+                VersionId = "grpc-findings",
+                Body = Batch(("service", "api_version", "v1")),
+            });
+
+            await client.ProposeClaimBatchAsync(new ProposeClaimBatchRequest
+            {
+                VersionId = "grpc-findings",
+                Body = Batch(("service", "api_version", "v2")),
+            });
+
+            var findings = await client.ListFindingsAsync(new ListFindingsRequest { VersionId = "grpc-findings" });
+            var blocked = Assert.Single(findings.Data.Findings, stored => stored.Finding.Severity == Severity.Block);
+
+            Assert.True(blocked.Sequence > 0);
+            Assert.Equal("service.api_version", blocked.Finding.ClaimKey);
+            Assert.StartsWith("gate.", blocked.Finding.RuleId, StringComparison.Ordinal);
+            Assert.NotEmpty(blocked.Finding.Detail);
+        });
+
     /// <summary>The same batch a JSON caller would send, built for the gRPC surface.</summary>
     private static ClaimBatchRequest Batch(params (string Subject, string Key, string Value)[] claims)
     {

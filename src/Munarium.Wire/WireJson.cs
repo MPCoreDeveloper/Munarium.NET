@@ -25,6 +25,8 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(WireClaimBatchRequest))]
 [JsonSerializable(typeof(WireClaimBatchOutcome))]
 [JsonSerializable(typeof(WireFinding))]
+[JsonSerializable(typeof(WireStoredFinding))]
+[JsonSerializable(typeof(WireFindingList))]
 [JsonSerializable(typeof(WireProblem))]
 [JsonSerializable(typeof(WireFact))]
 [JsonSerializable(typeof(WireFactSlice))]

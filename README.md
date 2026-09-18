@@ -123,14 +123,17 @@ Each of these is an upstream finding with the evidence that produced it, not a p
 The kernel is finished first, because everything else is a thin adapter over it. What is missing, roughly
 in the order it is planned:
 
-- **The candidate plane is on the write path *and* on both wire surfaces; what is missing is the findings
-  read.** `CandidateLedger` judges a whole unit against the head it was judged against, records a blocked claim
-  as disputed, and lands the claims and the write's findings in **one** conditional append - so the response and
-  the record cannot disagree, where the original writes findings to a separate table and treats a failure as a
+- **The candidate plane is on the write path and on every wire surface, including the findings read.** The
+  `CandidateLedger` judges a whole unit against the head it was judged against, records a blocked claim as
+  disputed, and lands the claims and the write's findings in **one** conditional append - so the response and the
+  record cannot disagree, where the original writes findings to a separate table and treats a failure as a
   warning. `POST /v1/versions/{id}/claim-batches` (and the `ProposeClaimBatch` RPC) carries the batch, returns
   each claim's verdict with the findings that produced them, and answers a caller's `expected_head` pin with a
-  contention rather than a re-gate. `FindingsLedger` reads the findings back per version with the original's
-  query (pin, severity, exact rule, rule prefix, limit), but no route serves that read yet.
+  contention rather than a re-gate; `GET /v1/versions/{id}/findings` (and `ListFindings`) reads them back with
+  the original's query (pin, severity, exact rule, rule prefix, limit). One thing to know when reading both: a
+  finding is stamped with the position its write settled at **inside its version's stream**, while a facts read
+  answers on the **global** feed its pin is on - the two are related through the version they belong to, not
+  directly comparable.
 - **The evidence hierarchy runs in the kernel, but nothing serves it yet.** A plan executes in trust order, a
   plane-qualified source refuses when nothing is bound to it, a required layer's refusal stops the turn, and
   composition honours both the profile budget and the whole-or-nothing rule — all against test doubles. What is

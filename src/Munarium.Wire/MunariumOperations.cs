@@ -26,6 +26,7 @@ public sealed class MunariumOperations(
     IStorageBackend storage,
     ClaimLedger claims,
     CandidateLedger candidates,
+    FindingsLedger findings,
     FactLedger facts,
     ShapeRegistry shapes,
     IRetrievalBackend retrieval,
@@ -48,6 +49,7 @@ public sealed class MunariumOperations(
     private readonly IStorageBackend _storage = storage ?? throw new ArgumentNullException(nameof(storage));
     private readonly ClaimLedger _claims = claims ?? throw new ArgumentNullException(nameof(claims));
     private readonly CandidateLedger _candidates = candidates ?? throw new ArgumentNullException(nameof(candidates));
+    private readonly FindingsLedger _findings = findings ?? throw new ArgumentNullException(nameof(findings));
     private readonly FactLedger _facts = facts ?? throw new ArgumentNullException(nameof(facts));
     private readonly ShapeRegistry _shapes = shapes ?? throw new ArgumentNullException(nameof(shapes));
     private readonly IRetrievalBackend _retrieval = retrieval ?? throw new ArgumentNullException(nameof(retrieval));
@@ -211,6 +213,43 @@ public sealed class MunariumOperations(
                 contended.Expected.Value,
                 contended.Actual.Value),
         };
+    }
+
+    /// <summary>Reads the findings a version's writes produced.</summary>
+    /// <param name="versionId">The version whose stream is read.</param>
+    /// <param name="asOf">The position to read as of, or 0 for every finding recorded.</param>
+    /// <param name="severity">The severity to select, or empty for every severity.</param>
+    /// <param name="ruleId">The exact rule to select, or empty.</param>
+    /// <param name="rulePrefix">A rule-id prefix to select, or empty.</param>
+    /// <param name="limit">How many findings to return, or 0 for all of them.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The findings, oldest first.</returns>
+    /// <remarks>
+    /// The findings are read out of the version's own stream, which is where the write path recorded them: they
+    /// live under the same pin as the claims they judged, so this read cannot see a verdict the ledger does not
+    /// hold, and a finding recorded in the same append as its claims is citable by that position.
+    /// </remarks>
+    public async ValueTask<WireFindingList> ListFindingsAsync(
+        string versionId,
+        long asOf = 0,
+        string? severity = null,
+        string? ruleId = null,
+        string? rulePrefix = null,
+        int limit = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new FindingsQuery
+        {
+            AsOfSequence = asOf > 0 ? new SequenceNumber(asOf) : null,
+            Severity = SeverityOf(severity),
+            RuleId = Optional(ruleId),
+            RulePrefix = Optional(rulePrefix),
+            Limit = limit > 0 ? limit : null,
+        };
+
+        var recorded = await _findings.ReadAsync(versionId, query, cancellationToken).ConfigureAwait(false);
+
+        return new WireFindingList([.. recorded.Select(StoredOf)]);
     }
 
     /// <summary>Creates a version, which is itself a governed claim.</summary>
@@ -591,6 +630,24 @@ public sealed class MunariumOperations(
         finding.ScopePath ?? string.Empty,
         finding.ClaimKey ?? string.Empty,
         finding.Detail?.ToJsonString() ?? string.Empty);
+
+    private static WireStoredFinding StoredOf(StoredFinding stored) =>
+        new(stored.Sequence.Value, FindingOf(stored.Finding));
+
+    // An empty query value means "do not filter", which is a different thing from filtering for the empty string:
+    // no finding has an empty rule id, so a filter the caller did not ask for would only ever hide findings.
+    private static string? Optional(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    // An unrecognised severity is not a filter: the caller asked for something the contract does not have, and
+    // the honest answer to that is everything the version holds rather than an empty list that looks like a
+    // verdict.
+    private static Severity? SeverityOf(string? severity) => severity switch
+    {
+        WireSeverities.Info => Severity.Info,
+        WireSeverities.Warn => Severity.Warn,
+        WireSeverities.Block => Severity.Block,
+        _ => null,
+    };
 
     private static string SeverityName(Severity severity) => severity switch
     {

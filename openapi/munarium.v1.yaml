@@ -242,6 +242,72 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/versions/{version_id}/findings:
+    get:
+      operationId: ListFindings
+      tags: [ledger]
+      summary: The findings a version's writes produced, oldest first.
+      description: |
+        A finding is the record of a verdict, so this is how a caller asks what governance decided and why -
+        including the warnings that refused nothing. The position a finding carries is the write it belongs
+        to, which is what makes it citable: a pin taken at that position still sees it.
+
+        The findings live in the version's own stream, recorded in the same append as the claims they judged,
+        so they are read under the same pin as those claims rather than from a second store that could be
+        out of step with them.
+      parameters:
+        - name: version_id
+          in: path
+          required: true
+          description: The version whose stream is read.
+          schema:
+            type: string
+        - name: as_of
+          in: query
+          required: false
+          description: |-
+            The position to read as of, in the version's own stream - the head a write settled at - or 0 for
+            every finding recorded. This is deliberately not the global feed position a facts read is pinned
+            on: a finding is stamped with the write it belongs to, inside the version it belongs to.
+          schema:
+            type: integer
+            format: int64
+        - name: severity
+          in: query
+          required: false
+          description: |-
+            The severity to select - "info", "warn" or "block" - or empty for every severity.
+          schema:
+            type: string
+        - name: rule_id
+          in: query
+          required: false
+          description: The exact rule id to select, such as "gate.ledger-conflict", or empty.
+          schema:
+            type: string
+        - name: rule_prefix
+          in: query
+          required: false
+          description: |-
+            A rule-id prefix to select - "gate." for the kernel's gates - or empty. It combines with rule_id
+            by AND, which is only useful when both are set consistently.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: How many findings to return, oldest first, or 0 for all of them.
+          schema:
+            type: integer
+            format: int32
+      responses:
+        "200":
+          description: The findings, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindingList"
+
   /v1/facts:
     get:
       operationId: SliceFacts
@@ -472,6 +538,29 @@ components:
         - fact
         - update
         - correction
+
+    FindingList:
+      type: object
+      required: [findings]
+      properties:
+        findings:
+          type: array
+          description: The findings, oldest first.
+          items:
+            $ref: "#/components/schemas/StoredFinding"
+
+    StoredFinding:
+      type: object
+      required: [sequence, finding]
+      properties:
+        sequence:
+          type: integer
+          format: int64
+          description: |-
+            The position the write settled at, which every finding of that write shares: the verdict belongs to
+            the write and not to the individual rule that produced it.
+        finding:
+          $ref: "#/components/schemas/Finding"
 
     ClaimCandidate:
       type: object

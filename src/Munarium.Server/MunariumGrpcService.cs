@@ -114,6 +114,25 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
     }
 
     /// <inheritdoc />
+    public override async Task<ListFindingsResponse> ListFindingsAsync(
+        ListFindingsRequest request,
+        ServerCallContext context)
+    {
+        var findings = await _operations
+            .ListFindingsAsync(
+                request.VersionId,
+                request.AsOf,
+                request.Severity,
+                request.RuleId,
+                request.RulePrefix,
+                request.Limit,
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return new ListFindingsResponse { Data = ToMessage(findings) };
+    }
+
+    /// <inheritdoc />
     public override async Task<SliceFactsResponse> SliceFactsAsync(
         SliceFactsRequest request,
         ServerCallContext context)
@@ -242,6 +261,22 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         foreach (var finding in outcome.Findings)
         {
             message.Findings.Add(ToMessage(finding));
+        }
+
+        return message;
+    }
+
+    private static FindingList ToMessage(WireFindingList findings)
+    {
+        var message = new FindingList();
+
+        foreach (var stored in findings.Findings)
+        {
+            message.Findings.Add(new StoredFinding
+            {
+                Sequence = stored.Sequence,
+                Finding = ToMessage(stored.Finding),
+            });
         }
 
         return message;

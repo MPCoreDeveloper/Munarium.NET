@@ -432,6 +432,61 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Equal(0, head.Head);
     }
 
+    /// <summary>
+    /// The findings a write produced are readable per version, stamped with the position of the write - which is
+    /// what makes a verdict citable rather than merely visible.
+    /// </summary>
+    [Fact]
+    public async Task TheFindingsAWriteProducedAreReadablePerVersion()
+    {
+        await ProposeBatchAsync("version-findings", Batch(("service", "api_version", "v1")));
+        var second = await ProposeBatchAsync("version-findings", Batch(("service", "api_version", "v2")));
+
+        var findings = await GetAsync(
+            "/v1/versions/version-findings/findings",
+            WireJson.Default.WireFindingList);
+        var blocked = Assert.Single(findings.Findings, stored => stored.Finding.Severity == WireSeverities.Block);
+
+        Assert.Equal("service.api_version", blocked.Finding.ClaimKey);
+        Assert.StartsWith("gate.", blocked.Finding.RuleId, StringComparison.Ordinal);
+        Assert.Contains("claim_key", blocked.Finding.Detail, StringComparison.Ordinal);
+
+        // The stamp is the position the write settled at in the version's own stream, which is the head that
+        // append returned. A facts read answers on the global feed instead, so the two positions are citable
+        // together through the version they belong to rather than by comparing them directly.
+        Assert.Equal(second.Head, blocked.Sequence);
+
+        var slice = await GetAsync("/v1/facts?version_id=version-findings", WireJson.Default.WireFactSlice);
+
+        Assert.Single(slice.Facts, fact => fact.Status == WireClaimStatus.Disputed);
+    }
+
+    [Fact]
+    public async Task TheFindingsReadSelectsBySeverityAndRule()
+    {
+        await ProposeBatchAsync("version-findings-filter", Batch(("service", "api_version", "v1")));
+        await ProposeBatchAsync("version-findings-filter", Batch(("service", "api_version", "v2")));
+
+        var warnings = await GetAsync(
+            "/v1/versions/version-findings-filter/findings?severity=warn",
+            WireJson.Default.WireFindingList);
+
+        Assert.DoesNotContain(warnings.Findings, stored => stored.Finding.Severity == WireSeverities.Block);
+
+        var gates = await GetAsync(
+            "/v1/versions/version-findings-filter/findings?rule_prefix=gate.",
+            WireJson.Default.WireFindingList);
+
+        Assert.NotEmpty(gates.Findings);
+        Assert.All(gates.Findings, stored => Assert.StartsWith("gate.", stored.Finding.RuleId, StringComparison.Ordinal));
+
+        var none = await GetAsync(
+            "/v1/versions/version-findings-filter/findings?rule_id=gate.no-such-rule",
+            WireJson.Default.WireFindingList);
+
+        Assert.Empty(none.Findings);
+    }
+
     private static string Vendor(string vendorId, string status = "approved") =>
         $$"""{"vendor_id":"{{vendorId}}","status":"{{status}}"}""";
 

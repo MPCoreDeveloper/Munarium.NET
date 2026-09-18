@@ -350,6 +350,15 @@ public sealed record WireClaimBatchOutcome(
     IReadOnlyList<WireFinding> Findings,
     long FindingsSequence);
 
+/// <summary>A finding as recorded, with the position its write settled at.</summary>
+/// <param name="Sequence">The position the write settled at.</param>
+/// <param name="Finding">The finding itself.</param>
+public sealed record WireStoredFinding(long Sequence, WireFinding Finding);
+
+/// <summary>The findings a version's writes produced, oldest first.</summary>
+/// <param name="Findings">The findings, oldest first.</param>
+public sealed record WireFindingList(IReadOnlyList<WireStoredFinding> Findings);
+
 public readonly union WireClaimResult(WireClaimOutcome, WireProblem);
 
 /// <summary>The result of creating a version: the version, or why it could not be created.</summary>

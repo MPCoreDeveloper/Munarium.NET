@@ -84,10 +84,15 @@ public sealed class MunariumKernel : IAsyncDisposable
         // claim-batch operation carries. It reads the same ledger through the same storage seam.
         var candidates = new CandidateLedger(storage, new MeshSnapshotBuilder(storage));
 
+        // Findings are read back out of the same stream the write path records them in, so the two cannot be out
+        // of step: there is no second table to disagree with.
+        var findings = new FindingsLedger(storage);
+
         var operations = new MunariumOperations(
             storage,
             claims,
             candidates,
+            findings,
             facts,
             shapes,
             retriever,

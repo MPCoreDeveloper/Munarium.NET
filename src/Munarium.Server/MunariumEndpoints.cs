@@ -129,6 +129,28 @@ public static class MunariumEndpoints
             });
 
         app.MapGet(
+            "/v1/versions/{version_id}/findings",
+            async (
+                [FromRoute(Name = "version_id")] string versionId,
+                [FromQuery(Name = "as_of")] long? asOf,
+                [FromQuery(Name = "severity")] string? severity,
+                [FromQuery(Name = "rule_id")] string? ruleId,
+                [FromQuery(Name = "rule_prefix")] string? rulePrefix,
+                [FromQuery(Name = "limit")] int? limit,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+                await operations
+                    .ListFindingsAsync(
+                        versionId,
+                        asOf ?? 0,
+                        severity,
+                        ruleId,
+                        rulePrefix,
+                        limit ?? 0,
+                        cancellationToken)
+                    .ConfigureAwait(false));
+
+        app.MapGet(
             "/v1/facts",
             async (
                 [FromQuery(Name = "as_of")] long? asOf,
