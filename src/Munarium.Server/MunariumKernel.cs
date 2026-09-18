@@ -54,6 +54,9 @@ public sealed class MunariumKernel : IAsyncDisposable
     private readonly ServiceProvider _provider;
     private readonly IDatabase _database;
     private readonly SharpCoreDbIndexHost _host;
+    private readonly IndexBuilder _builder;
+    private readonly IndexCatalog _catalogue;
+    private readonly FactLedger _facts;
 
     // Internal rather than public: a kernel is composed through Create, so a caller cannot build one
     // without the ledger, the shapes and the index host that make it work.
@@ -61,12 +64,18 @@ public sealed class MunariumKernel : IAsyncDisposable
         ServiceProvider provider,
         IDatabase database,
         SharpCoreDbIndexHost host,
+        IndexBuilder builder,
+        IndexCatalog catalogue,
+        FactLedger facts,
         MunariumOperations operations,
         ShapeRegistry shapes)
     {
         _provider = provider;
         _database = database;
         _host = host;
+        _builder = builder;
+        _catalogue = catalogue;
+        _facts = facts;
         Operations = operations;
         Shapes = shapes;
     }
@@ -176,7 +185,56 @@ public sealed class MunariumKernel : IAsyncDisposable
             catalogue,
             Tenant);
 
-        return new MunariumKernel(provider, database, host, operations, shapes);
+        return new MunariumKernel(provider, database, host, builder, catalogue, facts, operations, shapes);
+    }
+
+    /// <summary>
+    /// Rebuilds every live version this deployment has, and serves what it can.
+    /// </summary>
+    /// <remarks>
+    /// What a restart needs: the chunks of an index live in the process that built them, so a deployment that comes back
+    /// has the rows and the version records and no index. Each live version names the prefix it was built from, so the
+    /// rebuild reads the same corpus and mints the same identity - the same version, rebuilt - while a corpus that
+    /// changed in the meantime rebuilds into a version that includes the change, with the previous one still resolvable.
+    /// <para>
+    /// A version that cannot be rebuilt is reported rather than skipped: the deployment keeps serving whatever it was
+    /// serving, and the answer says which corpus could not come back. The report is cheap; a deployment that quietly
+    /// answered from an empty index would not be.
+    /// </para>
+    /// </remarks>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>One line per live version: the version that serves now, or why nothing does.</returns>
+    public async ValueTask<IReadOnlyList<IndexRecovery>> RecoverAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var live = await _catalogue.ListActiveAsync(Tenant, cancellationToken).ConfigureAwait(false);
+        var recovered = new List<IndexRecovery>(live.Count);
+
+        foreach (var version in live)
+        {
+            var outcome = await _builder
+                .BuildAsync(
+                    new IndexBuildPlan
+                    {
+                        Tenant = Tenant,
+                        CollectionId = version.CollectionId,
+                        CollectionName = version.Manifest.CollectionName,
+                        ShapeRef = version.ShapeRef,
+                        PathPrefix = version.PathPrefix,
+                        Watermark = await _facts.CurrentPinAsync(cancellationToken).ConfigureAwait(false),
+                        Activate = true,
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            recovered.Add(outcome switch
+            {
+                IndexVersion rebuilt => new IndexRecovery(version.CollectionId, rebuilt.Id, Refusal: null),
+                IndexBuildRefused refused => new IndexRecovery(version.CollectionId, version.Id, refused.Reason),
+            });
+        }
+
+        return recovered;
     }
 
     /// <inheritdoc />
@@ -187,3 +245,11 @@ public sealed class MunariumKernel : IAsyncDisposable
         await _provider.DisposeAsync().ConfigureAwait(false);
     }
 }
+
+/// <summary>
+/// What a deployment did with one live index version when it started.
+/// </summary>
+/// <param name="CollectionId">The collection whose version was rebuilt.</param>
+/// <param name="IndexVersionId">The version that serves now: the same one, or the new one the corpus rebuilt into.</param>
+/// <param name="Refusal">Why nothing serves, or <see langword="null"/> when the rebuild landed.</param>
+public sealed record IndexRecovery(string CollectionId, string IndexVersionId, string? Refusal);

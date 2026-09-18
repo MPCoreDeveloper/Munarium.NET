@@ -33,7 +33,7 @@ public sealed class SharpCoreDbIndexVersionStore(
 
     private const string Schema =
         "tenant TEXT, index_version_id TEXT, collection_id TEXT, shape_ref TEXT, watermark LONG, active LONG, "
-        + "activated_at TEXT, deactivated_at TEXT, manifest TEXT";
+        + "activated_at TEXT, deactivated_at TEXT, manifest TEXT, path_prefix TEXT";
 
     private readonly Lock _gate = new();
     private readonly IDatabase _database = database ?? throw new ArgumentNullException(nameof(database));
@@ -105,6 +105,29 @@ public sealed class SharpCoreDbIndexVersionStore(
                     .FirstOrDefault(version => version.Active
                         && string.Equals(version.Tenant, tenant, StringComparison.Ordinal)
                         && string.Equals(version.CollectionId, collectionId, StringComparison.Ordinal)));
+        }
+    }
+
+    /// <inheritdoc />
+    public ValueTask<IReadOnlyList<IndexVersion>> ListActiveAsync(
+        string tenant,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenant);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_gate)
+        {
+            IReadOnlyList<IndexVersion> live =
+            [
+                .. Table().Select()
+                    .Select(Map)
+                    .Where(version => version.Active
+                        && string.Equals(version.Tenant, tenant, StringComparison.Ordinal))
+                    .OrderBy(version => version.CollectionId, StringComparer.Ordinal),
+            ];
+
+            return ValueTask.FromResult(live);
         }
     }
 
@@ -202,6 +225,7 @@ public sealed class SharpCoreDbIndexVersionStore(
             ["activated_at"] = Stamp(version.ActivatedAt),
             ["deactivated_at"] = Stamp(version.DeactivatedAt),
             ["manifest"] = IndexManifestCodec.ToJson(version.Manifest),
+            ["path_prefix"] = version.PathPrefix ?? string.Empty,
         });
     }
 
@@ -218,6 +242,7 @@ public sealed class SharpCoreDbIndexVersionStore(
         Manifest = IndexManifestCodec.FromJson(
             SourceTables.StringValue(row, "manifest"),
             "stored index manifest"),
+        PathPrefix = SourceTables.StringValue(row, "path_prefix") is { Length: > 0 } prefix ? prefix : null,
     };
 
     private static string Stamp(DateTimeOffset? moment) =>

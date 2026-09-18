@@ -48,6 +48,21 @@ public interface IIndexVersionStore
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reads every live version a tenant has.
+    /// </summary>
+    /// <remarks>
+    /// What a deployment reads when it starts: the chunks of an index live in the process that built them, so a
+    /// restarted deployment has rows and no index, and the rows are what it rebuilds from. A store that could not answer
+    /// this would leave every deployment to guess which corpora it was serving.
+    /// </remarks>
+    /// <param name="tenant">The tenant.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The live versions, ordered by collection.</returns>
+    ValueTask<IReadOnlyList<IndexVersion>> ListActiveAsync(
+        string tenant,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Cuts a collection over to a version: exactly one version is active per collection.
     /// </summary>
     /// <remarks>

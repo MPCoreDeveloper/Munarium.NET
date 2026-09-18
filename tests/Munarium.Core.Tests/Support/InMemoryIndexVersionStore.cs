@@ -95,6 +95,27 @@ internal sealed class InMemoryIndexVersionStore(TimeProvider? time = null) : IIn
     }
 
     /// <inheritdoc />
+    public ValueTask<IReadOnlyList<IndexVersion>> ListActiveAsync(
+        string tenant,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_gate)
+        {
+            IReadOnlyList<IndexVersion> live =
+            [
+                .. _versions.Values
+                    .Where(version => version.Active
+                        && string.Equals(version.Tenant, tenant, StringComparison.Ordinal))
+                    .OrderBy(version => version.CollectionId, StringComparer.Ordinal),
+            ];
+
+            return ValueTask.FromResult(live);
+        }
+    }
+
+    /// <inheritdoc />
     public ValueTask<IndexVersion?> ActivateAsync(
         string tenant,
         string collectionId,

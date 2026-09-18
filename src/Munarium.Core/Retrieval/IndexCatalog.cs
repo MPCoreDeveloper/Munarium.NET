@@ -20,6 +20,15 @@ public sealed record IndexBuildRequest
     /// <summary>Gets the sources bound into the version, which the identity hashes.</summary>
     public required IReadOnlyList<IndexedSource> Sources { get; init; }
 
+    /// <summary>
+    /// Gets the path prefix the build bound, or <see langword="null"/> for every source the tenant has.
+    /// </summary>
+    /// <remarks>
+    /// Recorded on the version and not in the manifest: the manifest is identity material, and which sources a collection
+    /// binds is a decision that can change without the corpus changing.
+    /// </remarks>
+    public string? PathPrefix { get; init; }
+
     /// <summary>Gets the ledger position the build reflects.</summary>
     public required SequenceNumber Watermark { get; init; }
 
@@ -131,6 +140,7 @@ public sealed class IndexCatalog(IIndexVersionStore store)
                 ShapeRef = manifest.ShapeRef,
                 Manifest = manifest,
                 Watermark = request.Watermark,
+                PathPrefix = request.PathPrefix,
             },
             cancellationToken).ConfigureAwait(false);
 
@@ -176,6 +186,15 @@ public sealed class IndexCatalog(IIndexVersionStore store)
         string collectionId,
         CancellationToken cancellationToken = default) =>
         _store.ActiveAsync(tenant, collectionId, cancellationToken);
+
+    /// <summary>Reads every live version a tenant has.</summary>
+    /// <param name="tenant">The tenant.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The live versions.</returns>
+    public ValueTask<IReadOnlyList<IndexVersion>> ListActiveAsync(
+        string tenant,
+        CancellationToken cancellationToken = default) =>
+        _store.ListActiveAsync(tenant, cancellationToken);
 
     /// <summary>
     /// Resolves an answer's envelope back to its index version, and checks that the two agree.

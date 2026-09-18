@@ -119,6 +119,17 @@ public sealed record IndexVersion
     public required IndexManifest Manifest { get; init; }
 
     /// <summary>
+    /// Gets the path prefix the build bound, or <see langword="null"/> when it bound every source.
+    /// </summary>
+    /// <remarks>
+    /// Recorded so a deployment that restarted can rebuild the same corpus rather than guess at one: the prefix is what
+    /// makes the rows a rebuild reads the rows the version was built from. It is deliberately <em>not</em> identity
+    /// material - which sources a collection binds may change without the version changing, and two builds over the same
+    /// corpus are the same version even if a caller describes the binding differently.
+    /// </remarks>
+    public string? PathPrefix { get; init; }
+
+    /// <summary>
     /// Gets the ledger position the version reflects.
     /// </summary>
     /// <remarks>

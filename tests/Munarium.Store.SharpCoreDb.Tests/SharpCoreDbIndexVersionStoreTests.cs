@@ -145,6 +145,46 @@ public class SharpCoreDbIndexVersionStoreTests
         Assert.NotNull(live?.ActivatedAt);
     }
 
+    /// <summary>
+    /// The binding is recorded on the version, which is what lets a restarted deployment rebuild the same corpus: the
+    /// chunks are gone with the process, and the rows are what is left.
+    /// </summary>
+    [Fact]
+    public async Task TheBindingIsRecordedOnTheVersion()
+    {
+        await using var fixture = SourceStoreFixture.Create();
+
+        var bound = await fixture.IndexVersions.RegisterAsync(Version("idx-bound", 1) with { PathPrefix = "docs/" });
+        var everything = await fixture.IndexVersions.RegisterAsync(
+            Version("idx-all", 1) with { CollectionId = "col-all", PathPrefix = null });
+
+        Assert.Equal("docs/", bound.PathPrefix);
+        Assert.Equal("docs/", (await fixture.IndexVersions.GetAsync("acme", "idx-bound"))?.PathPrefix);
+        Assert.Null(everything.PathPrefix);
+        Assert.Null((await fixture.IndexVersions.GetAsync("acme", "idx-all"))?.PathPrefix);
+    }
+
+    [Fact]
+    public async Task OnlyTheLiveVersionsAreListed()
+    {
+        await using var fixture = SourceStoreFixture.Create();
+        await fixture.IndexVersions.RegisterAsync(Version("idx-one", 1));
+        await fixture.IndexVersions.RegisterAsync(Version("idx-two", 2));
+        await fixture.IndexVersions.RegisterAsync(Version("idx-three", 3) with { CollectionId = "col-other" });
+        await fixture.IndexVersions.RegisterAsync(Version("idx-nobody", 4) with { CollectionId = "col-quiet" });
+
+        await fixture.IndexVersions.ActivateAsync("acme", "col-docs", "idx-one");
+        await fixture.IndexVersions.ActivateAsync("acme", "col-docs", "idx-two");
+        await fixture.IndexVersions.ActivateAsync("acme", "col-other", "idx-three");
+
+        var live = await fixture.IndexVersions.ListActiveAsync("acme");
+
+        Assert.Equal(["col-docs", "col-other"], live.Select(version => version.CollectionId));
+        Assert.Equal(["idx-two", "idx-three"], live.Select(version => version.Id));
+        Assert.Equal("docs/", live[0].PathPrefix);
+        Assert.Empty(await fixture.IndexVersions.ListActiveAsync("other"));
+    }
+
     private static IndexVersion Version(string id, long watermark) => new()
     {
         Id = id,
@@ -152,6 +192,7 @@ public class SharpCoreDbIndexVersionStoreTests
         CollectionId = "col-docs",
         ShapeRef = "vendor@1",
         Watermark = new SequenceNumber(watermark),
+        PathPrefix = "docs/",
         Manifest = new IndexManifest
         {
             CollectionId = "col-docs",

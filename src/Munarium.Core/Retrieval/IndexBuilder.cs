@@ -137,6 +137,7 @@ public sealed class IndexBuilder(
                     Sources = bound,
                     Watermark = plan.Watermark,
                     Activate = plan.Activate,
+                    PathPrefix = plan.PathPrefix,
                 },
                 cancellationToken)
             .ConfigureAwait(false);

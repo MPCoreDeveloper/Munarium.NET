@@ -35,6 +35,14 @@ builder.Services.AddSingleton(kernel);
 builder.Services.AddSingleton(kernel.Operations);
 builder.Services.AddSingleton<MunariumGrpcService>();
 
+// The index lives in the process, so a restarted deployment has rows and no index: rebuild every live version before
+// the first question arrives, and say out loud which corpus could not come back rather than answering that it is empty.
+foreach (var recovery in (await kernel.RecoverAsync()).Where(recovery => recovery.Refusal is not null))
+{
+    await Console.Error.WriteLineAsync(
+        $"index version for collection '{recovery.CollectionId}' could not be rebuilt: {recovery.Refusal}");
+}
+
 var app = builder.Build();
 
 app.MapMunarium();
