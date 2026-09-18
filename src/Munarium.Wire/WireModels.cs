@@ -895,6 +895,17 @@ public sealed record WireEvidenceCommit(string EvidenceId, string State, bool Co
 /// <param name="State">The state it is in now, which is purged either way.</param>
 public sealed record WireEvidencePurge(string EvidenceId, bool Purged, string State);
 
+/// <summary>The bytes of an artifact, on their way up.</summary>
+/// <param name="BytesBase64">
+/// The bytes, base64. Base64 rather than the octet stream the original takes, because this port's surfaces are JSON by
+/// design and the canonical form includes Parquet, which is not text.
+/// </param>
+public sealed record WireEvidenceBytesUpload(string BytesBase64);
+
+/// <summary>Whether an artifact is held.</summary>
+/// <param name="Hold">Whether to place the hold, or lift it.</param>
+public sealed record WireEvidenceLegalHold(bool Hold);
+
 /// <summary>The result of a seal: the artifact as recorded, or why nothing was.</summary>
 public readonly union WireSealResult(WireSealResponse, WireProblem);
 

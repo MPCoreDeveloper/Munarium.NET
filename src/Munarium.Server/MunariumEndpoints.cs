@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
+using Munarium.Evidence;
 using Munarium.Wire;
 
 /// <summary>
@@ -511,6 +512,221 @@ public static class MunariumEndpoints
         app.MapGet("/v1/shapes", (MunariumOperations operations) => operations.ListShapes());
 
 
+        app.MapPost(
+            "/v1/evidence",
+            async (
+                WireSealEvidenceRequest request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .SealEvidenceAsync(request, Principal(), cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireSealResponse sealed_ => TypedResults.Json(sealed_, WireJson.Default.WireSealResponse),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapPut(
+            "/v1/evidence/{evidence_id}/bytes",
+            async (
+                [FromRoute(Name = "evidence_id")] string evidenceId,
+                [FromQuery(Name = "grant")] string grant,
+                WireEvidenceBytesUpload request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                // An empty grant is refused by the store as an unusable one, so a caller that forgets the query parameter
+                // is told the grant is invalid rather than that its bytes were fine.
+                if (!TryDecode(request.BytesBase64, out var bytes))
+                {
+                    return TypedResults.Json(
+                        Invalid("bytes_base64 is not valid base64."),
+                        WireJson.Default.WireProblem,
+                        statusCode: 400);
+                }
+
+                var refusal = await operations
+                    .PutEvidenceBytesAsync(Principal(), evidenceId, grant ?? string.Empty, bytes, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = refusal is null
+                    ? TypedResults.NoContent()
+                    : TypedResults.Json(refusal, WireJson.Default.WireProblem, statusCode: refusal.Status);
+
+                return answer;
+            });
+
+        app.MapPost(
+            "/v1/evidence/{evidence_id}/commit",
+            async (
+                [FromRoute(Name = "evidence_id")] string evidenceId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .CommitEvidenceAsync(Principal(), evidenceId, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireEvidenceCommit committed => TypedResults.Json(
+                        committed, WireJson.Default.WireEvidenceCommit),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet(
+            "/v1/evidence/{evidence_id}",
+            async (
+                [FromRoute(Name = "evidence_id")] string evidenceId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .ReadEvidenceManifestAsync(Principal(), evidenceId, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    EvidenceManifest manifest => TypedResults.Json(manifest, WireJson.Default.EvidenceManifest),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet(
+            "/v1/evidence/{evidence_id}/rows",
+            async (
+                [FromRoute(Name = "evidence_id")] string evidenceId,
+                [FromQuery(Name = "from")] long? from,
+                [FromQuery(Name = "limit")] long? limit,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .ReadEvidenceRowsAsync(Principal(), evidenceId, from ?? 0, limit ?? 0, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireEvidenceRows rows => TypedResults.Json(rows, WireJson.Default.WireEvidenceRows),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet(
+            "/v1/evidence/{evidence_id}/accesses",
+            async (
+                [FromRoute(Name = "evidence_id")] string evidenceId,
+                [FromQuery(Name = "limit")] long? limit,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .ReadEvidenceAccessesAsync(MunariumKernel.Tenant, evidenceId, limit ?? 0, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireEvidenceAccessList accesses => TypedResults.Json(
+                        accesses, WireJson.Default.WireEvidenceAccessList),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapDelete(
+            "/v1/evidence/{evidence_id}",
+            async (
+                [FromRoute(Name = "evidence_id")] string evidenceId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .PurgeEvidenceAsync(MunariumKernel.Tenant, evidenceId, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireEvidencePurge purged => TypedResults.Json(purged, WireJson.Default.WireEvidencePurge),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapPost(
+            "/v1/evidence/{evidence_id}/legal-hold",
+            async (
+                [FromRoute(Name = "evidence_id")] string evidenceId,
+                WireEvidenceLegalHold request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var refusal = await operations
+                    .SetEvidenceLegalHoldAsync(MunariumKernel.Tenant, evidenceId, request.Hold, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = refusal is null
+                    ? TypedResults.NoContent()
+                    : TypedResults.Json(refusal, WireJson.Default.WireProblem, statusCode: refusal.Status);
+
+                return answer;
+            });
+
         return app;
     }
+
+    /// <summary>
+    /// The principal every request is served as, until authorization exists.
+    /// </summary>
+    /// <remarks>
+    /// The original does the same thing with authorization switched off: every caller is one unrestricted principal that
+    /// dominates everything, which is a deployment property rather than a caller's claim. It is one method rather than a
+    /// decision repeated in eight handlers, so the day authorization lands there is one place to read a token.
+    /// </remarks>
+    private static EvidencePrincipal Principal() => EvidencePrincipal.ForDeployment(MunariumKernel.Tenant);
+
+    /// <summary>Decodes the base64 a JSON surface carries bytes in.</summary>
+    private static bool TryDecode(string? base64, out byte[] bytes)
+    {
+        bytes = [];
+
+        if (string.IsNullOrEmpty(base64))
+        {
+            return false;
+        }
+
+        var buffer = new byte[base64.Length];
+
+        if (!Convert.TryFromBase64String(base64, buffer, out var written))
+        {
+            return false;
+        }
+
+        bytes = buffer[..written];
+
+        return true;
+    }
+
+    private static WireProblem Invalid(string detail) =>
+        new(MunariumOperations.InvalidRequestProblem, detail, Status: 400, ExpectedHead: 0, ActualHead: 0);
 }

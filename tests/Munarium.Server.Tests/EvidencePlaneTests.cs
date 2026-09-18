@@ -3,6 +3,7 @@ namespace Munarium.Server.Tests;
 using System.Text;
 using Munarium.Evidence;
 using Munarium.Wire;
+using static Munarium.Server.Tests.EvidenceFixture;
 
 /// <summary>
 /// Tests for the sealed evidence plane as it behaves, which is what both transports are adapters over: what a caller may
@@ -16,7 +17,7 @@ public class EvidencePlaneTests
         await using var kernel = Kernel();
         var operations = kernel.Operations;
         var principal = EvidencePrincipal.ForDeployment(MunariumKernel.Tenant);
-        var (manifest, bytes) = Sealed();
+        var (manifest, bytes) = Artifact();
 
         var seal = Sealed(await operations.SealEvidenceAsync(
             new WireSealEvidenceRequest(manifest, Convert.ToBase64String(bytes)), principal));
@@ -64,11 +65,11 @@ public class EvidencePlaneTests
         var operations = kernel.Operations;
         var principal = EvidencePrincipal.ForDeployment(MunariumKernel.Tenant);
 
-        var (manifest, bytes) = Sealed();
+        var (manifest, bytes) = Artifact();
         var first = Sealed(await operations.SealEvidenceAsync(
             new WireSealEvidenceRequest(manifest, Convert.ToBase64String(bytes)), principal));
 
-        var (same, sameBytes) = Sealed();
+        var (same, sameBytes) = Artifact();
         var second = Sealed(await operations.SealEvidenceAsync(
             new WireSealEvidenceRequest(same, Convert.ToBase64String(sameBytes)), principal));
 
@@ -84,7 +85,7 @@ public class EvidencePlaneTests
         await using var kernel = Kernel();
         var operations = kernel.Operations;
         var principal = EvidencePrincipal.ForDeployment(MunariumKernel.Tenant);
-        var (manifest, _) = Sealed();
+        var (manifest, _) = Artifact();
 
         var refusal = Problem(await operations.SealEvidenceAsync(
             new WireSealEvidenceRequest(manifest, Convert.ToBase64String(Encoding.UTF8.GetBytes("v-9,denied\n"))),
@@ -103,7 +104,7 @@ public class EvidencePlaneTests
         await using var kernel = Kernel();
         var operations = kernel.Operations;
         var principal = EvidencePrincipal.ForDeployment(MunariumKernel.Tenant);
-        var (manifest, bytes) = Sealed();
+        var (manifest, bytes) = Artifact();
 
         var seal = Sealed(await operations.SealEvidenceAsync(new WireSealEvidenceRequest(manifest), principal));
 
@@ -151,7 +152,7 @@ public class EvidencePlaneTests
         await using var kernel = Kernel();
         var operations = kernel.Operations;
         var principal = EvidencePrincipal.ForDeployment(MunariumKernel.Tenant);
-        var (manifest, bytes) = Sealed();
+        var (manifest, bytes) = Artifact();
 
         var seal = Sealed(await operations.SealEvidenceAsync(new WireSealEvidenceRequest(manifest), principal));
         var grant = seal.Grant ?? throw new InvalidOperationException("a seal with no bytes has to issue a grant.");
@@ -193,7 +194,7 @@ public class EvidencePlaneTests
         await using var kernel = Kernel();
         var operations = kernel.Operations;
         var principal = EvidencePrincipal.ForDeployment(MunariumKernel.Tenant);
-        var (manifest, bytes) = Sealed();
+        var (manifest, bytes) = Artifact();
 
         var seal = Sealed(await operations.SealEvidenceAsync(
             new WireSealEvidenceRequest(manifest, Convert.ToBase64String(bytes)), principal));
@@ -227,7 +228,7 @@ public class EvidencePlaneTests
         await using var kernel = Kernel();
         var operations = kernel.Operations;
         var principal = EvidencePrincipal.ForDeployment(MunariumKernel.Tenant);
-        var (manifest, bytes) = Sealed();
+        var (manifest, bytes) = Artifact();
 
         var seal = Sealed(await operations.SealEvidenceAsync(
             new WireSealEvidenceRequest(manifest, Convert.ToBase64String(bytes)), principal));
@@ -263,7 +264,7 @@ public class EvidencePlaneTests
         await using var kernel = Kernel();
         var operations = kernel.Operations;
         var principal = EvidencePrincipal.ForDeployment(MunariumKernel.Tenant);
-        var (manifest, bytes) = Sealed();
+        var (manifest, bytes) = Artifact();
 
         var seal = Sealed(await operations.SealEvidenceAsync(
             new WireSealEvidenceRequest(manifest, Convert.ToBase64String(bytes)), principal));
@@ -294,7 +295,7 @@ public class EvidencePlaneTests
 
         await using (var first = MunariumKernel.Create(path, "munarium-evidence", shapes))
         {
-            var (manifest, bytes) = Sealed();
+            var (manifest, bytes) = Artifact();
 
             evidenceId = Sealed(await first.Operations.SealEvidenceAsync(
                 new WireSealEvidenceRequest(manifest, Convert.ToBase64String(bytes)), principal)).EvidenceId;
@@ -320,38 +321,6 @@ public class EvidencePlaneTests
             Path.Combine(Path.GetTempPath(), $"Munarium_{Guid.NewGuid():N}"),
             "munarium-evidence",
             MunariumShapeBundles.Load(MunariumApiFactory.ShapesDirectory));
-
-    /// <summary>A contract-valid manifest and the canonical bytes it describes: a header and one row.</summary>
-    private static (EvidenceManifest Manifest, byte[] Bytes) Sealed()
-    {
-        var bytes = Encoding.UTF8.GetBytes("vendor_id,status\nv-1,approved\n");
-
-        var manifest = new EvidenceManifest
-        {
-            ContractVersion = EvidenceContract.Version,
-            Canon = EvidenceContract.Canon,
-            Tenant = MunariumKernel.Tenant,
-            Kind = EvidenceKind.Table,
-            LogicalResultHash = ArtifactContent.Hash("logical:vendor-status"),
-            ArtifactHash = ArtifactContent.Hash(bytes),
-            BytesLength = bytes.Length,
-            MediaType = EvidenceContract.MediaTypeCsv,
-            Source = new SourceRef("src-1", 3, "postgres"),
-            Versions = new Versions { Policy = "policy-1" },
-            Schema = new EvidenceSchema(
-            [
-                new EvidenceColumn { Id = "col-1", Name = "vendor_id", Type = ColumnType.Text, Key = true },
-                new EvidenceColumn { Id = "col-2", Name = "status", Type = ColumnType.Text },
-            ]),
-            Identity = new EvidenceIdentity(RowIdRule.Keys),
-            Completeness = new Completeness { Truncated = false },
-            SnapshotVector = [new SnapshotMarker { SourceId = "src-1", ReplayLevel = "source_time_travel" }],
-            Execution = new Execution { StartedAt = "2026-09-17T00:00:00Z", EndedAt = "2026-09-17T00:00:01Z" },
-            AuthorizationClass = new AuthorizationClass { AccessLevel = 3 },
-        };
-
-        return (manifest, bytes);
-    }
 
     private static WireSealResponse Sealed(WireSealResult outcome) => outcome switch
     {

@@ -3,6 +3,7 @@ namespace Munarium.Evidence;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Serialization;
 
 /// <summary>
 /// The manifest: everything needed to prove what an answer was computed from, decide who may read it, and say
@@ -48,6 +49,12 @@ public sealed record EvidenceManifest : IVerifiableArtifact
     public required string ArtifactHash { get; init; }
 
     /// <summary>Gets how many bytes the artifact holds.</summary>
+    /// <remarks>
+    /// The wire name is attributed rather than derived, because the contract abbreviates it: a snake-cased property would
+    /// put <c>bytes_length</c> on the wire, and the manifest's own JSON schema on disk is the record every other
+    /// implementation of this contract reads.
+    /// </remarks>
+    [JsonPropertyName("bytes_len")]
     public required long BytesLength { get; init; }
 
     /// <summary>Gets the media type of the bytes.</summary>

@@ -67,6 +67,8 @@ using Munarium.Evidence;
 [JsonSerializable(typeof(WireEvidenceRows))]
 [JsonSerializable(typeof(WireEvidenceCommit))]
 [JsonSerializable(typeof(WireEvidencePurge))]
+[JsonSerializable(typeof(WireEvidenceBytesUpload))]
+[JsonSerializable(typeof(WireEvidenceLegalHold))]
 [JsonSerializable(typeof(EvidenceManifest))]
 [JsonSerializable(typeof(WireIndexVersion))]
 [JsonSerializable(typeof(WireIndexBuild))]
