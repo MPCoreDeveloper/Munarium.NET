@@ -3,12 +3,13 @@ namespace Munarium.Store.SharpCoreDb;
 using System.Globalization;
 
 /// <summary>
-/// What the two source tables have in common: how they are named and how their rows are read.
+/// What every table in this package has in common: how a name is spelled, how a value is read back, and which column a
+/// predicate may be built over.
 /// </summary>
 /// <remarks>
-/// Two tables rather than one, because bytes and rows change at different rates - bytes are written once and read
-/// often, a row is rewritten on every ingest - but one way of doing it, because two ways of getting a value wrong would
-/// be one way too many.
+/// The adapters keep tables of quite different shapes - source bytes, source rows, index versions, idempotency keys, and
+/// the evidence plane's artifacts, grants and accesses - but how a value goes in and comes back out must not differ
+/// between them, because two ways of getting a value wrong would be one way too many.
 /// <para>
 /// Rows go in and come out through the engine's table API rather than through SQL text, and the values are faithful
 /// either way: measured on 2.1.0-RC.3, a document at <c>docs/o'brien.txt</c> is stored with its apostrophe intact. What
@@ -24,7 +25,7 @@ using System.Globalization;
 /// tables' own derive-and-replace behaviour already relies on.
 /// </para>
 /// </remarks>
-internal static class SourceTables
+internal static class TableValues
 {
     /// <summary>Validates a table name, which is the one part of a statement that cannot be a parameter.</summary>
     /// <param name="tableName">The table name.</param>

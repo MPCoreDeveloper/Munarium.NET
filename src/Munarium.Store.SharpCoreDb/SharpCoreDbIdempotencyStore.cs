@@ -30,7 +30,7 @@ public sealed class SharpCoreDbIdempotencyStore(
 
     private readonly Lock _gate = new();
     private readonly IDatabase _database = database ?? throw new ArgumentNullException(nameof(database));
-    private readonly string _tableName = SourceTables.ValidateTableName(tableName);
+    private readonly string _tableName = TableValues.ValidateTableName(tableName);
 
     /// <inheritdoc />
     public ValueTask<string?> FindAsync(
@@ -50,13 +50,13 @@ public sealed class SharpCoreDbIdempotencyStore(
             // the tenant and the scope are caller-supplied text - which a predicate cannot compare (measured). Those two
             // are compared after the read, on the few rows a key can name.
             var rows = Table()
-                .Select(SourceTables.Identity("key", key))
-                .Where(row => string.Equals(SourceTables.StringValue(row, "tenant"), tenant, StringComparison.Ordinal))
-                .Where(row => string.Equals(SourceTables.StringValue(row, "scope"), scope, StringComparison.Ordinal))
+                .Select(TableValues.Identity("key", key))
+                .Where(row => string.Equals(TableValues.StringValue(row, "tenant"), tenant, StringComparison.Ordinal))
+                .Where(row => string.Equals(TableValues.StringValue(row, "scope"), scope, StringComparison.Ordinal))
                 .ToList();
 
             return ValueTask.FromResult(
-                rows.Count == 0 ? null : SourceTables.StringValue(rows[0], "payload"));
+                rows.Count == 0 ? null : TableValues.StringValue(rows[0], "payload"));
         }
     }
 

@@ -37,7 +37,7 @@ public sealed class SharpCoreDbIndexVersionStore(
 
     private readonly Lock _gate = new();
     private readonly IDatabase _database = database ?? throw new ArgumentNullException(nameof(database));
-    private readonly string _tableName = SourceTables.ValidateTableName(tableName);
+    private readonly string _tableName = TableValues.ValidateTableName(tableName);
 
     /// <inheritdoc />
     public ValueTask<IndexVersion> RegisterAsync(
@@ -170,7 +170,7 @@ public sealed class SharpCoreDbIndexVersionStore(
 
         lock (_gate)
         {
-            var found = Table().Select(SourceTables.Identity(issuer, value))
+            var found = Table().Select(TableValues.Identity(issuer, value))
                 .Select(Map)
                 .FirstOrDefault(matches);
 
@@ -233,13 +233,13 @@ public sealed class SharpCoreDbIndexVersionStore(
                 && string.Equals(version.CollectionId, collectionId, StringComparison.Ordinal));
 
     private static IndexVersion? Read(ITable table, string tenant, string indexVersionId) =>
-        table.Select(SourceTables.Identity("index_version_id", indexVersionId))
+        table.Select(TableValues.Identity("index_version_id", indexVersionId))
             .Select(Map)
             .FirstOrDefault(version => string.Equals(version.Tenant, tenant, StringComparison.Ordinal));
 
     private static void Write(ITable table, IndexVersion version)
     {
-        table.Delete(SourceTables.Identity("index_version_id", version.Id));
+        table.Delete(TableValues.Identity("index_version_id", version.Id));
         table.Insert(new Dictionary<string, object>
         {
             ["tenant"] = version.Tenant,
@@ -257,18 +257,18 @@ public sealed class SharpCoreDbIndexVersionStore(
 
     private static IndexVersion Map(Dictionary<string, object> row) => new()
     {
-        Id = SourceTables.StringValue(row, "index_version_id"),
-        Tenant = SourceTables.StringValue(row, "tenant"),
-        CollectionId = SourceTables.StringValue(row, "collection_id"),
-        ShapeRef = SourceTables.StringValue(row, "shape_ref"),
-        Watermark = new SequenceNumber(SourceTables.LongValue(row, "watermark")),
-        Active = SourceTables.LongValue(row, "active") != 0,
-        ActivatedAt = Moment(SourceTables.StringValue(row, "activated_at")),
-        DeactivatedAt = Moment(SourceTables.StringValue(row, "deactivated_at")),
+        Id = TableValues.StringValue(row, "index_version_id"),
+        Tenant = TableValues.StringValue(row, "tenant"),
+        CollectionId = TableValues.StringValue(row, "collection_id"),
+        ShapeRef = TableValues.StringValue(row, "shape_ref"),
+        Watermark = new SequenceNumber(TableValues.LongValue(row, "watermark")),
+        Active = TableValues.LongValue(row, "active") != 0,
+        ActivatedAt = Moment(TableValues.StringValue(row, "activated_at")),
+        DeactivatedAt = Moment(TableValues.StringValue(row, "deactivated_at")),
         Manifest = IndexManifestCodec.FromJson(
-            SourceTables.StringValue(row, "manifest"),
+            TableValues.StringValue(row, "manifest"),
             "stored index manifest"),
-        PathPrefix = SourceTables.StringValue(row, "path_prefix") is { Length: > 0 } prefix ? prefix : null,
+        PathPrefix = TableValues.StringValue(row, "path_prefix") is { Length: > 0 } prefix ? prefix : null,
     };
 
     private static string Stamp(DateTimeOffset? moment) =>

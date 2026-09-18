@@ -39,7 +39,7 @@ public sealed class SharpCoreDbSourceRegistry(
 
     private readonly Lock _gate = new();
     private readonly IDatabase _database = database ?? throw new ArgumentNullException(nameof(database));
-    private readonly string _tableName = SourceTables.ValidateTableName(tableName);
+    private readonly string _tableName = TableValues.ValidateTableName(tableName);
 
     /// <inheritdoc />
     public ValueTask<SourceRecord> RecordAsync(
@@ -60,7 +60,7 @@ public sealed class SharpCoreDbSourceRegistry(
 
             // A path is a source's identity, so this is an upsert rather than an append: re-ingesting a path is a new
             // version of one source, and a row left behind would be a source that exists twice.
-            table.Delete(SourceTables.Identity("source_id", stamped.SourceId));
+            table.Delete(TableValues.Identity("source_id", stamped.SourceId));
             table.Insert(new Dictionary<string, object>
             {
                 ["tenant"] = stamped.Tenant,
@@ -151,7 +151,7 @@ public sealed class SharpCoreDbSourceRegistry(
 
         lock (_gate)
         {
-            var rows = Table().Select(SourceTables.Identity("source_id", sourceId));
+            var rows = Table().Select(TableValues.Identity("source_id", sourceId));
 
             if (rows.Count == 0)
             {
@@ -166,15 +166,15 @@ public sealed class SharpCoreDbSourceRegistry(
 
     private static SourceRecord Map(Dictionary<string, object> row) => new()
     {
-        Tenant = SourceTables.StringValue(row, "tenant"),
-        SourceId = SourceTables.StringValue(row, "source_id"),
-        Path = SourceTables.StringValue(row, "path"),
-        ContentHash = SourceTables.StringValue(row, "content_hash"),
-        MediaType = SourceTables.StringValue(row, "media_type"),
-        BytesLength = SourceTables.LongValue(row, "bytes_length"),
-        BlobUri = SourceTables.StringValue(row, "blob_uri"),
-        BackendId = SourceTables.StringValue(row, "backend_id"),
-        IngestedAt = SourceTables.StringValue(row, "ingested_at") is { Length: > 0 } stamp ? stamp : null,
+        Tenant = TableValues.StringValue(row, "tenant"),
+        SourceId = TableValues.StringValue(row, "source_id"),
+        Path = TableValues.StringValue(row, "path"),
+        ContentHash = TableValues.StringValue(row, "content_hash"),
+        MediaType = TableValues.StringValue(row, "media_type"),
+        BytesLength = TableValues.LongValue(row, "bytes_length"),
+        BlobUri = TableValues.StringValue(row, "blob_uri"),
+        BackendId = TableValues.StringValue(row, "backend_id"),
+        IngestedAt = TableValues.StringValue(row, "ingested_at") is { Length: > 0 } stamp ? stamp : null,
     };
 
     private ITable Table()

@@ -32,7 +32,7 @@ public sealed class SharpCoreDbSourceStore(
 
     private readonly Lock _gate = new();
     private readonly IDatabase _database = database ?? throw new ArgumentNullException(nameof(database));
-    private readonly string _tableName = SourceTables.ValidateTableName(tableName);
+    private readonly string _tableName = TableValues.ValidateTableName(tableName);
 
     /// <inheritdoc />
     public string BackendId => "sharpcoredb";
@@ -54,7 +54,7 @@ public sealed class SharpCoreDbSourceStore(
 
             // Replace rather than append: one source holds one document's bytes, and a re-put is a new version of that
             // document rather than a second document.
-            table.Delete(SourceTables.Identity("blob_id", key.SourceId));
+            table.Delete(TableValues.Identity("blob_id", key.SourceId));
             table.Insert(new Dictionary<string, object>
             {
                 ["blob_id"] = key.SourceId,
@@ -78,14 +78,14 @@ public sealed class SharpCoreDbSourceStore(
 
         lock (_gate)
         {
-            var rows = Table().Select(SourceTables.Identity("blob_id", key.SourceId));
+            var rows = Table().Select(TableValues.Identity("blob_id", key.SourceId));
 
             // An absent blob reads as no bytes rather than as a failure: whether it exists is a different question,
             // which ExistsAsync answers.
             return ValueTask.FromResult(
                 rows.Count == 0
                     ? []
-                    : Convert.FromBase64String(SourceTables.StringValue(rows[0], "content_base64")));
+                    : Convert.FromBase64String(TableValues.StringValue(rows[0], "content_base64")));
         }
     }
 
@@ -97,7 +97,7 @@ public sealed class SharpCoreDbSourceStore(
 
         lock (_gate)
         {
-            return ValueTask.FromResult(Table().Select(SourceTables.Identity("blob_id", key.SourceId)).Count > 0);
+            return ValueTask.FromResult(Table().Select(TableValues.Identity("blob_id", key.SourceId)).Count > 0);
         }
     }
 
@@ -109,7 +109,7 @@ public sealed class SharpCoreDbSourceStore(
 
         lock (_gate)
         {
-            Table().Delete(SourceTables.Identity("blob_id", key.SourceId));
+            Table().Delete(TableValues.Identity("blob_id", key.SourceId));
             Persist();
         }
 
