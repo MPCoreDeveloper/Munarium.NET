@@ -10,16 +10,18 @@ using System.Globalization;
 /// often, a row is rewritten on every ingest - but one way of doing it, because two ways of getting a value wrong would
 /// be one way too many.
 /// <para>
-/// They are written through the engine's table API rather than through SQL text, which is a decision made from
-/// measurement rather than taste: a value containing a quote does not survive the SQL literal parser, so a document at
-/// <c>docs/o'brien.txt</c> would be stored as <c>docs/obrien.txt</c> - a citation pointing at a document that does not
-/// exist. Rows go in as rows, and the only predicates ever built are over identities, which are derived hashes and
-/// therefore contain nothing that needs quoting.
+/// Rows go in and come out through the engine's table API rather than through SQL text, and the values are faithful
+/// either way: measured on 2.1.0-RC.3, a document at <c>docs/o'brien.txt</c> is stored with its apostrophe intact. What
+/// does <em>not</em> work is <em>comparing</em> caller-supplied text: a predicate over such a value - a literal or a
+/// bound parameter, both measured - matches nothing, so a lookup by path would answer "no such document" for bytes that
+/// are there. The predicates these tables build are therefore over identities alone (derived hashes and ULIDs, which
+/// carry nothing that needs quoting), and everything else is filtered after the read.
 /// </para>
 /// <para>
-/// The consequence is that everything else is filtered after the rows are read: a caller-supplied path can carry a
-/// quote, a percent sign or anything else, and a row that is <em>found</em> has to be the row that was <em>written</em>.
-/// At this port's scale - one tenant's sources, read as a set - that is the honest trade.
+/// No table here declares a <c>PRIMARY KEY</c>. Measured: a table with one accepted its first insert and then refused
+/// every later, distinct key with "Primary key violation", so a declared key is a way to lose rows rather than a way to
+/// address them. Identity is a column the adapter writes, and uniqueness is the adapter's own rule - which is what the
+/// tables' own derive-and-replace behaviour already relies on.
 /// </para>
 /// </remarks>
 internal static class SourceTables

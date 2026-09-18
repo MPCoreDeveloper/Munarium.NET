@@ -14,8 +14,8 @@ using SharpCoreDB.Interfaces;
 /// <para>
 /// The stored identity is the source id - a hash of tenant and path - while the path itself is carried alongside as
 /// <c>blob_name</c> so an operator can see which document a blob is. That split is what makes a path with a quote in it
-/// work: the value is written as a row rather than as SQL text, and the only predicate ever built is over the hash,
-/// which contains nothing that needs quoting.
+/// findable: the value is stored faithfully either way, but a predicate over caller-supplied text does not match it, so
+/// the only predicate ever built is over the hash.
 /// </para>
 /// </remarks>
 /// <param name="database">The database the bytes live in.</param>

@@ -38,8 +38,8 @@ public class SharpCoreDbSourceStoreTests
     }
 
     /// <summary>
-    /// A path is caller-supplied, so it is the one value that can carry a quote - and a quote that is not escaped is
-    /// how a document ends up somewhere else, or how the statement stops being the statement that was meant.
+    /// A path is caller-supplied, so it is the one value whose bytes can be anything at all - and a document has to be
+    /// found by the path it was stored under rather than reported missing while its bytes sit there.
     /// </summary>
     [Fact]
     public async Task APathWithAQuoteSurvives()
@@ -103,10 +103,11 @@ public class SharpCoreDbSourceStoreTests
 
     /// <summary>
     /// The bytes outlive the connection that wrote them: a deployment that restarts has to find its documents where it
-    /// left them, or every citation it ever issued points at nothing.
+    /// left them, or every citation it ever issued points at nothing. It also has to be able to <em>write</em> after
+    /// coming back, which is what a rebuild into a restarted process does.
     /// </summary>
     [Fact]
-    public async Task TheBytesAreStillThereAfterTheDatabaseIsReopened()
+    public async Task TheBytesOutliveTheConnectionThatWroteThemAndItCanStillWrite()
     {
         var fixture = SourceStoreFixture.Create();
         var key = SourceKey.New("acme", "docs/note.txt", "sha256:x");
@@ -117,6 +118,13 @@ public class SharpCoreDbSourceStoreTests
 
         await using var reopened = SourceStoreFixture.Create(path);
 
+        Assert.Equal(Bytes, await reopened.Store.GetAsync(key));
+
+        var added = "A document written after the restart."u8.ToArray();
+
+        await reopened.Store.PutAsync(SourceKey.New("acme", "docs/added.txt", "sha256:y"), "text/plain", added);
+
+        Assert.Equal(added, await reopened.Store.GetAsync(SourceKey.New("acme", "docs/added.txt", "sha256:y")));
         Assert.Equal(Bytes, await reopened.Store.GetAsync(key));
     }
 }

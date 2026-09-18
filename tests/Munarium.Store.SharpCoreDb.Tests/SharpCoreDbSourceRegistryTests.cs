@@ -63,8 +63,9 @@ public class SharpCoreDbSourceRegistryTests
     }
 
     /// <summary>
-    /// A prefix is filtered here rather than in SQL, because a path may contain '%' - and a LIKE that treated it as a
-    /// wildcard would hand a collection documents outside the prefix it bound.
+    /// A prefix is filtered here rather than in SQL, because measured, LIKE treats '%' in the pattern as a wildcard - in
+    /// a literal and in a bound parameter alike - and a wildcard would hand a collection documents outside the prefix it
+    /// bound.
     /// </summary>
     [Fact]
     public async Task APrefixContainingAWildcardCharacterMatchesOnlyItself()

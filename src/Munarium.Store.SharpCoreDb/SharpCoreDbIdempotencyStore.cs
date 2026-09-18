@@ -47,8 +47,8 @@ public sealed class SharpCoreDbIdempotencyStore(
         lock (_gate)
         {
             // The predicate is on the key alone, because a key is a ULID and carries nothing that needs quoting, while
-            // the tenant and the scope are caller-supplied text the engine's parser mishandles. Those two are compared
-            // after the read, on the few rows a key can name.
+            // the tenant and the scope are caller-supplied text - which a predicate cannot compare (measured). Those two
+            // are compared after the read, on the few rows a key can name.
             var rows = Table()
                 .Select(SourceTables.Identity("key", key))
                 .Where(row => string.Equals(SourceTables.StringValue(row, "tenant"), tenant, StringComparison.Ordinal))

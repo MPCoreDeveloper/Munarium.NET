@@ -52,7 +52,8 @@ public class SharpCoreDbIdempotencyStoreTests
     }
 
     /// <summary>
-    /// The answers outlive the connection that wrote them, or a retry after a restart would be done a second time.
+    /// The answers outlive the connection that wrote them, or a retry after a restart would be done a second time - and a
+    /// restarted deployment has to be able to record new ones.
     /// </summary>
     [Fact]
     public async Task TheAnswersOutliveTheConnectionThatWroteThem()
@@ -65,6 +66,13 @@ public class SharpCoreDbIdempotencyStoreTests
 
         await using var reopened = SourceStoreFixture.Create(path);
 
+        Assert.Equal("first", await reopened.Idempotency.FindAsync("acme", "claims/v1", Key));
+
+        var later = LedgerIds.New();
+
+        await reopened.Idempotency.RecordAsync("acme", "claims/v1", later, "later");
+
+        Assert.Equal("later", await reopened.Idempotency.FindAsync("acme", "claims/v1", later));
         Assert.Equal("first", await reopened.Idempotency.FindAsync("acme", "claims/v1", Key));
     }
 }

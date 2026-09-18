@@ -19,9 +19,9 @@ using SharpCoreDB.Interfaces;
 /// </para>
 /// <para>
 /// Rows are written through the engine's table API and read back the same way, with the tenant and the path prefix
-/// applied after the read. A caller-supplied path is a value and not a predicate: building a predicate out of it is how
-/// a path with a quote in it stops matching itself, and a source that cannot be found by the path it was stored under is
-/// a citation that leads nowhere.
+/// applied after the read. A caller-supplied path is a value and not a predicate: measured, a predicate over one - a
+/// literal or a bound parameter - matches nothing, so a source looked up by its path would be reported missing while its
+/// bytes sit there.
 /// </para>
 /// </remarks>
 /// <param name="database">The database the rows live in.</param>
@@ -123,6 +123,10 @@ public sealed class SharpCoreDbSourceRegistry(
 
         lock (_gate)
         {
+            // The tenant and the prefix are applied here rather than in SQL: a predicate cannot compare caller-supplied
+            // text (measured), and LIKE treats '%' in the pattern as a wildcard in a literal and in a bound parameter
+            // alike, so 'docs/budget%' would answer with documents a collection never bound. A tenant's rows are read as
+            // a set; that is the price of a predicate that cannot over-match.
             IReadOnlyList<SourceRecord> records =
             [
                 .. Table().Select()
