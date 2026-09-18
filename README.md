@@ -138,10 +138,13 @@ in the order it is planned:
   plane-qualified source refuses when nothing is bound to it, a required layer's refusal stops the turn, and
   composition honours both the profile budget and the whole-or-nothing rule — all against test doubles. What is
   missing is the server side: providers bound to the real planes (a semantic data view, the fact ledger, sealed
-  artifacts), an `IEvidenceStore` adapter, the research profiles a runbook declares, progress on the wire, and
-  the per-turn hierarchy decision persisted where an operator can read it.
-- **Index versions are built and persisted; nothing on the wire triggers a build yet.** The catalogue, the derived
-  identity, the cutover rules and the envelope resolution are in the kernel and tested, the manifests are stored in a
+  artifacts), routes for the artifacts themselves, the research profiles a runbook declares, progress on the wire,
+  and the per-turn hierarchy decision persisted where an operator can read it. The artifact's *store* is no longer
+  among the missing: `SharpCoreDbEvidenceStore` keeps the manifests in a table of their own, together with the
+  single-use grants, the pending/committed/purged lifecycle, the legal holds and the record of who resolved what, so
+  the routes have something to be written against.
+- **Index versions are built, served and listed; the index itself lives in the process that built it.** The catalogue,
+  the derived identity, the cutover rules and the envelope resolution are in the kernel and tested, the manifests are stored in a
   table of their own (retrieval bookkeeping is deliberately not ledger data), and `IndexBuilder` reads the sources a
   collection binds, cuts and embeds them into a **new** instance nobody is answering from - so a rebuild happens while
   the live version keeps serving, and the host keeps the built instance so activating it is a cutover rather than a
