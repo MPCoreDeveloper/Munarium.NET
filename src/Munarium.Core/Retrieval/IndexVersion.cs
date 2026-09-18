@@ -48,6 +48,17 @@ public sealed record IndexManifest
     /// <summary>Gets the contract shape the corpus was mapped through.</summary>
     public required string ShapeRef { get; init; }
 
+    /// <summary>
+    /// Gets the retrieval engine that built the vectors, as a versioned reference.
+    /// </summary>
+    /// <remarks>
+    /// Identity material, and the one piece the original did not need because it had a single engine. Two engines
+    /// over one corpus return different answers, so an approximate index must never be able to claim it is the
+    /// exact one - and the reference is versioned because a change to the graph's build is a change to the answers,
+    /// exactly like a chunker or an extractor.
+    /// </remarks>
+    public required string Engine { get; init; }
+
     /// <summary>Gets the chunker's version.</summary>
     public required string Chunker { get; init; }
 

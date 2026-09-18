@@ -15,6 +15,7 @@
     <PackageReference Include="SharpCoreDB" />
     <PackageReference Include="SharpCoreDB.EventSourcing" />
     <PackageReference Include="SharpCoreDB.VectorSearch" />
+    <PackageReference Include="SharpCoreDB.Search" />
   </ItemGroup>
 
   <ItemGroup>

@@ -116,6 +116,7 @@ public sealed class IndexCatalog(IIndexVersionStore store)
         var id = IndexVersionIds.Of(
             manifest.CollectionId,
             manifest.ShapeRef,
+            manifest.Engine,
             manifest.Chunker,
             manifest.Extractors,
             manifest.Embedder,

@@ -1,27 +1,35 @@
 namespace Munarium.Store.SharpCoreDb;
 
-using System.Text;
 using Munarium.Ledger;
 using Munarium.Retrieval;
+using SharpCoreDB.Search.Lexical;
 using SharpCoreDB.VectorSearch;
+using SharpCoreDB.VectorSearch.Index;
 
 /// <summary>
-/// A retrieval backend over SharpCoreDB's vector index, fused with a lexical leg by RRF.
+/// A retrieval backend over SharpCoreDB's indexes: a BM25 lexical leg and a vector leg, fused by rank.
 /// </summary>
 /// <remarks>
-/// The vector leg is SharpCoreDB's <see cref="IVectorIndex"/>; the lexical leg is a deterministic
-/// term-overlap ranker. RRF is what keeps those two comparable, because a vector distance and a
-/// term count do not share a scale.
+/// The vector leg is SharpCoreDB's <see cref="IVectorIndex"/> - exact by default, or a DiskANN graph when the
+/// caller selects it - and the lexical leg is SharpCoreDB's <see cref="FullTextIndex"/>, which is Okapi BM25 over
+/// an inverted index with positions, so a phrase in the query can be preferred to the same terms scattered.
+/// Fusion is by reciprocal rank, because a BM25 score and a cosine distance do not share a scale and adding them
+/// would be arithmetic on units that do not exist.
 /// <para>
-/// The catalogue is append-only by design. Correcting or re-chunking a document builds a new index
-/// version rather than mutating this one, which is what lets an envelope issued yesterday still be
-/// verified today.
+/// Fusion is this port's own rather than the engine's: the answer and its envelope are produced together here, so
+/// the ranking that decided the answer is the ranking the envelope records, and opaque chunk ids stay opaque - the
+/// engine's fusion hands a chunk id back as a number.
+/// </para>
+/// <para>
+/// The catalogue is append-only by design. Correcting or re-chunking a document builds a new index version rather
+/// than mutating this one, which is what lets an envelope issued yesterday still be verified today.
 /// </para>
 /// </remarks>
 public sealed class SharpCoreDbRetriever : IRetrievalBackend, IDisposable
 {
     private readonly Lock _gate = new();
     private readonly List<IndexedChunk> _catalogue = [];
+    private readonly FullTextIndex _lexical = new();
     private readonly IVectorIndex _index;
 
     /// <summary>
@@ -30,16 +38,32 @@ public sealed class SharpCoreDbRetriever : IRetrievalBackend, IDisposable
     /// <param name="dimensions">The embedding width every indexed chunk and query must match.</param>
     /// <param name="indexVersion">The immutable index version this retriever answers from.</param>
     /// <param name="ledgerWatermark">The ledger position the index reflects.</param>
-    public SharpCoreDbRetriever(int dimensions, string indexVersion, SequenceNumber ledgerWatermark)
+    /// <param name="kind">The vector engine to build the index with.</param>
+    public SharpCoreDbRetriever(
+        int dimensions,
+        string indexVersion,
+        SequenceNumber ledgerWatermark,
+        VectorIndexKind kind = VectorIndexKind.Exact)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(dimensions);
         ArgumentException.ThrowIfNullOrWhiteSpace(indexVersion);
 
-        // Exact search. HNSW is the drop-in once a corpus outgrows brute force; the seam does not change.
-        _index = new FlatIndex(dimensions);
+        Kind = kind;
+        _index = kind switch
+        {
+            VectorIndexKind.Exact => new FlatIndex(dimensions),
+            _ => new DiskAnnIndex(DiskAnnConfig.Default(dimensions)),
+        };
+
         IndexVersion = indexVersion;
         LedgerWatermark = ledgerWatermark;
     }
+
+    /// <summary>Gets the vector engine this index version was built by.</summary>
+    public VectorIndexKind Kind { get; }
+
+    /// <summary>Gets the versioned reference a manifest records for that engine.</summary>
+    public string Engine => VectorIndexEngines.Of(Kind);
 
     /// <summary>Gets the index version this retriever answers from.</summary>
     public string IndexVersion { get; }
@@ -72,8 +96,9 @@ public sealed class SharpCoreDbRetriever : IRetrievalBackend, IDisposable
         lock (_gate)
         {
             var id = _catalogue.Count;
-            _catalogue.Add(new IndexedChunk(source, text, Tokenize(text)));
+            _catalogue.Add(new IndexedChunk(source, text));
             _index.Add(id, embedding);
+            _lexical.Add(id, text);
         }
     }
 
@@ -87,7 +112,9 @@ public sealed class SharpCoreDbRetriever : IRetrievalBackend, IDisposable
 
         lock (_gate)
         {
-            var candidates = query.TopK > 0 ? query.TopK * 2 : 0;
+            // A leg is asked for at least one candidate, because a leg asked for none cannot be asked at all. What
+            // the caller receives is still decided by TopK, which the fusion applies afterwards.
+            var candidates = Math.Max(query.TopK, 1) * 2;
             var legs = new List<IReadOnlyList<RetrievedChunk>>(2);
 
             if (!query.Embedding.IsEmpty)
@@ -127,64 +154,28 @@ public sealed class SharpCoreDbRetriever : IRetrievalBackend, IDisposable
         return ranked;
     }
 
+    // BM25 through the engine's own analyzer, so a query and a document agree on what a term is: the classifying
+    // tokenizer, the English stop-word list and the word-only stemmer all live there rather than being re-guessed
+    // here. Positions are stored, which is what makes the phrase boost possible.
     private IReadOnlyList<RetrievedChunk> LexicalLeg(string text, int k)
     {
-        var terms = Tokenize(text);
-        if (terms.Count == 0)
+        if (string.IsNullOrWhiteSpace(text))
         {
             return [];
         }
 
-        var scored = new List<(IndexedChunk Chunk, int Hits)>();
+        var hits = _lexical.Search(text, k);
+        var ranked = new List<RetrievedChunk>(hits.Count);
 
-        foreach (var chunk in _catalogue)
+        foreach (var hit in hits)
         {
-            var hits = terms.Count(chunk.Terms.Contains);
-
-            if (hits > 0)
-            {
-                scored.Add((chunk, hits));
-            }
+            // RRF only reads the order, so the BM25 score travels through as the score.
+            var chunk = _catalogue[(int)hit.Id];
+            ranked.Add(new RetrievedChunk(chunk.Source, hit.Score, chunk.Text));
         }
 
-        return
-        [
-            .. scored
-                .OrderByDescending(entry => entry.Hits)
-                .ThenBy(entry => entry.Chunk.Source.ChunkId, StringComparer.Ordinal)
-                .Take(k)
-                .Select(entry => new RetrievedChunk(entry.Chunk.Source, entry.Hits, entry.Chunk.Text)),
-        ];
+        return ranked;
     }
 
-    private static HashSet<string> Tokenize(string text)
-    {
-        var terms = new HashSet<string>(StringComparer.Ordinal);
-        var token = new StringBuilder();
-
-        foreach (var character in text)
-        {
-            if (char.IsLetterOrDigit(character))
-            {
-                token.Append(char.ToLowerInvariant(character));
-                continue;
-            }
-
-            Flush(terms, token);
-        }
-
-        Flush(terms, token);
-        return terms;
-    }
-
-    private static void Flush(HashSet<string> terms, StringBuilder token)
-    {
-        if (token.Length > 0)
-        {
-            terms.Add(token.ToString());
-            token.Clear();
-        }
-    }
-
-    private sealed record IndexedChunk(SourceReference Source, string Text, HashSet<string> Terms);
+    private sealed record IndexedChunk(SourceReference Source, string Text);
 }

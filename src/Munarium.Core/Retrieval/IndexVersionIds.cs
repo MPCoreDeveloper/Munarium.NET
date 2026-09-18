@@ -30,6 +30,7 @@ public static class IndexVersionIds
     /// </summary>
     /// <param name="collectionId">The collection the version indexes.</param>
     /// <param name="shapeRef">The contract shape the corpus was mapped through.</param>
+    /// <param name="engine">The retrieval engine that built the vectors, as a versioned reference.</param>
     /// <param name="chunker">The chunker's version.</param>
     /// <param name="extractors">The extractors' version.</param>
     /// <param name="embedder">The embedder that produced the vectors.</param>
@@ -39,6 +40,7 @@ public static class IndexVersionIds
     public static string Of(
         string collectionId,
         string shapeRef,
+        string engine,
         string chunker,
         string extractors,
         EmbedderRef embedder,
@@ -46,6 +48,7 @@ public static class IndexVersionIds
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(collectionId);
         ArgumentException.ThrowIfNullOrWhiteSpace(shapeRef);
+        ArgumentException.ThrowIfNullOrWhiteSpace(engine);
         ArgumentException.ThrowIfNullOrWhiteSpace(chunker);
         ArgumentException.ThrowIfNullOrWhiteSpace(extractors);
         ArgumentNullException.ThrowIfNull(embedder);
@@ -60,6 +63,7 @@ public static class IndexVersionIds
             Unit,
             collectionId,
             shapeRef,
+            engine,
             chunker,
             embedder.Fingerprint,
             extractors,

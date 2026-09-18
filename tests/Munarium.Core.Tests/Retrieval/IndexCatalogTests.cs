@@ -194,6 +194,7 @@ public class IndexCatalogTests
                 CollectionId = collectionId,
                 CollectionName = "Contracts",
                 ShapeRef = "document@1",
+                Engine = "flat@1",
                 Chunker = "chunk@1",
                 Extractors = "extract@1",
                 Embedder = new EmbedderRef("local", "local-hash@1", 256),
