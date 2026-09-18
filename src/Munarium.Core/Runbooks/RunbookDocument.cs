@@ -21,6 +21,18 @@ public sealed record RunbookMeta
 /// </remarks>
 public sealed record RunbookDocument
 {
+    /// <summary>Gets the document's API version, which the reader checks nothing about beyond carrying it.</summary>
+    public string? ApiVersion { get; init; }
+
+    /// <summary>
+    /// Gets the document's kind, which has to be <c>Runbook</c>.
+    /// </summary>
+    /// <remarks>
+    /// The kind exists so a document handed to the wrong reader is refused rather than half-understood: a shape or a
+    /// provider configuration has the same YAML shape and no meaning here.
+    /// </remarks>
+    public string? Kind { get; init; }
+
     /// <summary>Gets the identity.</summary>
     public required RunbookMeta Metadata { get; init; }
 

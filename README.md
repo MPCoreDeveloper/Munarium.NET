@@ -147,10 +147,15 @@ in the order it is planned:
   a protobuf map cannot. Two of the three planes behind the hierarchy are bound too: the ledger's own facts and a
   semantic data view over REST, with a circuit breaker, refusals instead of errors, and a parser tested against the
   contract's own examples. The profiles those planes are declared in are ported as well — the declarations, their
-  validation, and the resolution of a profile into a plan. What is still missing: the runbook document itself (its YAML
-  also carries sources, retrieval, fusion, models and steps, and only the profile and data-view half is ported), sealed
-  artifacts as a source, progress on the wire, and the per-turn hierarchy decision persisted where an operator can read
-  it.
+  validation, and the resolution of a profile into a plan. The runbook a deployment applies is readable too: the YAML is
+  mapped field by field onto the document (sources, collections with their bindings, retrieval and fusion, data views
+  with their typed parameters, model defaults per task level, completion and verification, execution order and steps),
+  and the rules that would otherwise fire mid-turn are refused at **load** — a document with no steps, one that declares
+  both a shape and collections or neither, a semantic data view with no `intent` task, a `cutover.approval` typo, a
+  `keep_versions` above the ceiling, and any profile the research rules reject. The original's own worked example is the
+  conformance fixture, byte for byte. What is still missing: `validate_runbook` (the findings an operator reads *before*
+  applying, as opposed to the refusals), sealed artifacts as a source, progress on the wire, and the per-turn hierarchy
+  decision persisted where an operator can read it.
 - **Index versions are built, served and listed; the index itself lives in the process that built it.** The catalogue,
   the derived identity, the cutover rules and the envelope resolution are in the kernel and tested, the manifests are stored in a
   table of their own (retrieval bookkeeping is deliberately not ledger data), and `IndexBuilder` reads the sources a

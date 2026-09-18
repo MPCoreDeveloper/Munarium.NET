@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Munarium.Runbooks</RootNamespace>
+    <AssemblyName>Munarium.Runbooks</AssemblyName>
+    <PackageId>Munarium.Runbooks</PackageId>
+    <Description>Reading and checking a Munarium runbook: the YAML an operator applies, mapped onto the document the kernel and the evidence hierarchy read.</Description>
+    <PackageTags>munarium;runbooks;yaml;documents</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Munarium.Core\Munarium.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+
+</Project>

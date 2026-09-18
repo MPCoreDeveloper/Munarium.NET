@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Munarium.Core/Munarium.Core.csproj" />
     <Project Path="src/Munarium.Providers/Munarium.Providers.csproj" />
+    <Project Path="src/Munarium.Runbooks/Munarium.Runbooks.csproj" />
     <Project Path="src/Munarium.Store.SharpCoreDb/Munarium.Store.SharpCoreDb.csproj" />
     <Project Path="src/Munarium.Wire/Munarium.Wire.csproj" />
     <Project Path="src/Munarium.Server/Munarium.Server.csproj" />
@@ -9,6 +10,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Munarium.Core.Tests/Munarium.Core.Tests.csproj" />
     <Project Path="tests/Munarium.Providers.Tests/Munarium.Providers.Tests.csproj" />
+    <Project Path="tests/Munarium.Runbooks.Tests/Munarium.Runbooks.Tests.csproj" />
     <Project Path="tests/Munarium.Server.Tests/Munarium.Server.Tests.csproj" />
     <Project Path="tests/Munarium.Store.SharpCoreDb.Tests/Munarium.Store.SharpCoreDb.Tests.csproj" />
   </Folder>

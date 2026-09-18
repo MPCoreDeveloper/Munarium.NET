@@ -24,6 +24,15 @@
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
   </ItemGroup>
 
+  <ItemGroup Label="Documents">
+    <!--
+      A runbook is authored YAML. The reader uses YamlDotNet's representation model and maps
+      nodes by hand, exactly as the JSON codecs do, so nothing about a document depends on
+      reflection and the mapping stays readable against the original's.
+    -->
+    <PackageVersion Include="YamlDotNet" Version="16.3.0" />
+  </ItemGroup>
+
   <!--
     MPCoreDeveloper stack. The whole SharpCoreDB set ships as net11.0 RC builds at 2.1.0-RC.3, so the
     referencing projects are net11.0-only too (see Directory.Build.props). Versions are the ones
