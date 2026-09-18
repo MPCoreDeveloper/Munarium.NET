@@ -522,6 +522,20 @@ public sealed record WireEntity(
     long Sequence,
     string MergedInto);
 
+/// <summary>A whole-document total, as a writer reports it.</summary>
+/// <param name="Key">The pattern the counter counts.</param>
+/// <param name="Total">The total as it stands, absolute rather than a delta.</param>
+/// <param name="Budget">The ceiling the writer is working under, or 0 for none.</param>
+public sealed record WireCounterRecording(string Key, long Total, long Budget);
+
+/// <summary>The counters at a pin, and the directives that follow from them.</summary>
+/// <param name="Counters">The counters at the pin.</param>
+/// <param name="Directives">One line per budgeted counter, or empty when none has a budget.</param>
+public sealed record WireCounterList(IReadOnlyList<WireCounter> Counters, string Directives);
+
+/// <summary>The result of recording a counter: the counter as recorded, or why it was not.</summary>
+public readonly union WireCounterResult(WireCounter, WireProblem);
+
 /// <summary>A lock as the caller asks for it: the detail key is derived from subject and key.</summary>
 /// <param name="Subject">The thing whose detail is locked.</param>
 /// <param name="Key">The property of the subject.</param>

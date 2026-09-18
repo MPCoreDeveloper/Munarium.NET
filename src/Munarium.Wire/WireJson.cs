@@ -40,6 +40,8 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(WirePromiseFulfilment))]
 [JsonSerializable(typeof(WireAnchorList))]
 [JsonSerializable(typeof(WirePromiseList))]
+[JsonSerializable(typeof(WireCounterRecording))]
+[JsonSerializable(typeof(WireCounterList))]
 [JsonSerializable(typeof(WireProblem))]
 [JsonSerializable(typeof(WireFact))]
 [JsonSerializable(typeof(WireFactSlice))]

@@ -150,15 +150,17 @@ in the order it is planned:
   corpus is what a host put in the index rather than something the deployment ingested and can rebuild on demand.
   The source identity, the path rules and the `ISourceStore` seam are in place; the ingest surface, the source
   metadata row and the extractors that turn DOCX or PDF into the text a chunker cuts are the ingest slice.
-- **The keyed planes are readable and two of them are authorable; counters and entities are not yet.** Every plane
-  a snapshot carries is served: `GET /v1/snapshots` answers with one pin across all of them - facts
-  resolved-current, the digest ladder rebuilt from them, the scope filter and fact limit applied after resolution,
-  and the keyed planes as they stood at that position, plus the instant derived from the snapshot's own identities
-  rather than from a clock. Anchors and promises have their own routes too: `POST/GET /v1/versions/{id}/anchors`,
-  `POST .../anchors/{detail_key}/release`, `POST/GET /v1/versions/{id}/promises` - with the promise check's overdue
-  findings computed over the full pinned slice before any filter narrows it - and `POST .../promises/{key}/fulfill`.
-  What is missing is the rest of the authoring side: nothing on the wire records a counter or an entity, and no
-  route ingests a document.
+- **Three of the four keyed planes are authorable; entities and ingest are not.** Every plane a snapshot carries is
+  served: `GET /v1/snapshots` answers with one pin across all of them - facts resolved-current, the digest ladder
+  rebuilt from them, the scope filter and fact limit applied after resolution, and the keyed planes as they stood at
+  that position, plus the instant derived from the snapshot's own identities rather than from a clock. Anchors,
+  promises and counters have their own routes: `POST/GET /v1/versions/{id}/anchors` with
+  `POST .../anchors/{detail_key}/release`, `POST/GET /v1/versions/{id}/promises` - the promise check's overdue
+  findings computed over the full pinned slice before any filter narrows it - with
+  `POST .../promises/{key}/fulfill`, and `POST/GET /v1/versions/{id}/counters`, where the read answers with the
+  directives a writer would be given rather than only the totals. What is missing: nothing on the wire records an
+  entity (upstream resolves entities through a model capability this port has not ported, so writing them would be
+  raw plumbing), and no route ingests a document.
 - **Idempotency keys.** The original requires an `idempotency-key` metadata entry on every command RPC and
   replays the stored result. Here a retry writes a second claim; the `ledger-conflict` gate treats a
   re-sent claim as a retry only when nothing about it changed, which is an approximation and is written

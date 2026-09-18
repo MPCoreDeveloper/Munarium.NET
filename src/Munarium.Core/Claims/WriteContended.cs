@@ -42,6 +42,15 @@ public readonly union PromiseOutcome(Promise, WriteContended);
 /// </summary>
 public readonly union FulfilOutcome(Promise, PromiseNotOpen, WriteContended);
 
+/// <summary>
+/// The outcome of recording a counter: the total as recorded, or the race that stopped it.
+/// </summary>
+/// <remarks>
+/// There is no "nothing to record" case: a counter is a number about the text, and zero is a number. A pattern used
+/// no times is a fact worth keeping, which is why the wire counts in int64 and the plane has no absent state.
+/// </remarks>
+public readonly union CounterOutcome(CounterTotal, WriteContended);
+
 /// <summary>A fulfilment that found nothing open.</summary>
 /// <remarks>
 /// Upstream answers this as <c>fulfilled: false</c>, which is the same statement in a smaller vocabulary: the

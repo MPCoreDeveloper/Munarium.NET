@@ -327,6 +327,26 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
             Assert.True(fulfilled.Data.Fulfilled);
         });
 
+    /// <summary>A counter and its directives travel over gRPC as they do over JSON.</summary>
+    [Fact]
+    public async Task ACounterTravelsOverGrpc() =>
+        await WithClient(async client =>
+        {
+            var recorded = await client.RecordCounterAsync(new RecordCounterRequest
+            {
+                VersionId = "grpc-counter",
+                Body = new CounterRecording { Key = "the bell", Total = 7, Budget = 6 },
+            });
+
+            Assert.Equal(7, recorded.Data.Total);
+            Assert.True(recorded.Data.OverBudget);
+
+            var counters = await client.ListCountersAsync(new ListCountersRequest { VersionId = "grpc-counter" });
+
+            Assert.Equal(7, Assert.Single(counters.Data.Counters).Total);
+            Assert.Contains("AVOID: 'the bell'", counters.Data.Directives, StringComparison.Ordinal);
+        });
+
     /// <summary>The same batch a JSON caller would send, built for the gRPC surface.</summary>
     private static ClaimBatchRequest Batch(params (string Subject, string Key, string Value)[] claims)
     {

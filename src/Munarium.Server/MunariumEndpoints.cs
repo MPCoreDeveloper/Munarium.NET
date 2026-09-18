@@ -260,6 +260,37 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+        app.MapPost(
+            "/v1/versions/{version_id}/counters",
+            async (
+                [FromRoute(Name = "version_id")] string versionId,
+                WireCounterRecording request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.RecordCounterAsync(versionId, request, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireCounter counter => TypedResults.Json(counter, WireJson.Default.WireCounter),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet(
+            "/v1/versions/{version_id}/counters",
+            async (
+                [FromRoute(Name = "version_id")] string versionId,
+                [FromQuery(Name = "as_of")] long? asOf,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+                await operations
+                    .ListCountersAsync(versionId, asOf ?? 0, cancellationToken)
+                    .ConfigureAwait(false));
+
         app.MapGet(
             "/v1/snapshots",
             async (

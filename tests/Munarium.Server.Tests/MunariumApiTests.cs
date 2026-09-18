@@ -703,6 +703,69 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Single(filtered.Findings);
     }
 
+    /// <summary>
+    /// A counter is an absolute total, and the answer tells the writer where it stands rather than only that it
+    /// overspent - which is the point of keeping a count at all.
+    /// </summary>
+    [Fact]
+    public async Task ACounterIsRecordedAndItsDirectivesTellAWriterWhereItStands()
+    {
+        using var first = await _client.PostAsJsonAsync(
+            "/v1/versions/version-counter/counters",
+            new WireCounterRecording("the bell", 4, 6),
+            WireJson.Default.WireCounterRecording);
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+
+        var recorded = (await first.Content.ReadFromJsonAsync(WireJson.Default.WireCounter))!;
+
+        Assert.Equal(4, recorded.Total);
+        Assert.Equal(6, recorded.Budget);
+        Assert.False(recorded.OverBudget);
+
+        // Recording again replaces the total rather than adding to it: the total is absolute.
+        using var second = await _client.PostAsJsonAsync(
+            "/v1/versions/version-counter/counters",
+            new WireCounterRecording("the bell", 7, 6),
+            WireJson.Default.WireCounterRecording);
+
+        var over = (await second.Content.ReadFromJsonAsync(WireJson.Default.WireCounter))!;
+
+        Assert.True(over.OverBudget);
+
+        var counters = await GetAsync("/v1/versions/version-counter/counters", WireJson.Default.WireCounterList);
+
+        Assert.Equal(7, Assert.Single(counters.Counters).Total);
+        Assert.Contains("the bell: used 7/6", counters.Directives, StringComparison.Ordinal);
+        Assert.Contains("AVOID: 'the bell'", counters.Directives, StringComparison.Ordinal);
+    }
+
+    /// <summary>The contract counts in int64 and the plane in ulong, so a negative count is refused rather than wrapped.</summary>
+    [Fact]
+    public async Task ACountThatCannotBeUnderstoodIsRefused()
+    {
+        using var negative = await _client.PostAsJsonAsync(
+            "/v1/versions/version-counter-invalid/counters",
+            new WireCounterRecording("the bell", -3, 0),
+            WireJson.Default.WireCounterRecording);
+
+        Assert.Equal(HttpStatusCode.BadRequest, negative.StatusCode);
+
+        using var unnamed = await _client.PostAsJsonAsync(
+            "/v1/versions/version-counter-invalid/counters",
+            new WireCounterRecording(string.Empty, 3, 0),
+            WireJson.Default.WireCounterRecording);
+
+        Assert.Equal(HttpStatusCode.BadRequest, unnamed.StatusCode);
+
+        var counters = await GetAsync(
+            "/v1/versions/version-counter-invalid/counters",
+            WireJson.Default.WireCounterList);
+
+        Assert.Empty(counters.Counters);
+        Assert.Empty(counters.Directives);
+    }
+
     private static string Vendor(string vendorId, string status = "approved") =>
         $$"""{"vendor_id":"{{vendorId}}","status":"{{status}}"}""";
 

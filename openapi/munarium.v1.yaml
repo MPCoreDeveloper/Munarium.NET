@@ -554,6 +554,85 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/versions/{version_id}/counters:
+    post:
+      operationId: RecordCounter
+      tags: [command]
+      summary: Record a whole-document total for a counter.
+      description: |
+        A counter is an absolute total about the whole document rather than a delta, so recording one is an upsert: a
+        reader must not have to sum a stream to know how often a pattern was used, because a budget checked against a
+        sum changes meaning when an event is lost. A writer that records a lower total is therefore correcting the
+        count - and the plane cannot tell a correction from an evasion, because a counter never sees the text it
+        counts.
+
+        The answer carries the total and whether it is over its budget, because the point of keeping a count is to
+        tell the writer where it stands and not only that it overspent.
+
+        No scope is recorded: the original sums per-scope counts into a key, which is the model this contract
+        deliberately does not use.
+      parameters:
+        - name: version_id
+          in: path
+          required: true
+          description: The version the count belongs to.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CounterRecording"
+      responses:
+        "200":
+          description: The counter as recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Counter"
+        "400":
+          description: The request is missing a key, or counts something negative.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: Every retry lost to a moving head. Retryable, never data loss.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    get:
+      operationId: ListCounters
+      tags: [query]
+      summary: The counters at a pin, with the directives a writer would be given.
+      description: |
+        A budget the writer is not told about is only a way to fail it, so the directives travel with the totals: one
+        usage line per budgeted counter, and an instruction not to use a pattern whose budget is exhausted. A counter
+        with no budget has no line, because there is nothing to tell a writer about it.
+      parameters:
+        - name: version_id
+          in: path
+          required: true
+          description: The version whose counters are read.
+          schema:
+            type: string
+        - name: as_of
+          in: query
+          required: false
+          description: The position to read as of, or 0 for the present.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: The counters, and the directives that follow from them.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CounterList"
+
   /v1/snapshots:
     get:
       operationId: LoadSnapshot
@@ -891,6 +970,40 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Entity"
+
+    CounterRecording:
+      type: object
+      description: A whole-document total, as a writer reports it.
+      required: [key, total]
+      properties:
+        key:
+          type: string
+          description: The pattern the counter counts.
+        total:
+          type: integer
+          format: int64
+          description: |-
+            The total as it stands, absolute rather than a delta: the number of times the pattern occurs in the
+            document, not how many more times it occurred since the last record.
+        budget:
+          type: integer
+          format: int64
+          description: The ceiling the writer is working under, or 0 for none.
+
+    CounterList:
+      type: object
+      required: [counters]
+      properties:
+        counters:
+          type: array
+          description: The counters at the pin.
+          items:
+            $ref: "#/components/schemas/Counter"
+        directives:
+          type: string
+          description: |-
+            One line per budgeted counter, and an instruction for one whose budget is exhausted; empty when no
+            counter has a budget. A budget the writer is not told about is only a way to fail it.
 
     AnchorLock:
       type: object

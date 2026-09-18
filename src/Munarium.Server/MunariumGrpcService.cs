@@ -249,6 +249,47 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
     }
 
     /// <inheritdoc />
+    public override async Task<RecordCounterResponse> RecordCounterAsync(
+        RecordCounterRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .RecordCounterAsync(
+                request.VersionId,
+                new WireCounterRecording(
+                    request.Body?.Key ?? string.Empty,
+                    request.Body?.Total ?? 0,
+                    request.Body?.Budget ?? 0),
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireCounter counter => new RecordCounterResponse { Data = ToMessage(counter) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ListCountersResponse> ListCountersAsync(
+        ListCountersRequest request,
+        ServerCallContext context)
+    {
+        var counters = await _operations
+            .ListCountersAsync(request.VersionId, request.AsOf, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var message = new CounterList { Directives = counters.Directives };
+
+        foreach (var counter in counters.Counters)
+        {
+            message.Counters.Add(ToMessage(counter));
+        }
+
+        return new ListCountersResponse { Data = message };
+    }
+
+    /// <inheritdoc />
     public override async Task<LoadSnapshotResponse> LoadSnapshotAsync(
         LoadSnapshotRequest request,
         ServerCallContext context)

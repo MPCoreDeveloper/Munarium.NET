@@ -3,6 +3,7 @@ namespace Munarium.Server;
 using Microsoft.Extensions.DependencyInjection;
 using Munarium.Claims;
 using Munarium.Context;
+using Munarium.Counters;
 using Munarium.Facts;
 using Munarium.Governance;
 using Munarium.Ledger;
@@ -99,6 +100,10 @@ public sealed class MunariumKernel : IAsyncDisposable
         var anchors = new AnchorLedger(storage, snapshots);
         var promises = new PromiseLedger(storage, snapshots);
 
+        // A counter needs no pre-state: it is an absolute total and the plane keys it by the pattern, so recording
+        // one is an upsert rather than a comparison against what is there.
+        var counters = new CounterLedger(storage);
+
         var operations = new MunariumOperations(
             storage,
             claims,
@@ -106,6 +111,7 @@ public sealed class MunariumKernel : IAsyncDisposable
             findings,
             anchors,
             promises,
+            counters,
             facts,
             shapes,
             retriever,

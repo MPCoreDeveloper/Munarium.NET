@@ -6,6 +6,7 @@ using System.Text.Json;
 using Munarium.Claims;
 using Munarium.Commands;
 using Munarium.Context;
+using Munarium.Counters;
 using Munarium.Facts;
 using Munarium.Governance;
 using Munarium.Ledger;
@@ -30,6 +31,7 @@ public sealed class MunariumOperations(
     FindingsLedger findings,
     AnchorLedger anchors,
     PromiseLedger promises,
+    CounterLedger counters,
     FactLedger facts,
     ShapeRegistry shapes,
     IRetrievalBackend retrieval,
@@ -56,6 +58,7 @@ public sealed class MunariumOperations(
     private readonly FindingsLedger _findings = findings ?? throw new ArgumentNullException(nameof(findings));
     private readonly AnchorLedger _anchors = anchors ?? throw new ArgumentNullException(nameof(anchors));
     private readonly PromiseLedger _promises = promises ?? throw new ArgumentNullException(nameof(promises));
+    private readonly CounterLedger _counters = counters ?? throw new ArgumentNullException(nameof(counters));
     private readonly FactLedger _facts = facts ?? throw new ArgumentNullException(nameof(facts));
     private readonly ShapeRegistry _shapes = shapes ?? throw new ArgumentNullException(nameof(shapes));
     private readonly IRetrievalBackend _retrieval = retrieval ?? throw new ArgumentNullException(nameof(retrieval));
@@ -473,6 +476,76 @@ public sealed class MunariumOperations(
             : snapshot.Promises;
 
         return new WirePromiseList([.. selected.Select(PromiseOf)], [.. overdue.Select(FindingOf)]);
+    }
+
+    /// <summary>Records a whole-document total for a counter.</summary>
+    /// <param name="versionId">The version the count belongs to.</param>
+    /// <param name="request">The count as reported.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The counter as recorded, or why it was not.</returns>
+    /// <remarks>
+    /// The contract counts in int64 and the plane in ulong, so a negative total is refused rather than wrapped: a
+    /// count of minus three is not a smaller count, it is a request that cannot be understood.
+    /// </remarks>
+    public async ValueTask<WireCounterResult> RecordCounterAsync(
+        string versionId,
+        WireCounterRecording request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (string.IsNullOrWhiteSpace(request.Key))
+        {
+            return new WireProblem(InvalidRequestProblem, "key is required.", Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        if (request.Total < 0 || request.Budget < 0)
+        {
+            return new WireProblem(
+                InvalidRequestProblem,
+                "total and budget are counts, so neither can be negative.",
+                Status: 400,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        var outcome = await _counters
+            .RecordAsync(
+                versionId,
+                request.Key,
+                (ulong)request.Total,
+                // Zero means "no ceiling", because a ceiling of zero would be a counter that may not be used at all -
+                // which is a different statement, and one the contract has no way to make.
+                request.Budget > 0 ? (ulong)request.Budget : null,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return outcome switch
+        {
+            CounterTotal counter => CounterOf(counter),
+            WriteContended contended => Contended(contended),
+        };
+    }
+
+    /// <summary>Reads the counters at a pin, with the directives a writer would be given.</summary>
+    /// <param name="versionId">The version whose counters are read.</param>
+    /// <param name="asOf">The position to read as of, or 0 for the present.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The counters, and the directives that follow from them.</returns>
+    /// <remarks>
+    /// The directives are computed here rather than stored: they are a function of the totals, and a stored copy
+    /// would be one more thing that can disagree with the plane it describes.
+    /// </remarks>
+    public async ValueTask<WireCounterList> ListCountersAsync(
+        string versionId,
+        long asOf = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var snapshot = await SnapshotAsync(versionId, asOf, cancellationToken).ConfigureAwait(false);
+
+        return new WireCounterList(
+            [.. snapshot.Counters.Select(CounterOf)],
+            CounterBudget.Directives(snapshot.Counters));
     }
 
     /// <summary>Creates a version, which is itself a governed claim.</summary>
