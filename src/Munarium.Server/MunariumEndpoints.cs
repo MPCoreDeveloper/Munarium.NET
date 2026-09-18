@@ -520,7 +520,7 @@ public static class MunariumEndpoints
                 CancellationToken cancellationToken) =>
             {
                 var result = await operations
-                    .SealEvidenceAsync(request, Principal(), cancellationToken)
+                    .SealEvidenceAsync(request, MunariumKernel.Principal, cancellationToken)
                     .ConfigureAwait(false);
 
                 IResult answer = result switch
@@ -553,7 +553,7 @@ public static class MunariumEndpoints
                 }
 
                 var refusal = await operations
-                    .PutEvidenceBytesAsync(Principal(), evidenceId, grant ?? string.Empty, bytes, cancellationToken)
+                    .PutEvidenceBytesAsync(MunariumKernel.Principal, evidenceId, grant ?? string.Empty, bytes, cancellationToken)
                     .ConfigureAwait(false);
 
                 IResult answer = refusal is null
@@ -571,7 +571,7 @@ public static class MunariumEndpoints
                 CancellationToken cancellationToken) =>
             {
                 var result = await operations
-                    .CommitEvidenceAsync(Principal(), evidenceId, cancellationToken)
+                    .CommitEvidenceAsync(MunariumKernel.Principal, evidenceId, cancellationToken)
                     .ConfigureAwait(false);
 
                 IResult answer = result switch
@@ -593,7 +593,7 @@ public static class MunariumEndpoints
                 CancellationToken cancellationToken) =>
             {
                 var result = await operations
-                    .ReadEvidenceManifestAsync(Principal(), evidenceId, cancellationToken)
+                    .ReadEvidenceManifestAsync(MunariumKernel.Principal, evidenceId, cancellationToken)
                     .ConfigureAwait(false);
 
                 IResult answer = result switch
@@ -616,7 +616,7 @@ public static class MunariumEndpoints
                 CancellationToken cancellationToken) =>
             {
                 var result = await operations
-                    .ReadEvidenceRowsAsync(Principal(), evidenceId, from ?? 0, limit ?? 0, cancellationToken)
+                    .ReadEvidenceRowsAsync(MunariumKernel.Principal, evidenceId, from ?? 0, limit ?? 0, cancellationToken)
                     .ConfigureAwait(false);
 
                 IResult answer = result switch
@@ -694,16 +694,6 @@ public static class MunariumEndpoints
 
         return app;
     }
-
-    /// <summary>
-    /// The principal every request is served as, until authorization exists.
-    /// </summary>
-    /// <remarks>
-    /// The original does the same thing with authorization switched off: every caller is one unrestricted principal that
-    /// dominates everything, which is a deployment property rather than a caller's claim. It is one method rather than a
-    /// decision repeated in eight handlers, so the day authorization lands there is one place to read a token.
-    /// </remarks>
-    private static EvidencePrincipal Principal() => EvidencePrincipal.ForDeployment(MunariumKernel.Tenant);
 
     /// <summary>Decodes the base64 a JSON surface carries bytes in.</summary>
     private static bool TryDecode(string? base64, out byte[] bytes)

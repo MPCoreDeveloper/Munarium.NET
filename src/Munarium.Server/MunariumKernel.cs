@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Munarium.Claims;
 using Munarium.Context;
 using Munarium.Counters;
+using Munarium.Evidence;
 using Munarium.Facts;
 using Munarium.Governance;
 using Munarium.Ledger;
@@ -39,6 +40,17 @@ public sealed class MunariumKernel : IAsyncDisposable
     /// varied by request would put one deployment's documents in several tenants' stores.
     /// </remarks>
     public const string Tenant = "default";
+
+    /// <summary>
+    /// The principal every caller is served as, until authorization exists.
+    /// </summary>
+    /// <remarks>
+    /// Both transports resolve it here rather than each deciding for itself, and the day authorization lands this is the
+    /// one place that has to read a token. It is the same thing the original does with authorization switched off: every
+    /// caller is one unrestricted principal that dominates everything, which is a deployment property rather than a
+    /// caller's claim.
+    /// </remarks>
+    public static EvidencePrincipal Principal => EvidencePrincipal.ForDeployment(Tenant);
 
     /// <summary>
     /// The index version a deployment starts by serving.
