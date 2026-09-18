@@ -34,7 +34,20 @@ public sealed record CompletionRequest
 /// <param name="Text">The generated text.</param>
 /// <param name="Model">The model that actually served the request.</param>
 /// <param name="Usage">What the call cost.</param>
-public sealed record CompletionResponse(string Text, string Model, TokenUsage Usage);
+/// <param name="StopReason">The provider's own stop reason, when its dialect reports one.</param>
+public sealed record CompletionResponse(string Text, string Model, TokenUsage Usage, string StopReason = "")
+{
+    /// <summary>
+    /// Gets a value indicating whether the model stopped early rather than finishing.
+    /// </summary>
+    /// <remarks>
+    /// A reasoning model spends hidden tokens from the same completion budget, so it can exhaust the ceiling before any
+    /// visible text - which is why an empty answer counts as truncated too. The adapters pass the provider's own stop
+    /// reason through verbatim: <c>max_tokens</c> in one dialect, <c>length</c> in another.
+    /// </remarks>
+    public bool IsTruncated =>
+        StopReason is "max_tokens" or "length" || Text.Trim().Length == 0;
+}
 
 /// <summary>
 /// An embedding request.

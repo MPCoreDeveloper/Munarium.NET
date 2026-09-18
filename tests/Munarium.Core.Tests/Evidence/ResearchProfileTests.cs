@@ -190,7 +190,8 @@ public class ResearchProfileTests
                 Requirement = LayerRequirement.Required,
                 Role = AnswerRole.Controlling,
             },
-            Layer("documents", "contracts") with { ContextCharBudget = 4_000 }) with { ContextCharBudget = 12_000 };
+            Layer("documents", "contracts") with { ContextCharBudget = 4_000 }) with
+        { ContextCharBudget = 12_000 };
 
         var plan = ResearchProfiles.BuildPlan(profile, new QueryIntent { Question = "q" });
 

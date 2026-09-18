@@ -197,7 +197,7 @@ public class RunbookDocumentTests
         Assert.Equal("northgate/", Assert.Single(document.Spec.EffectiveCollections).Sources!.FilenamePrefix);
         Assert.Equal("data-room", Assert.Single(Assert.Single(document.Spec.EffectiveCollections).Evidence!.Labels));
         Assert.Equal("revenue_by_region", Assert.Single(document.Spec.DataViews).Name);
-        Assert.Equal(0.5, document.Spec.Retrieval!.Fusion!.CollectionEvidenceWeight);
+        Assert.Equal(0.5, document.Spec.Retrieval.Fusion.CollectionEvidenceWeight);
         Assert.Equal("register", document.Spec.Retrieval.DefaultResearchProfile);
         Assert.Equal(ExecutionOrder.CollectionMajor, document.Spec.ExecutionOrderOf());
 

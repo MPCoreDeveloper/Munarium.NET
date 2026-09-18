@@ -1,8 +1,7 @@
 namespace Munarium.Core.Tests.Evidence;
 
+using Munarium.Core.Tests.Support;
 using Munarium.Evidence;
-using Munarium.Ledger;
-using Munarium.Retrieval;
 using static Munarium.Core.Tests.Support.HierarchyFixture;
 
 
@@ -259,28 +258,4 @@ public class HierarchyRunnerTests
         }
     }
 
-    private sealed class DocumentPath(params string[] chunkIds)
-    {
-        public int Calls { get; private set; }
-
-        public List<string> LayerNames { get; } = [];
-
-        private static RetrievedChunk Chunk(string chunkId) => new(
-            new SourceReference(chunkId, "source-1", "docs/policy.pdf", "sha256:abc", ChunkOrdinal: 0),
-            Score: 0,
-            $"text of {chunkId}");
-
-        public ValueTask<RetrievalResult> RunAsync(EvidenceLayer layer, CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            Calls++;
-            LayerNames.Add(layer.Name);
-
-            var chunks = chunkIds.Select(Chunk).ToList();
-
-            return ValueTask.FromResult(new RetrievalResult(
-                chunks,
-                new ProvenanceEnvelope("index@1", SequenceNumber.Zero, [.. chunks.Select(chunk => chunk.Source)])));
-        }
-    }
 }
