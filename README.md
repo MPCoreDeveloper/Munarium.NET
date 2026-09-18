@@ -134,15 +134,17 @@ in the order it is planned:
   finding is stamped with the position its write settled at **inside its version's stream**, while a facts read
   answers on the **global** feed its pin is on - the two are related through the version they belong to, not
   directly comparable.
-- **The evidence hierarchy runs in the kernel, but nothing serves it yet.** A plan executes in trust order, a
+- **The evidence hierarchy runs in the kernel, and the artifacts behind it are served.** A plan executes in trust order, a
   plane-qualified source refuses when nothing is bound to it, a required layer's refusal stops the turn, and
-  composition honours both the profile budget and the whole-or-nothing rule — all against test doubles. What is
-  missing is the server side: providers bound to the real planes (a semantic data view, the fact ledger, sealed
-  artifacts), routes for the artifacts themselves, the research profiles a runbook declares, progress on the wire,
-  and the per-turn hierarchy decision persisted where an operator can read it. The artifact's *store* is no longer
-  among the missing: `SharpCoreDbEvidenceStore` keeps the manifests in a table of their own, together with the
-  single-use grants, the pending/committed/purged lifecycle, the legal holds and the record of who resolved what, so
-  the routes have something to be written against.
+  composition honours both the profile budget and the whole-or-nothing rule — all against test doubles. Behind it, the
+  artifact path is real: `POST /v1/evidence` seals a manifest inline or hands back a single-use grant, `PUT
+  .../bytes` and `POST .../commit` finish that flow, `GET /v1/evidence/{id}` resolves a citation to its manifest,
+  `GET .../rows` reads a bounded window in the sealed order, `GET .../accesses` reports who resolved it, and
+  `DELETE .../{id}` with `POST .../legal-hold` is the operator's side — all of it in the original's words, statuses and
+  reasons, kept in tables of their own. What is still missing: providers bound to the real planes (a semantic data view,
+  the fact ledger, sealed artifacts as a source), the gRPC adapters for this path (the row read is JSON-only by design
+  and will answer `unsupported` by name, as it does in the original), the research profiles a runbook declares, progress
+  on the wire, and the per-turn hierarchy decision persisted where an operator can read it.
 - **Index versions are built, served and listed; the index itself lives in the process that built it.** The catalogue,
   the derived identity, the cutover rules and the envelope resolution are in the kernel and tested, the manifests are stored in a
   table of their own (retrieval bookkeeping is deliberately not ledger data), and `IndexBuilder` reads the sources a
