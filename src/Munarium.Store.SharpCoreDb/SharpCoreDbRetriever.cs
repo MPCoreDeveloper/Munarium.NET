@@ -25,7 +25,7 @@ using SharpCoreDB.VectorSearch.Index;
 /// than mutating this one, which is what lets an envelope issued yesterday still be verified today.
 /// </para>
 /// </remarks>
-public sealed class SharpCoreDbRetriever : IRetrievalBackend, IDisposable
+public sealed class SharpCoreDbRetriever : IRetrievalBackend, IIndexWriter, IDisposable
 {
     private readonly Lock _gate = new();
     private readonly List<IndexedChunk> _catalogue = [];
