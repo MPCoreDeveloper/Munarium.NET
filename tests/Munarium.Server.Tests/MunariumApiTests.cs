@@ -105,7 +105,7 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     {
         var shapes = await GetAsync("/v1/shapes", WireJson.Default.WireShapeList);
 
-        var vendor = Assert.Single(shapes.Shapes.Where(shape => shape.Name == VendorShape));
+        var vendor = Assert.Single(shapes.Shapes, shape => shape.Name == VendorShape);
 
         Assert.Equal(1, vendor.Version);
         Assert.Equal(["vendor_id"], vendor.Identity);
@@ -302,7 +302,7 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
 
         // A context that hid what the ledger refused would hide the one thing this system exists to keep
         // visible, so refusals travel with their reason.
-        var disputed = Assert.Single(composed.Sections.Where(section => section.Title == "Disputed"));
+        var disputed = Assert.Single(composed.Sections, section => section.Title == "Disputed");
 
         Assert.Contains("shape", disputed.Body, StringComparison.Ordinal);
         Assert.Contains("v-d", disputed.Body, StringComparison.Ordinal);

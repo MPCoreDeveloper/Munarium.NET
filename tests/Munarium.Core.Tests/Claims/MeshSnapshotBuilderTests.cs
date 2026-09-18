@@ -21,8 +21,8 @@ public class MeshSnapshotBuilderTests
         var head = await builder.BuildAsync("release-1");
         var pinned = await builder.BuildAsync("release-1", new SequenceNumber(1));
 
-        var headRung = Assert.Single(head.Digests.Where(rung => rung.Tier == 0));
-        var pinnedRung = Assert.Single(pinned.Digests.Where(rung => rung.Tier == 0));
+        var headRung = Assert.Single(head.Digests, rung => rung.Tier == 0);
+        var pinnedRung = Assert.Single(pinned.Digests, rung => rung.Tier == 0);
 
         Assert.Equal("notes", headRung.ScopePath);
         Assert.Contains("owner_team", headRung.Content, StringComparison.Ordinal);
@@ -61,8 +61,9 @@ public class MeshSnapshotBuilderTests
             (await builder.BuildAsync("release-1", scopePrefix: "notes")).Facts.Select(claim => claim.ClaimKey));
 
         // A claim with no scope is not in any named scope.
-        Assert.Empty((await builder.BuildAsync("release-1", scopePrefix: "ops")).Facts
-            .Where(claim => claim.Subject != "service" || claim.Key != "owner_team"));
+        Assert.DoesNotContain(
+            (await builder.BuildAsync("release-1", scopePrefix: "ops")).Facts,
+            claim => claim.Subject != "service" || claim.Key != "owner_team");
     }
 
     [Fact]

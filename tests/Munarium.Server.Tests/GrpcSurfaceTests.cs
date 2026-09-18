@@ -45,7 +45,7 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
             var slice = await client.SliceFactsAsync(
                 new SliceFactsRequest { AsOf = 0, VersionId = "grpc-claims" });
 
-            var fact = Assert.Single(slice.Data.Facts.Where(f => f.Lineage == "vendor@1|vendor_id=g-1"));
+            var fact = Assert.Single(slice.Data.Facts, f => f.Lineage == "vendor@1|vendor_id=g-1");
 
             Assert.Equal(ClaimStatus.Accepted, fact.Status);
             Assert.Equal("grpc-claims", fact.VersionId);
@@ -136,7 +136,7 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
         await WithClient(async client =>
         {
             var shapes = await client.ListShapesAsync(new ListShapesRequest());
-            var vendor = Assert.Single(shapes.Data.Shapes.Where(shape => shape.Name == "vendor"));
+            var vendor = Assert.Single(shapes.Data.Shapes, shape => shape.Name == "vendor");
 
             Assert.Equal(1, vendor.Version);
             Assert.Equal(["vendor_id"], vendor.Identity);

@@ -31,7 +31,7 @@ public class IngestRunnerTests
         Assert.Equal("idx-test", ingested.IndexVersion);
         Assert.True(ingested.ChunksIndexed > 1, "the document should have needed more than one chunk");
         Assert.Equal(ingested.ChunksIndexed, fixture.Index.Count);
-        Assert.Equal(1, fixture.Provider.Requests.Count);
+        Assert.Single(fixture.Provider.Requests);
 
         var row = ingested.Record;
         var first = fixture.Index.Chunks[0];
@@ -100,7 +100,7 @@ public class IngestRunnerTests
         Assert.Equal(0, second.ChunksIndexed);
         Assert.Equal(first.Record, second.Record);
         Assert.Equal(first.ChunksIndexed, fixture.Index.Count);
-        Assert.Equal(1, fixture.Provider.Requests.Count);
+        Assert.Single(fixture.Provider.Requests);
     }
 
     [Fact]

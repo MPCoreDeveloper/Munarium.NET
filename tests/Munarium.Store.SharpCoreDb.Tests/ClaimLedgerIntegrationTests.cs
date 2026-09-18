@@ -65,6 +65,13 @@ public class ClaimLedgerIntegrationTests
         Blocked blocked => $"blocked:{blocked.Gate}:{blocked.Reason}",
     };
 
+    private static string Describe(ClaimOutcome outcome) => outcome switch
+    {
+        ClaimAsserted asserted => $"asserted:{asserted.Head.Value}",
+        ClaimRecordedAsDisputed disputed => $"disputed:{disputed.Gate}:{disputed.Reason}:{disputed.Head.Value}",
+        ClaimContended contended => $"contended:{contended.Expected.Value}->{contended.Actual.Value}",
+    };
+
     private static ShapeRegistry Registry() => new([
         new FactShape
         {
@@ -95,13 +102,6 @@ public class ClaimLedgerIntegrationTests
         Actor = "compliance",
     };
 
-    private static string Describe(ClaimOutcome outcome) => outcome switch
-    {
-        ClaimAsserted asserted => $"asserted:{asserted.Head.Value}",
-        ClaimRecordedAsDisputed disputed => $"disputed:{disputed.Gate}:{disputed.Reason}:{disputed.Head.Value}",
-        ClaimContended contended => $"contended:{contended.Expected.Value}->{contended.Actual.Value}",
-    };
-
     /// <summary>A stand-in policy gate: a claim naming a sanctioned party is disputed.</summary>
     private sealed class SanctionsGate : IClaimGate
     {
@@ -109,14 +109,10 @@ public class ClaimLedgerIntegrationTests
 
         public ValueTask<ClaimVerdict> EvaluateAsync(
             RecordClaimCommand command,
-            CancellationToken cancellationToken = default)
-        {
-            if (command.Statement.Contains("sanction", StringComparison.OrdinalIgnoreCase))
-            {
-                return ValueTask.FromResult<ClaimVerdict>(new Blocked("sanctions", "listed party"));
-            }
-
-            return ValueTask.FromResult<ClaimVerdict>(Permitted.Instance);
-        }
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<ClaimVerdict>(
+                command.Statement.Contains("sanction", StringComparison.OrdinalIgnoreCase)
+                    ? new Blocked("sanctions", "listed party")
+                    : Permitted.Instance);
     }
 }
