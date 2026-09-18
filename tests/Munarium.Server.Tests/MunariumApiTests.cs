@@ -1,6 +1,8 @@
 namespace Munarium.Server.Tests;
 
 using Munarium.Context;
+using Munarium.Providers;
+using Munarium.Retrieval;
 using Munarium.Sources;
 using Munarium.Wire;
 
@@ -126,7 +128,14 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         var result = await response.Content.ReadFromJsonAsync(WireJson.Default.WireSearchResult);
 
         Assert.NotNull(result);
-        Assert.Equal("munarium@1", result.Envelope.IndexVersion);
+
+        // Which version answers depends on what the deployment has built, so the claim is that an answer carries one -
+        // not that it is the version a freshly composed deployment starts with, which any build cuts over from.
+        Assert.False(string.IsNullOrWhiteSpace(result.Envelope.IndexVersion));
+
+        Assert.True(
+            result.Envelope.LedgerWatermark >= 0,
+            "an envelope names the ledger position its index reflected");
     }
 
     [Fact]
@@ -1003,6 +1012,80 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
     }
 
+    /// <summary>
+    /// The whole chain, end to end: documents go in, a version is built over them, the build cuts the collection over,
+    /// a search answers from it, and the envelope that search carries resolves against the version it names.
+    /// </summary>
+    [Fact]
+    public async Task ABuiltVersionServesAndTheEnvelopeOfAnAnswerFromItResolves()
+    {
+        // A claim first, so the ledger has a position for the build to reflect: a version's watermark is where an
+        // answer's provenance ends, and on an empty ledger that is zero.
+        await ProposeAsync("version-index-build", "claim-index-build", """{"vendor_id":"v-idx"}""");
+
+        await IngestAsync("idx-docs/bell.txt", "The Bell rang twice at the north gate.");
+        await IngestAsync("idx-docs/other.txt", "A second document about the south gate.");
+
+        using var built = await _client.PostAsJsonAsync(
+            "/v1/indexes",
+            new WireIndexBuild("col-idx", "Indexed documents", "vendor@1", "idx-docs/", Activate: true),
+            WireJson.Default.WireIndexBuild);
+
+        Assert.Equal(HttpStatusCode.OK, built.StatusCode);
+
+        var version = (await built.Content.ReadFromJsonAsync(WireJson.Default.WireIndexVersion))!;
+
+        Assert.StartsWith(IndexVersionIds.Prefix, version.IndexVersionId, StringComparison.Ordinal);
+        Assert.True(version.Active);
+        Assert.True(version.Watermark > 0, "a build reflects the ledger position it was made at");
+        Assert.Equal("chunk@1", version.Manifest.Chunker);
+        Assert.Equal("text@1", version.Manifest.Extractors);
+        Assert.Contains(DeterministicEmbeddingProvider.ModelName, version.Manifest.Embedder, StringComparison.Ordinal);
+        Assert.Equal(2, version.Manifest.SourceContentHashes.Count);
+
+        // The read routes agree with the build.
+        var live = await GetAsync("/v1/indexes/active?collection_id=col-idx", WireJson.Default.WireIndexVersion);
+        var byId = await GetAsync($"/v1/indexes/{version.IndexVersionId}", WireJson.Default.WireIndexVersion);
+
+        Assert.Equal(version.IndexVersionId, live.IndexVersionId);
+        Assert.Equal(version.IndexVersionId, byId.IndexVersionId);
+        Assert.NotNull(version.ActivatedAt);
+
+        // A search now answers from the built version, and its envelope resolves back to it.
+        using var search = await _client.PostAsJsonAsync(
+            "/v1/search",
+            new WireSearchQuery("the bell at the north gate", 5),
+            WireJson.Default.WireSearchQuery);
+
+        var result = (await search.Content.ReadFromJsonAsync(WireJson.Default.WireSearchResult))!;
+
+        Assert.Equal(version.IndexVersionId, result.Envelope.IndexVersion);
+        Assert.Contains(result.Chunks, chunk => chunk.Source.SourcePath == "idx-docs/bell.txt");
+
+        using var resolved = await _client.PostAsJsonAsync(
+            "/v1/indexes/resolve",
+            new WireEnvelopeQuery(result.Envelope.IndexVersion, result.Envelope.LedgerWatermark, result.Envelope.Sources),
+            WireJson.Default.WireEnvelopeQuery);
+
+        var resolution = (await resolved.Content.ReadFromJsonAsync(WireJson.Default.WireEnvelopeResolution))!;
+
+        Assert.True(resolution.Resolved);
+        Assert.True(string.IsNullOrEmpty(resolution.Failure), resolution.Failure);
+        Assert.Empty(resolution.UnrecordedContentHashes);
+        Assert.Equal(version.IndexVersionId, resolution.Version?.IndexVersionId);
+        Assert.Equal(version.Watermark, resolution.Version?.Watermark);
+    }
+
+    private async Task IngestAsync(string path, string content)
+    {
+        using var put = await _client.PutAsJsonAsync(
+            "/v1/sources",
+            new WireSourceIngest(path, "text/plain", content, string.Empty),
+            WireJson.Default.WireSourceIngest);
+
+        put.EnsureSuccessStatusCode();
+    }
+
     [Fact]
     public async Task ASourceThatWasNeverIngestedHasNoRow()
     {
@@ -1013,5 +1096,139 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         var problem = (await response.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
 
         Assert.Equal(MunariumOperations.UnknownSourceProblem, problem.Type);
+    }
+
+    /// <summary>
+    /// An envelope that cites bytes the version never held does not resolve: a version records what it indexed, so an
+    /// answer citing something outside that set cannot have come from it.
+    /// </summary>
+    [Fact]
+    public async Task AnEnvelopeCitingBytesOutsideTheVersionDoesNotResolve()
+    {
+        await IngestAsync("idx-foreign/a.txt", "A document about the west gate.");
+
+        using var built = await _client.PostAsJsonAsync(
+            "/v1/indexes",
+            new WireIndexBuild("col-foreign", string.Empty, "vendor@1", "idx-foreign/", Activate: false),
+            WireJson.Default.WireIndexBuild);
+
+        var version = (await built.Content.ReadFromJsonAsync(WireJson.Default.WireIndexVersion))!;
+
+        using var resolved = await _client.PostAsJsonAsync(
+            "/v1/indexes/resolve",
+            new WireEnvelopeQuery(
+                version.IndexVersionId,
+                0,
+                [
+                    new WireSourceReference(
+                        "chunk-1", "src-0000000000000000", "docs/elsewhere.txt", "sha256:elsewhere", 0),
+                ]),
+            WireJson.Default.WireEnvelopeQuery);
+
+        var resolution = (await resolved.Content.ReadFromJsonAsync(WireJson.Default.WireEnvelopeResolution))!;
+
+        Assert.False(resolution.Resolved);
+        Assert.Contains("sha256:elsewhere", resolution.UnrecordedContentHashes);
+        Assert.False(string.IsNullOrEmpty(resolution.Failure));
+    }
+
+    /// <summary>
+    /// The version a deployment starts by serving was composed rather than built, so nobody recorded what it holds - and
+    /// the resolution says exactly that rather than pretending it is fine.
+    /// </summary>
+    [Fact]
+    public async Task AnEnvelopeFromAnIndexNobodyBuiltDoesNotResolve()
+    {
+        using var resolved = await _client.PostAsJsonAsync(
+            "/v1/indexes/resolve",
+            new WireEnvelopeQuery(MunariumKernel.InitialIndexVersion, 0, []),
+            WireJson.Default.WireEnvelopeQuery);
+
+        var resolution = (await resolved.Content.ReadFromJsonAsync(WireJson.Default.WireEnvelopeResolution))!;
+
+        Assert.False(resolution.Resolved);
+        Assert.Null(resolution.Version);
+        Assert.Contains("cannot be resolved", resolution.Failure, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ABuildWithNothingBoundIsRefused()
+    {
+        using var built = await _client.PostAsJsonAsync(
+            "/v1/indexes",
+            new WireIndexBuild("col-empty", string.Empty, "vendor@1", "nothing-here/", Activate: false),
+            WireJson.Default.WireIndexBuild);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, built.StatusCode);
+
+        var problem = (await built.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
+
+        Assert.Equal(MunariumOperations.IndexBuildRefusedProblem, problem.Type);
+        Assert.Contains("nothing-here/", problem.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>A version can only be activated into its own collection, and only one this process built.</summary>
+    [Fact]
+    public async Task AVersionCannotBeActivatedIntoAnotherCollectionOrFromElsewhere()
+    {
+        await IngestAsync("idx-scope/a.txt", "A document about the east gate.");
+
+        using var built = await _client.PostAsJsonAsync(
+            "/v1/indexes",
+            new WireIndexBuild("col-scope", string.Empty, "vendor@1", "idx-scope/", Activate: false),
+            WireJson.Default.WireIndexBuild);
+
+        var version = (await built.Content.ReadFromJsonAsync(WireJson.Default.WireIndexVersion))!;
+
+        using var elsewhere = await _client.PostAsJsonAsync(
+            $"/v1/indexes/{version.IndexVersionId}/activate",
+            new WireIndexActivation("col-other"),
+            WireJson.Default.WireIndexActivation);
+
+        Assert.Equal(HttpStatusCode.NotFound, elsewhere.StatusCode);
+
+        using var unknown = await _client.PostAsJsonAsync(
+            "/v1/indexes/idx-0000000000000000/activate",
+            new WireIndexActivation("col-scope"),
+            WireJson.Default.WireIndexActivation);
+
+        Assert.Equal(HttpStatusCode.Conflict, unknown.StatusCode);
+
+        var problem = (await unknown.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
+
+        Assert.Equal(MunariumOperations.IndexNotBuiltHereProblem, problem.Type);
+
+        // Activating it into its own collection works, and the route answers with it as live.
+        using var activated = await _client.PostAsJsonAsync(
+            $"/v1/indexes/{version.IndexVersionId}/activate",
+            new WireIndexActivation("col-scope"),
+            WireJson.Default.WireIndexActivation);
+
+        var live = (await activated.Content.ReadFromJsonAsync(WireJson.Default.WireIndexVersion))!;
+
+        Assert.True(live.Active);
+        Assert.Null(live.DeactivatedAt);
+        Assert.Equal(version.IndexVersionId, live.IndexVersionId);
+    }
+
+    [Fact]
+    public async Task AnIndexVersionThatIsNotRecordedIsNotFound()
+    {
+        using var response = await _client.GetAsync(new Uri("/v1/indexes/idx-0000000000000000", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+        var problem = (await response.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
+
+        Assert.Equal(MunariumOperations.UnknownIndexVersionProblem, problem.Type);
+    }
+
+    [Fact]
+    public async Task ACollectionWithNoLiveVersionHasNone()
+    {
+        using var response = await _client.GetAsync(
+            new Uri("/v1/indexes/active?collection_id=col-nothing", UriKind.Relative));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 }

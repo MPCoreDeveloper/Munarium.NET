@@ -9,6 +9,7 @@ using Munarium.Governance;
 using Munarium.Ledger;
 using Munarium.Providers;
 using Munarium.Promises;
+using Munarium.Retrieval;
 using Munarium.Shapes;
 using Munarium.Sources;
 using Munarium.Store.SharpCoreDb;
@@ -139,6 +140,21 @@ public sealed class MunariumKernel : IAsyncDisposable
             host,
             DeterministicEmbeddingProvider.ModelName);
 
+        // The index-version table and the rule layer over it, and the builder that fills a version from the rows. The
+        // engine reference comes from the host, so a manifest cannot claim an engine that did not build the vectors.
+        var versionStore = new SharpCoreDbIndexVersionStore(database);
+        var catalogue = new IndexCatalog(versionStore);
+        var builder = new IndexBuilder(
+            sourceStore,
+            sourceRegistry,
+            embedder,
+            host,
+            catalogue,
+            new EmbedderRef(
+                ProviderId.Local.Value,
+                DeterministicEmbeddingProvider.ModelName,
+                EmbeddingDimensions));
+
         var operations = new MunariumOperations(
             storage,
             claims,
@@ -156,6 +172,8 @@ public sealed class MunariumKernel : IAsyncDisposable
             DeterministicEmbeddingProvider.ModelName,
             ingest,
             sourceRegistry,
+            builder,
+            catalogue,
             Tenant);
 
         return new MunariumKernel(provider, database, host, operations, shapes);

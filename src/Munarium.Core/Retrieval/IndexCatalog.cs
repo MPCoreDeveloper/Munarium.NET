@@ -155,6 +155,17 @@ public sealed class IndexCatalog(IIndexVersionStore store)
         CancellationToken cancellationToken = default) =>
         _store.ActivateAsync(tenant, collectionId, indexVersionId, cancellationToken);
 
+    /// <summary>Reads a version by its identity.</summary>
+    /// <param name="tenant">The tenant.</param>
+    /// <param name="indexVersionId">The version's identity.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The version, or <see langword="null"/> when there is none.</returns>
+    public ValueTask<IndexVersion?> GetAsync(
+        string tenant,
+        string indexVersionId,
+        CancellationToken cancellationToken = default) =>
+        _store.GetAsync(tenant, indexVersionId, cancellationToken);
+
     /// <summary>Reads a collection's live version.</summary>
     /// <param name="tenant">The tenant.</param>
     /// <param name="collectionId">The collection.</param>

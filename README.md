@@ -146,9 +146,13 @@ in the order it is planned:
   collection binds, cuts and embeds them into a **new** instance nobody is answering from - so a rebuild happens while
   the live version keeps serving, and the host keeps the built instance so activating it is a cutover rather than a
   second build. A bound document this port cannot read refuses the build by name, and the half-built instance is
-  dropped, so a corpus cannot be activated with the documents the build got to before it stopped. What is missing is
-  the surface: there is no `/v1/indexes` route to build, activate or read a version, and provenance resolution is a
-  kernel operation rather than a route.
+  dropped, so a corpus cannot be activated with the documents the build got to before it stopped. The surface is
+  there too: `POST /v1/indexes` builds, `POST /v1/indexes/{id}/activate` cuts a collection over (refusing a version
+  this process never built, because it cannot answer from chunks it does not have), `GET /v1/indexes/active` and
+  `GET /v1/indexes/{id}` read the state, and `POST /v1/indexes/resolve` takes an answer's envelope and says whether
+  the bytes it cites were in the version it names. What is missing is persistence of the chunks themselves: the index
+  lives in the process, so a restart means rebuilding from the rows - which is what the build route is for, and why
+  the watermark and the manifest are recorded rather than the vectors.
 - **Ingestion is on the wire; rebuilding an index is not.** `PUT /v1/sources` stores a document's bytes, records the
   source row, cuts the text into `chunk@1` chunks, embeds them and writes them into the index version `/v1/search`
   answers from; `GET /v1/sources/{source_id}` answers where the bytes went, never the bytes. A re-put of the same bytes

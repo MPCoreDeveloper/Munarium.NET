@@ -55,4 +55,10 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(WireSourceIngest))]
 [JsonSerializable(typeof(WireIngestedSource))]
 [JsonSerializable(typeof(WireSourceInfo))]
+[JsonSerializable(typeof(WireIndexManifest))]
+[JsonSerializable(typeof(WireIndexVersion))]
+[JsonSerializable(typeof(WireIndexBuild))]
+[JsonSerializable(typeof(WireIndexActivation))]
+[JsonSerializable(typeof(WireEnvelopeQuery))]
+[JsonSerializable(typeof(WireEnvelopeResolution))]
 public sealed partial class WireJson : JsonSerializerContext;

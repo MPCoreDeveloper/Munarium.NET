@@ -409,6 +409,106 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
     }
 
     /// <inheritdoc />
+    public override async Task<BuildIndexVersionResponse> BuildIndexVersionAsync(
+        BuildIndexVersionRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .BuildIndexVersionAsync(
+                new WireIndexBuild(
+                    request.Body?.CollectionId ?? string.Empty,
+                    request.Body?.CollectionName ?? string.Empty,
+                    request.Body?.ShapeRef ?? string.Empty,
+                    request.Body?.PathPrefix ?? string.Empty,
+                    request.Body?.Activate ?? false),
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireIndexVersion version => new BuildIndexVersionResponse { Data = ToMessage(version) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<GetIndexVersionResponse> GetIndexVersionAsync(
+        GetIndexVersionRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .GetIndexVersionAsync(request.IndexVersionId, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireIndexVersion version => new GetIndexVersionResponse { Data = ToMessage(version) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<GetActiveIndexVersionResponse> GetActiveIndexVersionAsync(
+        GetActiveIndexVersionRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .GetActiveIndexVersionAsync(request.CollectionId, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireIndexVersion version => new GetActiveIndexVersionResponse { Data = ToMessage(version) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ActivateIndexVersionResponse> ActivateIndexVersionAsync(
+        ActivateIndexVersionRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .ActivateIndexVersionAsync(
+                request.IndexVersionId,
+                request.Body?.CollectionId ?? string.Empty,
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireIndexVersion version => new ActivateIndexVersionResponse { Data = ToMessage(version) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ResolveEnvelopeResponse> ResolveEnvelopeAsync(
+        ResolveEnvelopeRequest request,
+        ServerCallContext context)
+    {
+        var body = request.Body;
+
+        var result = await _operations
+            .ResolveEnvelopeAsync(
+                new WireEnvelopeQuery(
+                    body?.IndexVersion ?? string.Empty,
+                    body?.LedgerWatermark ?? 0,
+                    [.. (body?.Sources ?? []).Select(ToWire)]),
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireEnvelopeResolution resolution => new ResolveEnvelopeResponse
+            {
+                Data = ToMessage(resolution),
+            },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
     public override Task<ListShapesResponse> ListShapesAsync(ListShapesRequest request, ServerCallContext context) =>
         Task.FromResult(new ListShapesResponse { Data = ToMessage(_operations.ListShapes()) });
 
@@ -750,6 +850,51 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         IngestedAt = info.IngestedAt ?? string.Empty,
     };
 
+    private static IndexManifest ToMessage(WireIndexManifest manifest) => new()
+    {
+        CollectionId = manifest.CollectionId,
+        CollectionName = manifest.CollectionName ?? string.Empty,
+        ShapeRef = manifest.ShapeRef ?? string.Empty,
+        Engine = manifest.Engine,
+        Chunker = manifest.Chunker,
+        Extractors = manifest.Extractors,
+        Embedder = manifest.Embedder,
+        MaxChars = manifest.MaxChars,
+        SourceContentHashes = { manifest.SourceContentHashes },
+    };
+
+    private static IndexVersionState ToMessage(WireIndexVersion version) => new()
+    {
+        IndexVersionId = version.IndexVersionId,
+        CollectionId = version.CollectionId,
+        ShapeRef = version.ShapeRef,
+        Watermark = version.Watermark,
+        Active = version.Active,
+        Superseded = version.Superseded,
+        ActivatedAt = version.ActivatedAt ?? string.Empty,
+        DeactivatedAt = version.DeactivatedAt ?? string.Empty,
+        Manifest = ToMessage(version.Manifest),
+    };
+
+    private static EnvelopeResolution ToMessage(WireEnvelopeResolution resolution)
+    {
+        var message = new EnvelopeResolution
+        {
+            Resolved = resolution.Resolved,
+            Failure = resolution.Failure ?? string.Empty,
+            UnrecordedContentHashes = { resolution.UnrecordedContentHashes },
+        };
+
+        // An absent version is an absent field rather than a null message: the contract marks it optional, and a
+        // resolution that failed to find one is exactly what "no version" means.
+        if (resolution.Version is not null)
+        {
+            message.Version = ToMessage(resolution.Version);
+        }
+
+        return message;
+    }
+
     private static ShapeList ToMessage(WireShapeList shapes)
     {
         var message = new ShapeList();
@@ -834,6 +979,10 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         WireSeverities.Block => Severity.Block,
         _ => Severity.Unspecified,
     };
+
+    // The inbound direction of a citation, which only the envelope resolution needs: every other read sends sources out.
+    private static WireSourceReference ToWire(SourceReference source) =>
+        new(source.ChunkId, source.SourceId, source.SourcePath, source.ContentHash, source.ChunkOrdinal);
 
     private static WireClaimBatchRequest ToWire(ClaimBatchRequest? body)
     {

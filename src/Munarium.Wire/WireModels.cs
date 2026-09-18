@@ -684,3 +684,103 @@ public readonly union WireIngestResult(WireIngestedSource, WireProblem);
 /// <summary>The result of reading a source's row: the row, or why there is none.</summary>
 public readonly union WireSourceResult(WireSourceInfo, WireProblem);
 
+/// <summary>
+/// What an index version was built from, as an operator reads it.
+/// </summary>
+/// <remarks>
+/// Every field here is identity material - the embedder, the chunker, the extractors and the engine all change what a
+/// query would match - which is why a manifest is read as the explanation of a version rather than as a description of
+/// one.
+/// </remarks>
+/// <param name="CollectionId">The collection the version indexes.</param>
+/// <param name="CollectionName">The collection's name.</param>
+/// <param name="ShapeRef">The contract shape the corpus was mapped through.</param>
+/// <param name="Engine">The retrieval engine that built the vectors, as a versioned reference.</param>
+/// <param name="Chunker">The chunker's version.</param>
+/// <param name="Extractors">The extractors' version.</param>
+/// <param name="Embedder">The embedder's fingerprint.</param>
+/// <param name="MaxChars">The character ceiling a chunk was cut at.</param>
+/// <param name="SourceContentHashes">The hash of every source the version indexed.</param>
+public sealed record WireIndexManifest(
+    string CollectionId,
+    string CollectionName,
+    string ShapeRef,
+    string Engine,
+    string Chunker,
+    string Extractors,
+    string Embedder,
+    int MaxChars,
+    IReadOnlyList<string> SourceContentHashes);
+
+/// <summary>An index version, as it stands.</summary>
+/// <param name="IndexVersionId">The version's identity.</param>
+/// <param name="CollectionId">The collection it belongs to.</param>
+/// <param name="ShapeRef">The shape it answers for.</param>
+/// <param name="Watermark">The ledger position it was built against.</param>
+/// <param name="Active">Whether it is the collection's live version.</param>
+/// <param name="Superseded">Whether it was once live and is not now.</param>
+/// <param name="ActivatedAt">When it first went live.</param>
+/// <param name="DeactivatedAt">When it stopped being live.</param>
+/// <param name="Manifest">What it was built from.</param>
+public sealed record WireIndexVersion(
+    string IndexVersionId,
+    string CollectionId,
+    string ShapeRef,
+    long Watermark,
+    bool Active,
+    bool Superseded,
+    string? ActivatedAt,
+    string? DeactivatedAt,
+    WireIndexManifest Manifest);
+
+/// <summary>A build to make: which collection, over which sources, and whether it should serve.</summary>
+/// <param name="CollectionId">The collection the version belongs to.</param>
+/// <param name="CollectionName">The collection's name, so a manifest needs no second lookup to be read.</param>
+/// <param name="ShapeRef">The contract shape the corpus is mapped through.</param>
+/// <param name="PathPrefix">
+/// The path prefix that binds the collection, or empty for every source the deployment has.
+/// </param>
+/// <param name="Activate">Whether the built version becomes the collection's live one.</param>
+public sealed record WireIndexBuild(
+    string CollectionId,
+    string CollectionName,
+    string ShapeRef,
+    string PathPrefix,
+    bool Activate);
+
+/// <summary>What to cut a collection over to.</summary>
+/// <param name="CollectionId">The collection to cut over; a version can only be activated into its own collection.</param>
+public sealed record WireIndexActivation(string CollectionId);
+
+/// <summary>An answer's provenance envelope, as it is offered for resolution.</summary>
+/// <param name="IndexVersion">The version the answer named.</param>
+/// <param name="LedgerWatermark">The ledger position the answer's index reflected.</param>
+/// <param name="Sources">The sources the answer cited.</param>
+public sealed record WireEnvelopeQuery(
+    string IndexVersion,
+    long LedgerWatermark,
+    IReadOnlyList<WireSourceReference> Sources);
+
+/// <summary>
+/// What an envelope resolves to, and whether the answer's provenance holds up.
+/// </summary>
+/// <param name="Resolved">Whether the version exists and the cited bytes are in it.</param>
+/// <param name="Failure">Why it does not hold up, or empty when it does.</param>
+/// <param name="Version">The version it names, or empty when there is none.</param>
+/// <param name="UnrecordedContentHashes">The cited hashes the version's manifest does not record.</param>
+public sealed record WireEnvelopeResolution(
+    bool Resolved,
+    string? Failure,
+    WireIndexVersion? Version,
+    IReadOnlyList<string> UnrecordedContentHashes);
+
+/// <summary>The result of a build: the version as recorded, or why nothing was built.</summary>
+public readonly union WireIndexBuildResult(WireIndexVersion, WireProblem);
+
+/// <summary>The result of reading or cutting over a version: the version, or why there is none.</summary>
+public readonly union WireIndexResult(WireIndexVersion, WireProblem);
+
+/// <summary>The result of resolving an envelope: the resolution, or why it could not be attempted.</summary>
+public readonly union WireEnvelopeResult(WireEnvelopeResolution, WireProblem);
+
+

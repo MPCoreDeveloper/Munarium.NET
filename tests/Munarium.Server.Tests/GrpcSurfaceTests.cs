@@ -2,6 +2,7 @@ namespace Munarium.Server.Tests;
 
 using Grpc.Core;
 using Grpc.Net.Client;
+using Munarium.Retrieval;
 using Munarium.Wire;
 using Munarium.Wire.Generated;
 
@@ -216,7 +217,9 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
                 Body = new SearchQuery { Text = "north", TopK = 5 },
             });
 
-            Assert.Equal("munarium@1", result.Data.Envelope.IndexVersion);
+            // Which version answers depends on what the deployment has built, so the claim is that an answer carries
+            // one rather than that it is the version a freshly composed deployment starts with.
+            Assert.False(string.IsNullOrWhiteSpace(result.Data.Envelope.IndexVersion));
         });
 
     /// <summary>
@@ -442,6 +445,68 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
     };
 
     /// <summary>The same question asked over the other transport, for the conformance comparison.</summary>
+    /// <summary>
+    /// The index surface over the other transport: a build, the version it records, the search that answers from it,
+    /// and the envelope of that answer resolved back to the version it names.
+    /// </summary>
+    [Fact]
+    public async Task AVersionIsBuiltAndItsEnvelopesResolveOverGrpc() =>
+        await WithClient(async client =>
+        {
+            var ingested = await client.IngestSourceAsync(new IngestSourceRequest
+            {
+                Body = new SourceIngest
+                {
+                    Path = "grpc-index/bell.txt",
+                    MediaType = "text/plain",
+                    Content = "The Bell rang twice at the north gate.",
+                },
+            });
+
+            Assert.Equal("new", ingested.Data.Kind);
+
+            var built = await client.BuildIndexVersionAsync(new BuildIndexVersionRequest
+            {
+                Body = new IndexBuild
+                {
+                    CollectionId = "col-grpc",
+                    ShapeRef = "vendor@1",
+                    PathPrefix = "grpc-index/",
+                    Activate = true,
+                },
+            });
+
+            Assert.True(built.Data.Active);
+            Assert.StartsWith(IndexVersionIds.Prefix, built.Data.IndexVersionId, StringComparison.Ordinal);
+            Assert.Single(built.Data.Manifest.SourceContentHashes);
+
+            var live = await client.GetActiveIndexVersionAsync(
+                new GetActiveIndexVersionRequest { CollectionId = "col-grpc" });
+
+            Assert.Equal(built.Data.IndexVersionId, live.Data.IndexVersionId);
+
+            var search = await client.SearchAsync(new SearchRequest
+            {
+                Body = new SearchQuery { Text = "the bell at the north gate", TopK = 5 },
+            });
+
+            Assert.Equal(built.Data.IndexVersionId, search.Data.Envelope.IndexVersion);
+
+            var resolution = await client.ResolveEnvelopeAsync(new ResolveEnvelopeRequest
+            {
+                Body = new EnvelopeQuery
+                {
+                    IndexVersion = search.Data.Envelope.IndexVersion,
+                    LedgerWatermark = search.Data.Envelope.LedgerWatermark,
+                    Sources = { search.Data.Envelope.Sources },
+                },
+            });
+
+            Assert.True(resolution.Data.Resolved);
+            Assert.Equal(string.Empty, resolution.Data.Failure);
+            Assert.Equal(built.Data.IndexVersionId, resolution.Data.Version.IndexVersionId);
+        });
+
     private async Task<WireComposedContext> ComposeOverJsonAsync(string version)
     {
         using var http = _factory.CreateClient();

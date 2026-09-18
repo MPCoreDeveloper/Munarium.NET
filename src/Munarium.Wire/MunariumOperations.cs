@@ -42,6 +42,8 @@ public sealed class MunariumOperations(
     string embeddingModel,
     IngestRunner ingest,
     ISourceRegistry sources,
+    IndexBuilder indexBuilder,
+    IndexCatalog catalogue,
     string tenant)
 {
     /// <summary>The wire contract version this implementation speaks.</summary>
@@ -65,6 +67,15 @@ public sealed class MunariumOperations(
     /// <summary>The problem identifier a source that was never ingested answers with.</summary>
     public const string UnknownSourceProblem = "https://munarium.dev/problems/unknown-source";
 
+    /// <summary>The problem identifier a build that could not be made answers with.</summary>
+    public const string IndexBuildRefusedProblem = "https://munarium.dev/problems/index-build-refused";
+
+    /// <summary>The problem identifier a version that was never recorded answers with.</summary>
+    public const string UnknownIndexVersionProblem = "https://munarium.dev/problems/unknown-index-version";
+
+    /// <summary>The problem identifier a version this process cannot serve answers with.</summary>
+    public const string IndexNotBuiltHereProblem = "https://munarium.dev/problems/index-not-built-here";
+
 
     private readonly IStorageBackend _storage = storage ?? throw new ArgumentNullException(nameof(storage));
     private readonly ClaimLedger _claims = claims ?? throw new ArgumentNullException(nameof(claims));
@@ -82,6 +93,8 @@ public sealed class MunariumOperations(
     private readonly string _embeddingModel = embeddingModel ?? throw new ArgumentNullException(nameof(embeddingModel));
     private readonly IngestRunner _ingest = ingest ?? throw new ArgumentNullException(nameof(ingest));
     private readonly ISourceRegistry _sources = sources ?? throw new ArgumentNullException(nameof(sources));
+    private readonly IndexBuilder _builder = indexBuilder ?? throw new ArgumentNullException(nameof(indexBuilder));
+    private readonly IndexCatalog _catalogue = catalogue ?? throw new ArgumentNullException(nameof(catalogue));
     private readonly string _tenant = string.IsNullOrWhiteSpace(tenant)
         ? throw new ArgumentException("The deployment's tenant must be named.", nameof(tenant))
         : tenant;
@@ -859,6 +872,205 @@ public sealed class MunariumOperations(
             : ToWire(record);
     }
 
+    /// <summary>
+    /// Builds an index version over the sources a collection binds.
+    /// </summary>
+    /// <remarks>
+    /// The watermark is read now rather than asked for: a build reflects the state of the world it was made in, and a
+    /// caller that could name a position could have a version claim to answer for a state it never read.
+    /// </remarks>
+    /// <param name="request">What to build, and over which sources.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The version as recorded, or why nothing was built.</returns>
+    public async ValueTask<WireIndexBuildResult> BuildIndexVersionAsync(
+        WireIndexBuild request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var collectionId = (request.CollectionId ?? string.Empty).Trim();
+        var shapeRef = (request.ShapeRef ?? string.Empty).Trim();
+
+        if (collectionId.Length == 0 || shapeRef.Length == 0)
+        {
+            return new WireProblem(
+                InvalidRequestProblem,
+                "collection_id and shape_ref are required: a version belongs to a collection and answers for a shape.",
+                Status: 400,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        var collectionName = (request.CollectionName ?? string.Empty).Trim() is { Length: > 0 } named
+            ? named
+            : collectionId;
+
+        var outcome = await _builder
+            .BuildAsync(
+                new IndexBuildPlan
+                {
+                    Tenant = _tenant,
+                    CollectionId = collectionId,
+                    CollectionName = collectionName,
+                    ShapeRef = shapeRef,
+                    PathPrefix = string.IsNullOrWhiteSpace(request.PathPrefix) ? null : request.PathPrefix.Trim(),
+                    Watermark = await _facts.CurrentPinAsync(cancellationToken).ConfigureAwait(false),
+                    Activate = request.Activate,
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return outcome switch
+        {
+            IndexVersion version => ToWire(version),
+            IndexBuildRefused refused => new WireProblem(
+                IndexBuildRefusedProblem,
+                refused.Reason,
+                Status: 422,
+                ExpectedHead: 0,
+                ActualHead: 0),
+        };
+    }
+
+    /// <summary>
+    /// Cuts a collection over to a version it already has.
+    /// </summary>
+    /// <remarks>
+    /// The process is moved before the record is, and in that order: a version this process never built cannot serve
+    /// here, and refusing before anything changes leaves the record as it was. The other order would record a
+    /// collection as live on a version nobody can answer from.
+    /// </remarks>
+    /// <param name="indexVersionId">The version to make live.</param>
+    /// <param name="collectionId">The collection it belongs to.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The activated version, or why nothing was activated.</returns>
+    public async ValueTask<WireIndexResult> ActivateIndexVersionAsync(
+        string indexVersionId,
+        string collectionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(indexVersionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(collectionId);
+
+        if (!_index.Serve(indexVersionId))
+        {
+            return new WireProblem(
+                IndexNotBuiltHereProblem,
+                $"index version '{indexVersionId}' was not built in this process, so it cannot serve from here; build "
+                    + "it again from the sources this deployment has.",
+                Status: 409,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        var activated = await _catalogue
+            .ActivateAsync(_tenant, collectionId, indexVersionId, cancellationToken)
+            .ConfigureAwait(false);
+
+        return activated is null
+            ? new WireProblem(
+                UnknownIndexVersionProblem,
+                $"no index version '{indexVersionId}' belongs to collection '{collectionId}'.",
+                Status: 404,
+                ExpectedHead: 0,
+                ActualHead: 0)
+            : ToWire(activated);
+    }
+
+    /// <summary>Reads an index version.</summary>
+    /// <param name="indexVersionId">The version's identity.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The version, or why there is none.</returns>
+    public async ValueTask<WireIndexResult> GetIndexVersionAsync(
+        string indexVersionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(indexVersionId);
+
+        var version = await _catalogue.GetAsync(_tenant, indexVersionId, cancellationToken).ConfigureAwait(false);
+
+        return version is null
+            ? new WireProblem(
+                UnknownIndexVersionProblem,
+                $"no index version '{indexVersionId}' is recorded; an index nobody built cannot be explained.",
+                Status: 404,
+                ExpectedHead: 0,
+                ActualHead: 0)
+            : ToWire(version);
+    }
+
+    /// <summary>Reads the version a collection answers from.</summary>
+    /// <param name="collectionId">The collection.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The live version, or why there is none.</returns>
+    public async ValueTask<WireIndexResult> GetActiveIndexVersionAsync(
+        string collectionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(collectionId);
+
+        var version = await _catalogue.ActiveAsync(_tenant, collectionId, cancellationToken).ConfigureAwait(false);
+
+        return version is null
+            ? new WireProblem(
+                UnknownIndexVersionProblem,
+                $"collection '{collectionId}' has no live index version; build one and activate it.",
+                Status: 404,
+                ExpectedHead: 0,
+                ActualHead: 0)
+            : ToWire(version);
+    }
+
+    /// <summary>
+    /// Resolves an answer's envelope back to the version that issued it.
+    /// </summary>
+    /// <remarks>
+    /// This is the read that makes provenance worth carrying: it answers whether the bytes an answer cites were in the
+    /// version it names, which is the part of a citation a mixed-up envelope cannot fake. A version the catalogue does
+    /// not know resolves to a failure rather than to an error, because "nobody recorded that" is an answer.
+    /// </remarks>
+    /// <param name="query">The envelope the answer carried.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The resolution, or why it could not be attempted.</returns>
+    public async ValueTask<WireEnvelopeResult> ResolveEnvelopeAsync(
+        WireEnvelopeQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        if (string.IsNullOrWhiteSpace(query.IndexVersion))
+        {
+            return new WireProblem(
+                InvalidRequestProblem,
+                "index_version is required: an envelope that names no version proves nothing.",
+                Status: 400,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        var resolution = await _catalogue
+            .ResolveAsync(
+                _tenant,
+                new ProvenanceEnvelope(
+                    query.IndexVersion,
+                    new SequenceNumber(query.LedgerWatermark),
+                    [.. (query.Sources ?? []).Select(
+                        source => new SourceReference(
+                            source.ChunkId,
+                            source.SourceId,
+                            source.SourcePath,
+                            source.ContentHash,
+                            source.ChunkOrdinal))]),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return new WireEnvelopeResolution(
+            resolution.Resolved,
+            resolution.Failure,
+            resolution.Version is null ? null : ToWire(resolution.Version),
+            resolution.UnrecordedContentHashes);
+    }
+
     /// <summary>The shapes this deployment understands.</summary>
     /// <returns>The registered shapes, ordered by name.</returns>
     public WireShapeList ListShapes() =>
@@ -937,6 +1149,28 @@ public sealed class MunariumOperations(
         ingested.Record.IngestedAt,
         ingested.ChunksIndexed,
         ingested.IndexVersion);
+
+    private static WireIndexManifest ToWire(IndexManifest manifest) => new(
+        manifest.CollectionId,
+        manifest.CollectionName,
+        manifest.ShapeRef,
+        manifest.Engine,
+        manifest.Chunker,
+        manifest.Extractors,
+        manifest.Embedder.Fingerprint,
+        manifest.MaxChars,
+        manifest.SourceContentHashes);
+
+    private static WireIndexVersion ToWire(IndexVersion version) => new(
+        version.Id,
+        version.CollectionId,
+        version.ShapeRef,
+        version.Watermark.Value,
+        version.Active,
+        version.Superseded,
+        version.ActivatedAt?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
+        version.DeactivatedAt?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
+        ToWire(version.Manifest));
 
     private static WireSourceInfo ToWire(SourceRecord record) => new(
         record.SourceId,

@@ -880,6 +880,169 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/indexes:
+    post:
+      operationId: BuildIndexVersion
+      tags: [retrieval]
+      summary: Build an index version over the sources a collection binds.
+      description: |
+        A build reads every bound source, cuts it, embeds it and writes it into a version nobody is answering from, so
+        the version that is live keeps serving while a rebuild happens. The built version is kept, and activating it
+        later is a cutover rather than a second build.
+
+        Nothing is skipped quietly: a bound document whose media type this port cannot read refuses the build and names
+        the path, and the half-built version is dropped with it - an index that answered with the documents the build
+        got to before it stopped would be worse than no index at all. The ledger position is read rather than asked for,
+        because a build reflects the state of the world it was made in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IndexBuild"
+      responses:
+        "200":
+          description: The version as recorded, live when the build asked for it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexVersionState"
+        "400":
+          description: The request names no collection or no shape.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "422":
+          description: Nothing was built - nothing is bound, or a bound document cannot be read.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/indexes/active:
+    get:
+      operationId: GetActiveIndexVersion
+      tags: [retrieval]
+      summary: The version a collection answers from.
+      parameters:
+        - name: collection_id
+          in: query
+          required: true
+          description: The collection whose live version is read.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The collection's live version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexVersionState"
+        "404":
+          description: The collection has no live version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/indexes/{index_version_id}:
+    get:
+      operationId: GetIndexVersion
+      tags: [retrieval]
+      summary: An index version, and what it was built from.
+      parameters:
+        - name: index_version_id
+          in: path
+          required: true
+          description: The version's identity, as "idx-...".
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The version as it stands.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexVersionState"
+        "404":
+          description: No such version is recorded, so nothing can be explained by it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/indexes/{index_version_id}/activate:
+    post:
+      operationId: ActivateIndexVersion
+      tags: [retrieval]
+      summary: Cut a collection over to a version it already has.
+      description: |
+        The process is moved before the record is: a version this process never built cannot serve here, and refusing
+        before anything changes leaves the record as it was. A cutover is reversible, and the version that stopped
+        serving stays readable - an envelope issued while it was live still resolves.
+      parameters:
+        - name: index_version_id
+          in: path
+          required: true
+          description: The version to make live.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IndexActivation"
+      responses:
+        "200":
+          description: The activated version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexVersionState"
+        "404":
+          description: No such version belongs to that collection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The version was not built in this process, so it cannot serve from here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/indexes/resolve:
+    post:
+      operationId: ResolveEnvelope
+      tags: [retrieval]
+      summary: Resolve an answer's provenance envelope back to its version.
+      description: |
+        The read that makes provenance worth carrying: it answers whether the bytes an answer cites were in the version
+        it names, which is the part of a citation a mixed-up envelope cannot fake. An index version nobody recorded
+        resolves to a failure rather than to an error, because "nobody recorded that" is an answer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnvelopeQuery"
+      responses:
+        "200":
+          description: What the envelope resolves to, and whether it holds up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeResolution"
+        "400":
+          description: The envelope names no version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
 components:
   schemas:
     Problem:
@@ -1849,3 +2012,136 @@ components:
           type: string
         ingested_at:
           type: string
+
+    IndexManifest:
+      type: object
+      description: |
+        What an index version was built from. Every field is identity material - the embedder, the chunker, the
+        extractors and the engine all change what a query would match - so a manifest explains a version rather than
+        describing one.
+      required: [collection_id, engine, chunker, extractors, embedder, source_content_hashes]
+      properties:
+        collection_id:
+          type: string
+        collection_name:
+          type: string
+        shape_ref:
+          type: string
+        engine:
+          type: string
+          description: The retrieval engine that built the vectors, as a versioned reference such as "flat@1".
+        chunker:
+          type: string
+          description: The chunker's version, such as "chunk@1".
+        extractors:
+          type: string
+          description: The extractors' version, such as "text@1".
+        embedder:
+          type: string
+          description: The embedder's fingerprint, as "provider/model@dimensions".
+        max_chars:
+          type: integer
+          format: int32
+        source_content_hashes:
+          type: array
+          description: The hash of every source the version indexed, sorted.
+          items:
+            type: string
+
+    IndexVersionState:
+      type: object
+      required: [index_version_id, collection_id, shape_ref, watermark, active, superseded, manifest]
+      properties:
+        index_version_id:
+          type: string
+        collection_id:
+          type: string
+        shape_ref:
+          type: string
+        watermark:
+          type: integer
+          format: int64
+          description: The ledger position the version was built against, which is where a citation ends.
+        active:
+          type: boolean
+          description: Whether the version is the collection's live one.
+        superseded:
+          type: boolean
+          description: Whether it was once live and is not now. A superseded version stays readable.
+        activated_at:
+          type: string
+          description: When the version first went live.
+        deactivated_at:
+          type: string
+          description: When it stopped being live.
+        manifest:
+          $ref: "#/components/schemas/IndexManifest"
+
+    IndexBuild:
+      type: object
+      required: [collection_id, shape_ref]
+      properties:
+        collection_id:
+          type: string
+          description: The collection the version belongs to.
+        collection_name:
+          type: string
+          description: A name for humans, defaulting to the collection's id.
+        shape_ref:
+          type: string
+          description: The contract shape the corpus is mapped through.
+        path_prefix:
+          type: string
+          description: |
+            The path prefix that binds the collection, or empty for every source this deployment has. The binding is in
+            the request rather than in the manifest: which sources a collection binds can change without the version
+            changing.
+        activate:
+          type: boolean
+          description: Whether the built version becomes the collection's live one. Off unless the caller says so.
+
+    IndexActivation:
+      type: object
+      required: [collection_id]
+      properties:
+        collection_id:
+          type: string
+          description: The collection to cut over. A version can only be activated into its own collection.
+
+    EnvelopeQuery:
+      type: object
+      required: [index_version]
+      properties:
+        index_version:
+          type: string
+          description: The version the answer named.
+        ledger_watermark:
+          type: integer
+          format: int64
+          description: The ledger position the answer's index reflected.
+        sources:
+          type: array
+          description: The sources the answer cited.
+          items:
+            $ref: "#/components/schemas/SourceReference"
+
+    EnvelopeResolution:
+      type: object
+      required: [resolved, unrecorded_content_hashes]
+      properties:
+        resolved:
+          type: boolean
+          description: Whether the version exists and the cited bytes are in it.
+        failure:
+          type: string
+          description: Why the provenance does not hold up, or empty when it does.
+        version:
+          $ref: "#/components/schemas/IndexVersionState"
+        unrecorded_content_hashes:
+          type: array
+          description: |
+            The cited hashes the version's manifest does not record. A version records the bytes it indexed, so an
+            answer citing bytes outside that set cannot have come from it - which is the part of provenance a mixed-up
+            envelope cannot fake.
+          items:
+            type: string

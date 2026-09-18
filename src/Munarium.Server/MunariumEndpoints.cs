@@ -383,6 +383,109 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+        app.MapPost(
+            "/v1/indexes",
+            async (
+                WireIndexBuild request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.BuildIndexVersionAsync(request, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireIndexVersion version => TypedResults.Json(version, WireJson.Default.WireIndexVersion),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet(
+            "/v1/indexes/active",
+            async (
+                [FromQuery(Name = "collection_id")] string collectionId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .GetActiveIndexVersionAsync(collectionId, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireIndexVersion version => TypedResults.Json(version, WireJson.Default.WireIndexVersion),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet(
+            "/v1/indexes/{index_version_id}",
+            async (
+                [FromRoute(Name = "index_version_id")] string indexVersionId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .GetIndexVersionAsync(indexVersionId, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireIndexVersion version => TypedResults.Json(version, WireJson.Default.WireIndexVersion),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapPost(
+            "/v1/indexes/{index_version_id}/activate",
+            async (
+                [FromRoute(Name = "index_version_id")] string indexVersionId,
+                WireIndexActivation activation,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .ActivateIndexVersionAsync(indexVersionId, activation.CollectionId, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireIndexVersion version => TypedResults.Json(version, WireJson.Default.WireIndexVersion),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapPost(
+            "/v1/indexes/resolve",
+            async (
+                WireEnvelopeQuery query,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.ResolveEnvelopeAsync(query, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireEnvelopeResolution resolution => TypedResults.Json(
+                        resolution, WireJson.Default.WireEnvelopeResolution),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
         app.MapGet("/v1/shapes", (MunariumOperations operations) => operations.ListShapes());
 
 
