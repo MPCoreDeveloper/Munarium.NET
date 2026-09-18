@@ -133,6 +133,73 @@ public class EvidenceManifestTests
         Assert.Null(EvidenceStateNames.ParseState("deleted"));
     }
 
+    [Fact]
+    public void AWellFormedManifestValidates() => Manifest().Validate();
+
+    [Fact]
+    public void TheContractIdentityRulesAreEnforced()
+    {
+        Assert.Throws<ArgumentException>(() => (Manifest() with { Canon = "canon@2" }).Validate());
+        Assert.Throws<ArgumentException>(() => (Manifest() with { ContractVersion = "2.0.0" }).Validate());
+        Assert.Throws<ArgumentException>(() => (Manifest() with { Tenant = "  " }).Validate());
+        Assert.Throws<ArgumentException>(() => (Manifest() with { LogicalResultHash = "sha256:ABC" }).Validate());
+        Assert.Throws<ArgumentException>(() => (Manifest() with { ArtifactHash = "nope" }).Validate());
+    }
+
+    [Fact]
+    public void TheByteRulesAreEnforced()
+    {
+        Assert.Throws<ArgumentException>(() => (Manifest() with { BytesLength = -1 }).Validate());
+        Assert.Throws<ArgumentException>(() => (Manifest() with { MediaType = "application/json" }).Validate());
+
+        // The ceiling itself is allowed; one byte past it is not.
+        (Manifest() with { BytesLength = EvidenceContract.MaxArtifactBytes, MediaType = EvidenceContract.MediaTypeParquet })
+            .Validate();
+        Assert.Throws<ArgumentException>(() => (Manifest() with { BytesLength = EvidenceContract.MaxArtifactBytes + 1 }).Validate());
+    }
+
+    [Fact]
+    public void TheSchemaAndSnapshotRulesAreEnforced()
+    {
+        Assert.Throws<ArgumentException>(() => (Manifest() with { Schema = new EvidenceSchema([]) }).Validate());
+        Assert.Throws<ArgumentException>(() => (Manifest() with
+        {
+            Schema = new EvidenceSchema(
+            [
+                new EvidenceColumn { Id = "c1", Name = "region", Type = ColumnType.Text, Key = true },
+                new EvidenceColumn { Id = "c1", Name = "total", Type = ColumnType.ExactDecimal },
+            ]),
+        }).Validate());
+        Assert.Throws<ArgumentException>(() => (Manifest() with { SnapshotVector = [] }).Validate());
+        Assert.Throws<ArgumentException>(() => (Manifest() with { AuthorizationClass = Class(-1) }).Validate());
+    }
+
+    /// <summary>
+    /// One store compares these as text and another casts them to a timestamp, so a value that is not RFC 3339
+    /// was an error on one backend and undefined retention on the other.
+    /// </summary>
+    [Fact]
+    public void TheRetentionTimestampsHaveToBeRfc3339()
+    {
+        (Manifest() with { Retention = new Retention { ExpiresAt = "2026-09-17T00:00:00Z", LegalHold = true } }).Validate();
+        (Manifest() with { Retention = new Retention { ExpiresAt = "2026-09-17T00:00:00.123+02:00" } }).Validate();
+
+        Assert.Throws<ArgumentException>(() => (Manifest() with { Retention = new Retention { ExpiresAt = "2026-09-17" } }).Validate());
+        Assert.Throws<ArgumentException>(() => (Manifest() with { Retention = new Retention { PurgedAt = "soon" } }).Validate());
+    }
+
+    /// <summary>A result that cannot name its rows cannot be sealed at all.</summary>
+    [Fact]
+    public void TheRowIdentityRuleHasToBeSatisfiable()
+    {
+        Assert.Throws<ArgumentException>(() => (Manifest() with { Identity = new EvidenceIdentity(RowIdRule.Position) }).Validate());
+        (Manifest() with { Identity = new EvidenceIdentity(RowIdRule.Position) { OrderBy = ["region"] } }).Validate();
+        Assert.Throws<ArgumentException>(() => (Manifest() with
+        {
+            Schema = new EvidenceSchema([new EvidenceColumn { Id = "c1", Name = "region", Type = ColumnType.Text }]),
+        }).Validate());
+    }
+
     private static string Hash(char fill) => "sha256:" + new string(fill, 64);
 
     private static AuthorizationClass Class(int level, params string[] compartments) =>
@@ -150,7 +217,11 @@ public class EvidenceManifestTests
         MediaType = EvidenceContract.MediaTypeCsv,
         Source = new SourceRef("src-1", 3, "postgres"),
         Versions = new Versions { Policy = "policy-1" },
-        Schema = new EvidenceSchema([new EvidenceColumn { Id = "col-1", Name = "total", Type = ColumnType.ExactDecimal }]),
+        Schema = new EvidenceSchema(
+        [
+            new EvidenceColumn { Id = "col-1", Name = "region", Type = ColumnType.Text, Key = true },
+            new EvidenceColumn { Id = "col-2", Name = "total", Type = ColumnType.ExactDecimal },
+        ]),
         Identity = new EvidenceIdentity(RowIdRule.Keys),
         Completeness = new Completeness { Truncated = false },
         SnapshotVector = [new SnapshotMarker { SourceId = "src-1", ReplayLevel = "source_time_travel" }],

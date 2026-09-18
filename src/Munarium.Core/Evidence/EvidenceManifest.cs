@@ -121,4 +121,162 @@ public sealed record EvidenceManifest
 
         return string.Concat("dk-", Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(material))));
     }
+
+    /// <summary>
+    /// Validates the manifest at the door.
+    /// </summary>
+    /// <remarks>
+    /// The producer is strict about what it emits; this is the consumer being strict about what it will later
+    /// rely on, so a malformed manifest is refused at seal rather than discovered at resolution - when the
+    /// source is long gone and nothing can be repaired.
+    /// <para>
+    /// The first violation is thrown, not collected, because there is nothing useful a caller can do with the
+    /// second one: a manifest has to be re-sealed from a producer either way.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentException">Thrown on the first violation, with the reason in the message.</exception>
+    public void Validate()
+    {
+        if (!string.Equals(Canon, EvidenceContract.Canon, StringComparison.Ordinal))
+        {
+            throw Invalid(
+                $"canon must be '{EvidenceContract.Canon}', got '{Canon}'; this server implements exactly one "
+                    + "canonicalization version");
+        }
+
+        if (!EvidenceContract.MajorMatches(ContractVersion))
+        {
+            throw Invalid(
+                $"contract major version mismatch: manifest declares '{ContractVersion}', this server was built "
+                    + $"against '{EvidenceContract.Version}'. A major bump is a wire break, so the two trees "
+                    + "must be deployed together");
+        }
+
+        if (Tenant.Trim().Length == 0)
+        {
+            throw Invalid("tenant is required");
+        }
+
+        if (!EvidenceContract.IsHash(LogicalResultHash))
+        {
+            throw Invalid($"logical_result_hash must be 'sha256:<64 lowercase hex>', got '{LogicalResultHash}'");
+        }
+
+        if (!EvidenceContract.IsHash(ArtifactHash))
+        {
+            throw Invalid($"artifact_hash must be 'sha256:<64 lowercase hex>', got '{ArtifactHash}'");
+        }
+
+        if (BytesLength < 0)
+        {
+            throw Invalid("bytes_len must not be negative");
+        }
+
+        if (BytesLength > EvidenceContract.MaxArtifactBytes)
+        {
+            throw Invalid($"bytes_len {BytesLength} exceeds the {EvidenceContract.MaxArtifactBytes}-byte ceiling");
+        }
+
+        if (!IsAcceptedMediaType(MediaType))
+        {
+            throw Invalid(
+                $"media_type must be '{EvidenceContract.MediaTypeParquet}' or '{EvidenceContract.MediaTypeCsv}', "
+                    + $"got '{MediaType}'");
+        }
+
+        ValidateSchema();
+        ValidateSnapshotVector();
+
+        if (AuthorizationClass.AccessLevel < 0)
+        {
+            throw Invalid("authorization_class.access_level must not be negative");
+        }
+
+        ValidateRetention();
+        ValidateRowIdentity();
+    }
+
+    private void ValidateSchema()
+    {
+        if (Schema.Columns.Count == 0)
+        {
+            throw Invalid("schema.columns must not be empty");
+        }
+
+        // A duplicate column id would make two columns indistinguishable in a citation, which is the one thing
+        // a column id exists to prevent.
+        var distinct = Schema.Columns.Select(column => column.Id).Distinct(StringComparer.Ordinal).Count();
+
+        if (distinct != Schema.Columns.Count)
+        {
+            throw Invalid("schema.columns contains duplicate column ids");
+        }
+    }
+
+    private void ValidateSnapshotVector()
+    {
+        if (SnapshotVector.Count == 0)
+        {
+            throw Invalid(
+                "snapshot_vector must name at least one source; an artifact with no snapshot marker cannot "
+                    + "state its freshness");
+        }
+    }
+
+    private void ValidateRetention()
+    {
+        if (Retention is not { } retention)
+        {
+            return;
+        }
+
+        foreach (var (field, value) in new[]
+        {
+            ("expires_at", retention.ExpiresAt),
+            ("purged_at", retention.PurgedAt),
+        })
+        {
+            if (value is { Length: > 0 } && !IsRfc3339(value))
+            {
+                throw Invalid($"retention.{field} must be an RFC 3339 timestamp, got '{value}'");
+            }
+        }
+    }
+
+    // The row identity rule has to be satisfiable, which is where it can still be acted on. A result that
+    // cannot name its rows cannot be sealed at all: under a positional rule the row ids mean nothing without a
+    // total order, so a citation of "row 7" would resolve to whatever row 7 happened to be.
+    private void ValidateRowIdentity()
+    {
+        switch (Identity.RowIdRule)
+        {
+            case RowIdRule.Position when Identity.OrderBy.Count == 0:
+                throw Invalid(
+                    "identity.row_id_rule is 'position' but order_by is empty; positional row ids are "
+                        + "meaningless without a total ordering");
+
+            case RowIdRule.Keys when !Schema.Columns.Any(column => column.Key):
+                throw Invalid(
+                    "identity.row_id_rule is 'keys' but no column is marked key; the row id would have "
+                        + "nothing to derive from");
+
+            default:
+                return;
+        }
+    }
+
+    // Retention timestamps are compared as text by one store and cast to a timestamp by another, so a value
+    // that is not RFC 3339 was an error on one backend and an artifact with undefined retention on the other.
+    // Refused at the door instead.
+    private static bool IsRfc3339(string value) => DateTimeOffset.TryParseExact(
+        value,
+        ["yyyy-MM-dd'T'HH:mm:ssK", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK"],
+        CultureInfo.InvariantCulture,
+        DateTimeStyles.None,
+        out _);
+
+    private static bool IsAcceptedMediaType(string mediaType) =>
+        mediaType is EvidenceContract.MediaTypeParquet or EvidenceContract.MediaTypeCsv;
+
+    private static ArgumentException Invalid(string reason) => new(reason);
 }
