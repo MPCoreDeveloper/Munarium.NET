@@ -41,6 +41,16 @@ internal sealed class InMemorySourceRegistry : ISourceRegistry
         ValueTask.FromResult(_rows.GetValueOrDefault(Key(tenant, path)));
 
     /// <inheritdoc />
+    public ValueTask<SourceRecord?> GetAsync(
+        string tenant,
+        string sourceId,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(
+            _rows.Values.FirstOrDefault(
+                row => string.Equals(row.Tenant, tenant, StringComparison.Ordinal)
+                    && string.Equals(row.SourceId, sourceId, StringComparison.Ordinal)));
+
+    /// <inheritdoc />
     public ValueTask<IReadOnlyList<SourceRecord>> ListAsync(
         string tenant,
         string? pathPrefix = null,

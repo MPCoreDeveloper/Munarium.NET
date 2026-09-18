@@ -36,6 +36,23 @@ public interface ISourceRegistry
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reads the row for a source identity.
+    /// </summary>
+    /// <remarks>
+    /// A second lookup rather than a derived one: a source id is a hash of tenant and path, so it cannot be turned back
+    /// into a path - which is deliberate, because an id that revealed its path would leak the path to anyone holding an
+    /// id, and a citation carries ids.
+    /// </remarks>
+    /// <param name="tenant">The tenant.</param>
+    /// <param name="sourceId">The source identity, as <c>src-…</c>.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The row, or <see langword="null"/> when no source with that identity was ingested.</returns>
+    ValueTask<SourceRecord?> GetAsync(
+        string tenant,
+        string sourceId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Lists a tenant's rows, optionally only those under a path prefix.
     /// </summary>
     /// <remarks>
