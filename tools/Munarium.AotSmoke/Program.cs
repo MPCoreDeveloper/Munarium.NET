@@ -37,15 +37,15 @@ if (head != new SequenceNumber(1))
     return 1;
 }
 
-// The retrieval path too: SharpCoreDB's vector index has to survive AOT as well.
+// The retrieval path too: the index host and SharpCoreDB's vector index have to survive AOT as well.
 var embedder = new DeterministicEmbeddingProvider(64);
-using var retriever = new SharpCoreDbRetriever(64, "aot-index@1", head);
-retriever.Index(
+using var host = new SharpCoreDbIndexHost(64, "aot-index@1", head);
+host.ServingWriter.Index(
     new SourceReference("chunk-1", "source-1", "docs/policy.pdf", "sha256:policy", ChunkOrdinal: 0),
     "the supplier is north",
     embedder.Embed("the supplier is north"));
 
-var retrieval = await retriever.SearchAsync(new RetrievalQuery
+var retrieval = await host.ServingReader.SearchAsync(new RetrievalQuery
 {
     Text = "supplier north",
     Embedding = embedder.Embed("supplier north"),

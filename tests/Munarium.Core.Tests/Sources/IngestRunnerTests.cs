@@ -2,6 +2,7 @@ namespace Munarium.Core.Tests.Sources;
 
 using Munarium.Core.Tests.Support;
 using Munarium.Evidence;
+using Munarium.Ledger;
 using Munarium.Sources;
 
 /// <summary>
@@ -10,6 +11,31 @@ using Munarium.Sources;
 /// </summary>
 public class IngestRunnerTests
 {
+    /// <summary>
+    /// A document goes in and comes back out of retrieval, with the citation resolving to the path and hash it was
+    /// stored under. This is the whole chain in one test: source, row, chunks, index, envelope, watermark.
+    /// </summary>
+    /// <remarks>
+    /// The ingest writes into the serving writer and answers with that writer's own version, so the chunks and the
+    /// answer cannot disagree - even if a cutover happened while the ingest was running.
+    /// </remarks>
+    [Fact]
+    public async Task AnIngestLandsInTheVersionThatServesNow()
+    {
+        var fixture = Fixture();
+        var second = fixture.Host.Build("idx-second", new SequenceNumber(7));
+        fixture.Host.Serve("idx-second");
+
+        var ingested = Ingested(
+            await fixture.Runner.IngestAsync("acme", "docs/note.txt", "text/plain", Bytes(Document)));
+
+        Assert.Equal("idx-second", ingested.IndexVersion);
+        Assert.Equal(0, fixture.Index.Count);
+        Assert.Equal(ingested.ChunksIndexed, second.Writer.Count);
+    }
+
+    private const string Version = "idx-test";
+
     private const string Document =
         "The Bell rang twice.\n\n" +
         "A second paragraph, longer than the first, with a sentence in it.\n\n" +
@@ -188,30 +214,37 @@ public class IngestRunnerTests
     {
         var ingest = new SourceIngest(new InMemorySourceStore(), new InMemorySourceRegistry());
         var provider = new RecordingEmbeddingProvider();
-        var index = new RecordingIndexWriter();
+        var host = new FakeIndexHost();
 
-        Assert.Throws<ArgumentException>(() => new IngestRunner(ingest, provider, index, model: " "));
+        Assert.Throws<ArgumentException>(() => new IngestRunner(ingest, provider, host, model: " "));
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => new IngestRunner(ingest, provider, index, model: "m", maxChunkChars: 0));
+            () => new IngestRunner(ingest, provider, host, model: "m", maxChunkChars: 0));
     }
 
     private static (IngestRunner Runner,
         InMemorySourceStore Store,
         InMemorySourceRegistry Registry,
         RecordingEmbeddingProvider Provider,
-        RecordingIndexWriter Index) Fixture(int? vectorCount = null, int maxChunkChars = 30)
+        RecordingIndexWriter Index,
+        FakeIndexHost Host) Fixture(int? vectorCount = null, int maxChunkChars = 30)
     {
         var store = new InMemorySourceStore();
         var registry = new InMemorySourceRegistry();
         var provider = new RecordingEmbeddingProvider(vectorCount: vectorCount);
-        var index = new RecordingIndexWriter();
+        var host = new FakeIndexHost();
+
+        // A deployment starts by serving something: the ingest's own test double builds one version and serves it, so
+        // what the runner answers matches what the host would say.
+        host.Build(Version, SequenceNumber.Zero);
+        host.Serve(Version);
 
         return (
-            new IngestRunner(new SourceIngest(store, registry), provider, index, "test-model", maxChunkChars),
+            new IngestRunner(new SourceIngest(store, registry), provider, host, "test-model", maxChunkChars),
             store,
             registry,
             provider,
-            index);
+            (RecordingIndexWriter)host.Instances[Version].Writer,
+            host);
     }
 
     private static byte[] Bytes(string text) => System.Text.Encoding.UTF8.GetBytes(text);

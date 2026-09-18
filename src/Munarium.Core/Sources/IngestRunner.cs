@@ -23,13 +23,13 @@ using Munarium.Text;
 /// </remarks>
 /// <param name="ingest">The storage path: validate, hash, write, record.</param>
 /// <param name="provider">The model seam, which the embeddings come from.</param>
-/// <param name="index">The index version the chunks are written into.</param>
+/// <param name="host">The index instances, whose serving writer is where the chunks land.</param>
 /// <param name="model">The embedding model to call.</param>
 /// <param name="maxChunkChars">The largest a chunk may be, which is index identity material.</param>
 public sealed class IngestRunner(
     SourceIngest ingest,
     IModelProvider provider,
-    IIndexWriter index,
+    IIndexHost host,
     string model,
     int maxChunkChars = IngestRunner.DefaultChunkChars)
 {
@@ -42,7 +42,7 @@ public sealed class IngestRunner(
 
     private readonly SourceIngest _ingest = ingest ?? throw new ArgumentNullException(nameof(ingest));
     private readonly IModelProvider _provider = provider ?? throw new ArgumentNullException(nameof(provider));
-    private readonly IIndexWriter _index = index ?? throw new ArgumentNullException(nameof(index));
+    private readonly IIndexHost _host = host ?? throw new ArgumentNullException(nameof(host));
     private readonly string _model = string.IsNullOrWhiteSpace(model)
         ? throw new ArgumentException("The embedding model must be named.", nameof(model))
         : model;
@@ -91,7 +91,7 @@ public sealed class IngestRunner(
             : throw new InvalidOperationException("The ingest answered with neither a row nor a rejection.");
 
         return ingested.Kind == SourceIngestKind.Unchanged
-            ? new IngestedDocument(ingested.Record, ingested.Kind, 0, _index.IndexVersion)
+            ? new IngestedDocument(ingested.Record, ingested.Kind, 0, _host.ServingVersion)
             : await IndexAsync(ingested, mediaType, bytes, cancellationToken).ConfigureAwait(false);
     }
 
@@ -101,13 +101,17 @@ public sealed class IngestRunner(
         ReadOnlyMemory<byte> bytes,
         CancellationToken cancellationToken)
     {
+        // The serving writer is read once and then used: a cutover while this runs must not send half the chunks into
+        // one version and the rest into another, and the answer names the writer's own version, so what it says is
+        // where the chunks actually went.
+        var writer = _host.ServingWriter;
         var chunks = TextChunker.Chunk(TextExtractor.Extract(mediaType, bytes), _maxChunkChars);
 
         if (chunks.Count == 0)
         {
             // A document of nothing but whitespace is a stored source with nothing to retrieve. Recorded rather than
             // refused: the bytes are real, and a caller asking for that path deserves an answer.
-            return new IngestedDocument(ingested.Record, ingested.Kind, 0, _index.IndexVersion);
+            return new IngestedDocument(ingested.Record, ingested.Kind, 0, writer.IndexVersion);
         }
 
         var response = await _provider
@@ -127,13 +131,13 @@ public sealed class IngestRunner(
 
         for (var ordinal = 0; ordinal < chunks.Count; ordinal++)
         {
-            _index.Index(
+            writer.Index(
                 Reference(ingested.Record, chunks[ordinal]),
                 chunks[ordinal].Text,
                 response.Vectors[ordinal].Span);
         }
 
-        return new IngestedDocument(ingested.Record, ingested.Kind, chunks.Count, _index.IndexVersion);
+        return new IngestedDocument(ingested.Record, ingested.Kind, chunks.Count, writer.IndexVersion);
     }
 
     private static SourceReference Reference(SourceRecord record, TextChunk chunk) =>
@@ -156,7 +160,9 @@ public sealed class IngestRunner(
 /// <param name="Record">The source row as recorded.</param>
 /// <param name="Kind">Whether the path was new, replaced, or already held these bytes.</param>
 /// <param name="ChunksIndexed">How many chunks were written into the index.</param>
-/// <param name="IndexVersion">The index version they were written into.</param>
+/// <param name="IndexVersion">
+/// The index version the chunks were written into, or the version that was serving when there was nothing to write.
+/// </param>
 public sealed record IngestedDocument(
     SourceRecord Record,
     SourceIngestKind Kind,

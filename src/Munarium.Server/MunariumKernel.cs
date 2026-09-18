@@ -9,7 +9,6 @@ using Munarium.Governance;
 using Munarium.Ledger;
 using Munarium.Providers;
 using Munarium.Promises;
-using Munarium.Retrieval;
 using Munarium.Shapes;
 using Munarium.Sources;
 using Munarium.Store.SharpCoreDb;
@@ -40,25 +39,33 @@ public sealed class MunariumKernel : IAsyncDisposable
     /// </remarks>
     public const string Tenant = "default";
 
+    /// <summary>
+    /// The index version a deployment starts by serving.
+    /// </summary>
+    /// <remarks>
+    /// Named rather than derived, and deliberately not an <c>idx-</c> identity: this version was composed at startup and
+    /// not built from recorded sources, so no manifest describes it. An answer from it therefore cites a version the
+    /// catalogue cannot resolve - which is a true statement about an index nobody built, and the honest one to make
+    /// until a build records a version that can be verified.
+    /// </remarks>
+    public const string InitialIndexVersion = "munarium@1";
+
     private readonly ServiceProvider _provider;
     private readonly IDatabase _database;
-    private readonly SharpCoreDbRetriever _retriever;
-    private readonly DeterministicEmbeddingProvider _embedder;
+    private readonly SharpCoreDbIndexHost _host;
 
     // Internal rather than public: a kernel is composed through Create, so a caller cannot build one
-    // without the ledger, the shapes and the retriever that make it work.
+    // without the ledger, the shapes and the index host that make it work.
     internal MunariumKernel(
         ServiceProvider provider,
         IDatabase database,
-        SharpCoreDbRetriever retriever,
-        DeterministicEmbeddingProvider embedder,
+        SharpCoreDbIndexHost host,
         MunariumOperations operations,
         ShapeRegistry shapes)
     {
         _provider = provider;
         _database = database;
-        _retriever = retriever;
-        _embedder = embedder;
+        _host = host;
         Operations = operations;
         Shapes = shapes;
     }
@@ -87,7 +94,12 @@ public sealed class MunariumKernel : IAsyncDisposable
         var storage = new SharpCoreDbStorageBackend(new SharpCoreDbEventStore(database));
 
         var embedder = new DeterministicEmbeddingProvider(EmbeddingDimensions);
-        var retriever = new SharpCoreDbRetriever(EmbeddingDimensions, "munarium@1", new SequenceNumber(0));
+
+        // One host holds every index instance this process has: the version it starts by serving, and the ones a build
+        // creates. The version it starts with is composed rather than built - nobody derived it from recorded sources -
+        // so an answer from it cites a version the catalogue does not know, which is exactly what provenance resolution
+        // reports until a build records one.
+        var host = new SharpCoreDbIndexHost(EmbeddingDimensions, InitialIndexVersion, SequenceNumber.Zero);
 
         // The conflict gate reads the ledger, so it is built over the read model rather than over the
         // command being judged: that is the whole point of judging a write against what is already there.
@@ -124,7 +136,7 @@ public sealed class MunariumKernel : IAsyncDisposable
         var ingest = new IngestRunner(
             new SourceIngest(sourceStore, sourceRegistry),
             embedder,
-            retriever,
+            host,
             DeterministicEmbeddingProvider.ModelName);
 
         var operations = new MunariumOperations(
@@ -137,7 +149,7 @@ public sealed class MunariumKernel : IAsyncDisposable
             counters,
             facts,
             shapes,
-            retriever,
+            host,
             embedder,
             new Composer(facts),
             snapshots,
@@ -146,29 +158,13 @@ public sealed class MunariumKernel : IAsyncDisposable
             sourceRegistry,
             Tenant);
 
-        return new MunariumKernel(provider, database, retriever, embedder, operations, shapes);
-    }
-
-    /// <summary>
-    /// Indexes one document chunk, which is what the retrieval leg reads.
-    /// </summary>
-    /// <remarks>
-    /// Ingestion is not on the wire yet - this is the seam the ingest surface will land on, kept here
-    /// so the retrieval path in a server can be exercised rather than only described.
-    /// </remarks>
-    /// <param name="source">Where the chunk came from.</param>
-    /// <param name="text">The chunk text.</param>
-    public void Index(SourceReference source, string text)
-    {
-        ArgumentNullException.ThrowIfNull(source);
-
-        _retriever.Index(source, text, _embedder.Embed(text));
+        return new MunariumKernel(provider, database, host, operations, shapes);
     }
 
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
-        _retriever.Dispose();
+        _host.Dispose();
         await _database.DisposeAsync().ConfigureAwait(false);
         await _provider.DisposeAsync().ConfigureAwait(false);
     }

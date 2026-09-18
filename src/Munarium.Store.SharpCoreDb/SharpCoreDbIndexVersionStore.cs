@@ -160,7 +160,14 @@ public sealed class SharpCoreDbIndexVersionStore(
                 Write(table, live with { Active = false, DeactivatedAt = now });
             }
 
-            var activated = target with { Active = true, ActivatedAt = now, DeactivatedAt = null };
+            // Reactivating a superseded version keeps the instant it first went live: when it started serving is a fact
+            // about the version, not about this call.
+            var activated = target with
+            {
+                Active = true,
+                ActivatedAt = target.ActivatedAt ?? now,
+                DeactivatedAt = null,
+            };
 
             Write(table, activated);
             Persist();

@@ -35,7 +35,7 @@ public sealed class MunariumOperations(
     CounterLedger counters,
     FactLedger facts,
     ShapeRegistry shapes,
-    IRetrievalBackend retrieval,
+    IIndexHost indexHost,
     IModelProvider embedder,
     Composer composer,
     MeshSnapshotBuilder snapshots,
@@ -75,7 +75,7 @@ public sealed class MunariumOperations(
     private readonly CounterLedger _counters = counters ?? throw new ArgumentNullException(nameof(counters));
     private readonly FactLedger _facts = facts ?? throw new ArgumentNullException(nameof(facts));
     private readonly ShapeRegistry _shapes = shapes ?? throw new ArgumentNullException(nameof(shapes));
-    private readonly IRetrievalBackend _retrieval = retrieval ?? throw new ArgumentNullException(nameof(retrieval));
+    private readonly IIndexHost _index = indexHost ?? throw new ArgumentNullException(nameof(indexHost));
     private readonly IModelProvider _embedder = embedder ?? throw new ArgumentNullException(nameof(embedder));
     private readonly Composer _composer = composer ?? throw new ArgumentNullException(nameof(composer));
     private readonly MeshSnapshotBuilder _snapshots = snapshots ?? throw new ArgumentNullException(nameof(snapshots));
@@ -746,7 +746,9 @@ public sealed class MunariumOperations(
             new EmbeddingRequest { Model = _embeddingModel, Inputs = [query.Text] },
             cancellationToken).ConfigureAwait(false);
 
-        var result = await _retrieval.SearchAsync(
+        // The version that answers is read now rather than held: a cutover is a serving decision, and a caller that
+        // captured a reader would keep asking the version that stopped serving.
+        var result = await _index.ServingReader.SearchAsync(
             new RetrievalQuery
             {
                 Text = query.Text,

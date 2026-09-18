@@ -124,8 +124,16 @@ public class SharpCoreDbIndexVersionStoreTests
         var fixture = SourceStoreFixture.Create();
         var path = fixture.DatabasePath;
 
-        await fixture.IndexVersions.RegisterAsync(Version("idx-persistent", 4));
-        await fixture.IndexVersions.ActivateAsync("acme", "col-docs", "idx-persistent");
+        var recorded = await fixture.IndexVersions.RegisterAsync(Version("idx-persistent", 4));
+        var first = await fixture.IndexVersions.ActivateAsync("acme", "col-docs", "idx-persistent");
+
+        // Superseded by another version, then brought back: the instant it first went live stays.
+        await fixture.IndexVersions.RegisterAsync(Version("idx-later", 5));
+        await fixture.IndexVersions.ActivateAsync("acme", "col-docs", "idx-later");
+        var again = await fixture.IndexVersions.ActivateAsync("acme", "col-docs", recorded.Id);
+
+        Assert.Equal(first?.ActivatedAt, again?.ActivatedAt);
+
         await fixture.DisposeAsync();
 
         await using var reopened = SourceStoreFixture.Create(path);
