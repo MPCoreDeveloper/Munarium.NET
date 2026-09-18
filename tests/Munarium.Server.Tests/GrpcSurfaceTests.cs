@@ -416,6 +416,60 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
             Assert.Contains("AVOID: 'the bell'", counters.Data.Directives, StringComparison.Ordinal);
         });
 
+    /// <summary>
+    /// A key travels over gRPC the way it travels over JSON - in the body where the command has one, and as a field where
+    /// the route carries nothing else - and it is answered rather than done again on both.
+    /// </summary>
+    [Fact]
+    public async Task AKeyedCommandIsAnsweredRatherThanDoneAgainOverGrpc() =>
+        await WithClient(async client =>
+        {
+            string released = LedgerIds.New();
+
+            await client.LockAnchorAsync(new LockAnchorRequest
+            {
+                VersionId = "grpc-keyed-release",
+                Body = new AnchorLock { Subject = "service", Key = "api_version", Value = "v2" },
+            });
+
+            var first = await client.ReleaseAnchorAsync(new ReleaseAnchorRequest
+            {
+                VersionId = "grpc-keyed-release",
+                DetailKey = "service.api_version",
+                IdempotencyKey = released,
+            });
+
+            Assert.True(first.Data.Released);
+
+            // Nothing is locked now, so an unkeyed release would answer "nothing was released": the retry is owed the
+            // answer of the attempt that removed the lock.
+            var retried = await client.ReleaseAnchorAsync(new ReleaseAnchorRequest
+            {
+                VersionId = "grpc-keyed-release",
+                DetailKey = "service.api_version",
+                IdempotencyKey = released,
+            });
+
+            Assert.True(retried.Data.Released);
+
+            string counted = LedgerIds.New();
+
+            await client.RecordCounterAsync(new RecordCounterRequest
+            {
+                VersionId = "grpc-keyed-release",
+                Body = new CounterRecording { Key = "the bell", Total = 4, IdempotencyKey = counted },
+            });
+
+            // The retry reports a different total, and is told the one that landed.
+            var answered = await client.RecordCounterAsync(new RecordCounterRequest
+            {
+                VersionId = "grpc-keyed-release",
+                Body = new CounterRecording { Key = "the bell", Total = 9, IdempotencyKey = counted },
+            });
+
+            Assert.Equal(4, answered.Data.Total);
+        });
+
     /// <summary>The same batch a JSON caller would send, built for the gRPC surface.</summary>
     private static ClaimBatchRequest Batch(params (string Subject, string Key, string Value)[] claims)
     {

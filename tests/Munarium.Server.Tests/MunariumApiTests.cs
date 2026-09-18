@@ -1353,6 +1353,197 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
             "tester",
             key);
 
+    /// <summary>
+    /// A key belongs to the command rather than to one family of commands: every command that records something is keyed
+    /// the same way, so a retry is answered rather than done again. This one reports a different total, which is what a
+    /// lost answer looks like from the caller's side, and it must be told what landed rather than have a second
+    /// measurement recorded under its key.
+    /// </summary>
+    [Fact]
+    public async Task ARetriedCounterUnderOneKeyIsAnsweredWithTheTotalThatLanded()
+    {
+        string key = LedgerIds.New();
+
+        using var first = await _client.PostAsJsonAsync(
+            "/v1/versions/version-counter-keyed/counters",
+            new WireCounterRecording("the bell", 4, 6, key),
+            WireJson.Default.WireCounterRecording);
+
+        var recorded = (await first.Content.ReadFromJsonAsync(WireJson.Default.WireCounter))!;
+
+        Assert.Equal(4, recorded.Total);
+
+        using var retried = await _client.PostAsJsonAsync(
+            "/v1/versions/version-counter-keyed/counters",
+            new WireCounterRecording("the bell", 9, 6, key),
+            WireJson.Default.WireCounterRecording);
+
+        var answered = (await retried.Content.ReadFromJsonAsync(WireJson.Default.WireCounter))!;
+
+        Assert.Equal(recorded, answered);
+
+        var counters = await GetAsync("/v1/versions/version-counter-keyed/counters", WireJson.Default.WireCounterList);
+
+        Assert.Equal(4, Assert.Single(counters.Counters).Total);
+    }
+
+    /// <summary>A retry that carries a different value is a lost answer, not a second lock.</summary>
+    [Fact]
+    public async Task ARetriedLockUnderOneKeyIsAnsweredWithTheValueThatWasLocked()
+    {
+        string key = LedgerIds.New();
+
+        using var locked = await _client.PostAsJsonAsync(
+            "/v1/versions/version-anchor-keyed/anchors",
+            new WireAnchorLock("service", "api_version", "v2", string.Empty, string.Empty, key),
+            WireJson.Default.WireAnchorLock);
+
+        var anchor = (await locked.Content.ReadFromJsonAsync(WireJson.Default.WireAnchor))!;
+
+        Assert.Equal("v2", anchor.LockedValue);
+
+        using var retried = await _client.PostAsJsonAsync(
+            "/v1/versions/version-anchor-keyed/anchors",
+            new WireAnchorLock("service", "api_version", "v3", string.Empty, string.Empty, key),
+            WireJson.Default.WireAnchorLock);
+
+        Assert.Equal("v2", (await retried.Content.ReadFromJsonAsync(WireJson.Default.WireAnchor))!.LockedValue);
+
+        var anchors = await GetAsync("/v1/versions/version-anchor-keyed/anchors", WireJson.Default.WireAnchorList);
+
+        Assert.Equal("v2", Assert.Single(anchors.Anchors).LockedValue);
+    }
+
+    /// <summary>
+    /// A promise key identifies the obligation, so a retry under one key opens one promise rather than a second one - and
+    /// is answered rather than refused as a key that is already open.
+    /// </summary>
+    [Fact]
+    public async Task ARetriedPromiseUnderOneKeyOpensOnePromise()
+    {
+        string key = LedgerIds.New();
+
+        WirePromiseRegistration registration =
+            new("audit-report", "deliverable", "an audit report", "release", "compliance", key);
+
+        using var opened = await _client.PostAsJsonAsync(
+            "/v1/versions/version-promise-keyed/promises", registration, WireJson.Default.WirePromiseRegistration);
+
+        Assert.Equal(HttpStatusCode.OK, opened.StatusCode);
+
+        var promise = (await opened.Content.ReadFromJsonAsync(WireJson.Default.WirePromise))!;
+
+        using var retried = await _client.PostAsJsonAsync(
+            "/v1/versions/version-promise-keyed/promises", registration, WireJson.Default.WirePromiseRegistration);
+
+        Assert.Equal(HttpStatusCode.OK, retried.StatusCode);
+
+        var answered = (await retried.Content.ReadFromJsonAsync(WireJson.Default.WirePromise))!;
+
+        Assert.Equal(promise.PromiseId, answered.PromiseId);
+
+        var open = await GetAsync("/v1/versions/version-promise-keyed/promises", WireJson.Default.WirePromiseList);
+
+        Assert.Single(open.Promises);
+    }
+
+    /// <summary>
+    /// Nothing is locked at the second attempt, so an unkeyed release would answer "nothing was released" - a different
+    /// answer to the same command. The retry is owed the answer of the attempt that removed the lock.
+    /// </summary>
+    [Fact]
+    public async Task ARetriedReleaseUnderOneKeyIsNotAnsweredAsNothingReleased()
+    {
+        string locked = LedgerIds.New();
+        string released = LedgerIds.New();
+        string path = "/v1/versions/version-release-keyed/anchors/service.api_version/release";
+
+        await _client.PostAsJsonAsync(
+            "/v1/versions/version-release-keyed/anchors",
+            new WireAnchorLock("service", "api_version", "v2", string.Empty, string.Empty, locked),
+            WireJson.Default.WireAnchorLock);
+
+        using var first = await _client.PostAsync($"{path}?idempotency_key={released}", content: null);
+
+        Assert.True((await first.Content.ReadFromJsonAsync(WireJson.Default.WireAnchorRelease))!.Released);
+
+        using var retried = await _client.PostAsync($"{path}?idempotency_key={released}", content: null);
+
+        Assert.True((await retried.Content.ReadFromJsonAsync(WireJson.Default.WireAnchorRelease))!.Released);
+    }
+
+    /// <summary>
+    /// The promise is settled at the second attempt, so an unkeyed fulfilment would answer "not fulfilled": the retry has
+    /// to be told that the fulfilment it is retrying is the one that settled the obligation.
+    /// </summary>
+    [Fact]
+    public async Task ARetriedFulfilmentUnderOneKeyIsNotSettledTwice()
+    {
+        string key = LedgerIds.New();
+        string path = "/v1/versions/version-fulfil-keyed/promises/audit-report/fulfill";
+
+        await _client.PostAsJsonAsync(
+            "/v1/versions/version-fulfil-keyed/promises",
+            new WirePromiseRegistration("audit-report", "deliverable", "an audit report", "release", "compliance"),
+            WireJson.Default.WirePromiseRegistration);
+
+        using var first = await _client.PostAsync($"{path}?idempotency_key={key}", content: null);
+
+        Assert.True((await first.Content.ReadFromJsonAsync(WireJson.Default.WirePromiseFulfilment))!.Fulfilled);
+
+        using var retried = await _client.PostAsync($"{path}?idempotency_key={key}", content: null);
+
+        Assert.True((await retried.Content.ReadFromJsonAsync(WireJson.Default.WirePromiseFulfilment))!.Fulfilled);
+    }
+
+    /// <summary>
+    /// A version is a claim, so creating one twice is refused because the identity is taken - unless it is the same
+    /// command retried, which the key says it is.
+    /// </summary>
+    [Fact]
+    public async Task ARetriedVersionCreationIsAnsweredWithTheVersionItCreated()
+    {
+        string key = LedgerIds.New();
+
+        using var first = await PostVersionAsync(
+            new WireVersionRequest("version-created-keyed", string.Empty, string.Empty, "keyed", "tester", key));
+
+        var created = (await first.Content.ReadFromJsonAsync(WireJson.Default.WireVersion))!;
+
+        using var retried = await PostVersionAsync(
+            new WireVersionRequest("version-created-keyed", string.Empty, string.Empty, "keyed", "tester", key));
+
+        Assert.Equal(HttpStatusCode.OK, retried.StatusCode);
+        Assert.Equal(created, (await retried.Content.ReadFromJsonAsync(WireJson.Default.WireVersion))!);
+    }
+
+    /// <summary>
+    /// With no id given, the version is minted during the command and the caller cannot name it on a retry: the key is the
+    /// only thing that can make the retry land on the version that was created rather than on a second one.
+    /// </summary>
+    [Fact]
+    public async Task AVersionWithAGeneratedIdCanBeRetriedUnderOneKey()
+    {
+        string key = LedgerIds.New();
+
+        using var first = await PostVersionAsync(
+            new WireVersionRequest(string.Empty, string.Empty, string.Empty, "generated", "tester", key));
+
+        var created = (await first.Content.ReadFromJsonAsync(WireJson.Default.WireVersion))!;
+
+        using var retried = await PostVersionAsync(
+            new WireVersionRequest(string.Empty, string.Empty, string.Empty, "generated", "tester", key));
+
+        var answered = (await retried.Content.ReadFromJsonAsync(WireJson.Default.WireVersion))!;
+
+        Assert.Equal(created.VersionId, answered.VersionId);
+
+        var head = await GetAsync($"/v1/versions/{created.VersionId}/head", WireJson.Default.WireVersionHead);
+
+        // One claim, which is the version's own: the retry added nothing to the ledger.
+        Assert.Equal(1, head.Head);
+    }
+
     [Fact]
     public async Task AnIndexVersionThatIsNotRecordedIsNotFound()
     {

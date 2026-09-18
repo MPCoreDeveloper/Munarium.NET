@@ -38,7 +38,8 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
                     request.Body?.ParentVersionId ?? string.Empty,
                     request.Body?.AsOfDate ?? string.Empty,
                     request.Body?.Label ?? string.Empty,
-                    request.Body?.Actor ?? string.Empty),
+                    request.Body?.Actor ?? string.Empty,
+                    request.Body?.IdempotencyKey ?? string.Empty),
                 context.CancellationToken)
             .ConfigureAwait(false);
 
@@ -126,7 +127,8 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
                     request.Body?.Key ?? string.Empty,
                     request.Body?.Value ?? string.Empty,
                     request.Body?.ScopePath ?? string.Empty,
-                    request.Body?.Evidence ?? string.Empty),
+                    request.Body?.Evidence ?? string.Empty,
+                    request.Body?.IdempotencyKey ?? string.Empty),
                 context.CancellationToken)
             .ConfigureAwait(false);
 
@@ -162,7 +164,7 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         ServerCallContext context)
     {
         var result = await _operations
-            .ReleaseAnchorAsync(request.VersionId, request.DetailKey, context.CancellationToken)
+            .ReleaseAnchorAsync(request.VersionId, request.DetailKey, request.IdempotencyKey, context.CancellationToken)
             .ConfigureAwait(false);
 
         return result switch
@@ -188,7 +190,8 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
                     request.Body?.Kind ?? string.Empty,
                     request.Body?.Description ?? string.Empty,
                     request.Body?.OriginScope ?? string.Empty,
-                    request.Body?.DueScope ?? string.Empty),
+                    request.Body?.DueScope ?? string.Empty,
+                    request.Body?.IdempotencyKey ?? string.Empty),
                 context.CancellationToken)
             .ConfigureAwait(false);
 
@@ -235,7 +238,7 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         ServerCallContext context)
     {
         var result = await _operations
-            .FulfilPromiseAsync(request.VersionId, request.Key, context.CancellationToken)
+            .FulfilPromiseAsync(request.VersionId, request.Key, request.IdempotencyKey, context.CancellationToken)
             .ConfigureAwait(false);
 
         return result switch
@@ -259,7 +262,8 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
                 new WireCounterRecording(
                     request.Body?.Key ?? string.Empty,
                     request.Body?.Total ?? 0,
-                    request.Body?.Budget ?? 0),
+                    request.Body?.Budget ?? 0,
+                    request.Body?.IdempotencyKey ?? string.Empty),
                 context.CancellationToken)
             .ConfigureAwait(false);
 

@@ -18,6 +18,24 @@ public static class IdempotencyKeys
     /// <summary>The scope of a claim batch write.</summary>
     public const string ClaimBatch = "claim-batches";
 
+    /// <summary>The scope of a lock on a detail.</summary>
+    public const string AnchorLock = "anchors.lock";
+
+    /// <summary>The scope of a release of a lock.</summary>
+    public const string AnchorRelease = "anchors.release";
+
+    /// <summary>The scope of a promise registration.</summary>
+    public const string Promise = "promises.open";
+
+    /// <summary>The scope of a promise fulfilment.</summary>
+    public const string PromiseFulfilment = "promises.fulfill";
+
+    /// <summary>The scope of a counter recording.</summary>
+    public const string Counter = "counters.record";
+
+    /// <summary>The scope of a version creation.</summary>
+    public const string Version = "versions.create";
+
     /// <summary>
     /// Builds the scope of an operation on a version.
     /// </summary>

@@ -176,14 +176,19 @@ in the order it is planned:
   directives a writer would be given rather than only the totals. What is missing: nothing on the wire records an
   entity (upstream resolves entities through a model capability this port has not ported, so writing them would be
   raw plumbing), and no route rebuilds an index version from the rows a deployment already has.
-- **Idempotency keys on the claim writes.** A command can carry an `idempotency_key` (a ULID, the same shape this port
-  mints everywhere else), and the claim routes honour it: the second attempt writes nothing, is judged by nothing, and is
-  answered with exactly what the first attempt was answered - because the key belongs to the command and not to the
-  transport, a retry over the other surface is answered too. A key is scoped to the operation and the version, so one
-  caller's key for one write cannot swallow another's; only an answer that *recorded* something is remembered, so a
-  contention or a malformed request can still be retried into the ledger; and the first answer is the answer, because two
-  answers to one request is the situation the whole seam exists to prevent. What is not there yet: anchors, promises and
-  counters do not honour a key, though the machinery they would use is the same one.
+- **Idempotency keys on every command that records.** A command can carry an `idempotency_key` (a ULID, the same shape
+  this port mints everywhere else), and every route that writes honours it: claims and batches, locks and releases,
+  promises and fulfilments, counters, and version creation. The second attempt writes nothing, is judged by nothing, and
+  is answered with exactly what the first attempt was answered - because the key belongs to the command and not to the
+  transport, a retry over the other surface is answered too. A key is scoped to the operation and what it names: the
+  version, and the detail or promise where the command names one, so one caller's key for one write cannot swallow
+  another's. Version creation is the exception that proves the rule - the version id may be minted *during* the command,
+  so that scope is the key alone, which is what makes a retry land on the version that was created rather than on a second
+  one. Only an answer that *recorded* something is remembered, so a contention, a refusal, or a release or fulfilment that
+  changed nothing can still be reached again rather than be answered forever with a no-op; and the first answer is the
+  answer, because two answers to one request is the situation the whole seam exists to prevent. A command that has a body
+  carries the key in it; the release and fulfilment routes carry no body, so the key is a query parameter there - the one
+  place the contract puts it outside the body, and for that reason.
 - **Pagination** (`PageRequest`/`PageResponse`), **authentication and tenancy**, **sessions and runbooks**,
   and the separate **`matrix/v1` semantic query** surface. The original carries roughly 49 RPCs across 8
   services; the kernel's core is what is served here.

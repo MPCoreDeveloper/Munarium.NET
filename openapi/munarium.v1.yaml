@@ -406,6 +406,15 @@ paths:
           description: The locked detail, as "subject.key".
           schema:
             type: string
+        - name: idempotency_key
+          in: query
+          required: false
+          description: |-
+            The key this command is made under, or empty for no key. A ULID. This route carries no body, so the key
+            travels as a parameter here rather than in a request that has nothing else to carry - the one place the
+            contract puts it outside the body, and for that reason.
+          schema:
+            type: string
       responses:
         "200":
           description: Whether a lock was released.
@@ -540,6 +549,15 @@ paths:
           in: path
           required: true
           description: The promise's coordination key.
+          schema:
+            type: string
+        - name: idempotency_key
+          in: query
+          required: false
+          description: |-
+            The key this command is made under, or empty for no key. A ULID. This route carries no body, so the key
+            travels as a parameter here rather than in a request that has nothing else to carry - the one place the
+            contract puts it outside the body, and for that reason.
           schema:
             type: string
       responses:
@@ -1187,6 +1205,11 @@ components:
         actor:
           type: string
           description: Who is creating it.
+        idempotency_key:
+          type: string
+          description: |-
+            The key this command is made under, or empty for no key. A ULID; the same key on this operation is
+            answered with what the first attempt was answered, and writes nothing a second time.
 
     ClaimStatus:
       type: string
@@ -1285,6 +1308,11 @@ components:
           type: integer
           format: int64
           description: The ceiling the writer is working under, or 0 for none.
+        idempotency_key:
+          type: string
+          description: |-
+            The key this command is made under, or empty for no key. A ULID, so a retry of a total that already
+            landed is answered with the total that landed rather than with a second one.
 
     CounterList:
       type: object
@@ -1323,6 +1351,11 @@ components:
         evidence:
           type: string
           description: The evidence the lock is taken on, as JSON text, or empty.
+        idempotency_key:
+          type: string
+          description: |-
+            The key this command is made under, or empty for no key. A ULID, so a retry with a different value is
+            answered with the value that was locked rather than re-locking it.
 
     PromiseRegistration:
       type: object
@@ -1344,6 +1377,11 @@ components:
         due_scope:
           type: string
           description: The scope it is owed to, or empty.
+        idempotency_key:
+          type: string
+          description: |-
+            The key this command is made under, or empty for no key. A ULID, so a retry opens one promise rather
+            than two.
 
     AnchorRelease:
       type: object

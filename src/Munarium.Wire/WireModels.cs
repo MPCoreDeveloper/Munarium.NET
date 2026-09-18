@@ -204,12 +204,17 @@ public sealed record WireVersionLineage(IReadOnlyList<WireVersion> Versions);
 /// <param name="AsOfDate">The date this version is "as of", as YYYY-MM-DD, or empty.</param>
 /// <param name="Label">A label for humans, or empty.</param>
 /// <param name="Actor">Who is creating it.</param>
+/// <param name="IdempotencyKey">
+/// The key this command is made under, or empty for none: a retry under one key is answered rather than creating a
+/// second version.
+/// </param>
 public sealed record WireVersionRequest(
     string VersionId,
     string ParentVersionId,
     string AsOfDate,
     string Label,
-    string Actor);
+    string Actor,
+    string? IdempotencyKey = null);
 
 /// <summary>One titled block of a composed context.</summary>
 /// <param name="Title">The section's title.</param>
@@ -535,7 +540,15 @@ public sealed record WireEntity(
 /// <param name="Key">The pattern the counter counts.</param>
 /// <param name="Total">The total as it stands, absolute rather than a delta.</param>
 /// <param name="Budget">The ceiling the writer is working under, or 0 for none.</param>
-public sealed record WireCounterRecording(string Key, long Total, long Budget);
+/// <param name="IdempotencyKey">
+/// The key this command is made under, or empty for none: a retry is answered with the total that landed rather than
+/// with a second one.
+/// </param>
+public sealed record WireCounterRecording(
+    string Key,
+    long Total,
+    long Budget,
+    string? IdempotencyKey = null);
 
 /// <summary>The counters at a pin, and the directives that follow from them.</summary>
 /// <param name="Counters">The counters at the pin.</param>
@@ -551,12 +564,17 @@ public readonly union WireCounterResult(WireCounter, WireProblem);
 /// <param name="Value">The value the detail is pinned to.</param>
 /// <param name="ScopePath">The scope the lock is taken at, or empty.</param>
 /// <param name="Evidence">The evidence the lock is taken on, as JSON text, or empty.</param>
+/// <param name="IdempotencyKey">
+/// The key this command is made under, or empty for none: a retry with a different value is answered with the value that
+/// was locked rather than re-locking it.
+/// </param>
 public sealed record WireAnchorLock(
     string Subject,
     string Key,
     string Value,
     string ScopePath,
-    string Evidence);
+    string Evidence,
+    string? IdempotencyKey = null);
 
 /// <summary>A promise as the caller asks for it.</summary>
 /// <param name="Key">The coordination key.</param>
@@ -564,12 +582,16 @@ public sealed record WireAnchorLock(
 /// <param name="Description">The promise in words.</param>
 /// <param name="OriginScope">The scope it is made in, or empty.</param>
 /// <param name="DueScope">The scope it is owed to, or empty.</param>
+/// <param name="IdempotencyKey">
+/// The key this command is made under, or empty for none: a retry opens one promise rather than two.
+/// </param>
 public sealed record WirePromiseRegistration(
     string Key,
     string Kind,
     string Description,
     string OriginScope,
-    string DueScope);
+    string DueScope,
+    string? IdempotencyKey = null);
 
 /// <summary>Whether a lock was released.</summary>
 /// <param name="Released">False when nothing was locked, in which case nothing was written either.</param>

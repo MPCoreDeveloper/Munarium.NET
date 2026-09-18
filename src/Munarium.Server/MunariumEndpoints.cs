@@ -186,11 +186,12 @@ public static class MunariumEndpoints
             async (
                 [FromRoute(Name = "version_id")] string versionId,
                 [FromRoute(Name = "detail_key")] string detailKey,
+                [FromQuery(Name = "idempotency_key")] string? idempotencyKey,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
                 var result = await operations
-                    .ReleaseAnchorAsync(versionId, detailKey, cancellationToken)
+                    .ReleaseAnchorAsync(versionId, detailKey, idempotencyKey, cancellationToken)
                     .ConfigureAwait(false);
 
                 IResult answer = result switch
@@ -242,11 +243,12 @@ public static class MunariumEndpoints
             async (
                 [FromRoute(Name = "version_id")] string versionId,
                 [FromRoute(Name = "key")] string key,
+                [FromQuery(Name = "idempotency_key")] string? idempotencyKey,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
                 var result = await operations
-                    .FulfilPromiseAsync(versionId, key, cancellationToken)
+                    .FulfilPromiseAsync(versionId, key, idempotencyKey, cancellationToken)
                     .ConfigureAwait(false);
 
                 IResult answer = result switch

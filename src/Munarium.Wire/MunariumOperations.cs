@@ -418,6 +418,24 @@ public sealed class MunariumOperations(
             return new WireProblem(InvalidRequestProblem, invalid, Status: 400, ExpectedHead: 0, ActualHead: 0);
         }
 
+        // A key that is not a ULID is the caller's fault, like any other malformed field - and it is answered before the
+        // write, so nothing is recorded for a request that was not understood.
+        var scope = IdempotencyKeys.Of(IdempotencyKeys.AnchorLock, versionId);
+        var keyed = IdempotencyKeys.TryAccept(request.IdempotencyKey, out var unusable);
+
+        if (unusable is not null)
+        {
+            return new WireProblem(InvalidRequestProblem, unusable, Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        var key = (request.IdempotencyKey ?? string.Empty).Trim();
+
+        if (keyed && await AnsweredAsync<WireAnchor>(scope, key, WireJson.Default.WireAnchor, cancellationToken)
+            .ConfigureAwait(false) is { } answered)
+        {
+            return answered;
+        }
+
         // The detail key is derived here rather than passed whole, so the dot that makes a lock matchable against a
         // claim is structural: the kernel refuses a key that names no property, and this cannot produce one.
         var outcome = await _anchors
@@ -430,21 +448,36 @@ public sealed class MunariumOperations(
                 cancellationToken)
             .ConfigureAwait(false);
 
-        return outcome switch
+        WireAnchorResult result = outcome switch
         {
             Anchor anchor => AnchorOf(anchor),
             WriteContended contended => Contended(contended),
         };
+
+        // Only a lock that landed is remembered: a contention wrote nothing, and a retry of one has to be able to
+        // reach the ledger rather than be answered forever with a failure that was transient.
+        if (keyed && result is WireAnchor locked)
+        {
+            await RememberAsync(scope, key, locked, WireJson.Default.WireAnchor, cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
     }
 
     /// <summary>Releases a lock, if there is one.</summary>
     /// <param name="versionId">The version the release is recorded in.</param>
     /// <param name="detailKey">The locked detail, as <c>subject.key</c>.</param>
+    /// <param name="idempotencyKey">The key this command is made under, or empty for none.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Whether anything was released, or why nothing was.</returns>
+    /// <remarks>
+    /// This route carries no body, so the key arrives as a parameter rather than in one: it is the one place the contract
+    /// puts a key outside the body, and the reason is that there is nothing else for a body to carry.
+    /// </remarks>
     public async ValueTask<WireReleaseResult> ReleaseAnchorAsync(
         string versionId,
         string detailKey,
+        string? idempotencyKey = null,
         CancellationToken cancellationToken = default)
     {
         if (DetailKeyRefusal(detailKey) is { } refusal)
@@ -452,16 +485,45 @@ public sealed class MunariumOperations(
             return refusal;
         }
 
+        // The command names a detail as well as a version, so the scope names both: one caller's key for one detail
+        // cannot swallow the answer for another.
+        var scope = IdempotencyKeys.Of(IdempotencyKeys.AnchorRelease, string.Concat(versionId, "/", detailKey));
+        var keyed = IdempotencyKeys.TryAccept(idempotencyKey, out var unusable);
+
+        if (unusable is not null)
+        {
+            return new WireProblem(InvalidRequestProblem, unusable, Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        var key = (idempotencyKey ?? string.Empty).Trim();
+
+        // Only a release that released something is remembered. A release of a detail nobody locked wrote nothing, and
+        // answering a retry with "nothing was released" would hide a lock taken in between.
+        if (keyed && await AnsweredAsync<WireAnchorRelease>(
+                scope, key, WireJson.Default.WireAnchorRelease, cancellationToken).ConfigureAwait(false)
+            is { } answered)
+        {
+            return answered;
+        }
+
         var outcome = await _anchors
             .ReleaseAsync(versionId, detailKey, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
-        return outcome switch
+        WireReleaseResult result = outcome switch
         {
             Anchor => new WireAnchorRelease(Released: true),
             AnchorNotLocked => new WireAnchorRelease(Released: false),
             WriteContended contended => Contended(contended),
         };
+
+        if (keyed && result is WireAnchorRelease { Released: true } released)
+        {
+            await RememberAsync(scope, key, released, WireJson.Default.WireAnchorRelease, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return result;
     }
 
     /// <summary>Reads the locked details at a pin.</summary>
@@ -496,6 +558,24 @@ public sealed class MunariumOperations(
             return new WireProblem(InvalidRequestProblem, invalid, Status: 400, ExpectedHead: 0, ActualHead: 0);
         }
 
+        var scope = IdempotencyKeys.Of(IdempotencyKeys.Promise, versionId);
+        var keyed = IdempotencyKeys.TryAccept(request.IdempotencyKey, out var unusable);
+
+        if (unusable is not null)
+        {
+            return new WireProblem(InvalidRequestProblem, unusable, Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        var key = (request.IdempotencyKey ?? string.Empty).Trim();
+
+        // A promise key identifies the obligation, so a retry under one key has to open one promise rather than two:
+        // the answer of the first attempt is what the second one receives.
+        if (keyed && await AnsweredAsync<WirePromise>(scope, key, WireJson.Default.WirePromise, cancellationToken)
+            .ConfigureAwait(false) is { } answered)
+        {
+            return answered;
+        }
+
         var outcome = await _promises
             .RegisterAsync(
                 versionId,
@@ -507,21 +587,34 @@ public sealed class MunariumOperations(
                 cancellationToken)
             .ConfigureAwait(false);
 
-        return outcome switch
+        WirePromiseResult result = outcome switch
         {
             Promise promise => PromiseOf(promise),
             WriteContended contended => Contended(contended),
         };
+
+        if (keyed && result is WirePromise opened)
+        {
+            await RememberAsync(scope, key, opened, WireJson.Default.WirePromise, cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
     }
 
     /// <summary>Fulfils the first open promise with a key.</summary>
     /// <param name="versionId">The version the promise is fulfilled in.</param>
     /// <param name="key">The coordination key.</param>
+    /// <param name="idempotencyKey">The key this command is made under, or empty for none.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Whether anything was fulfilled, or why nothing was.</returns>
+    /// <remarks>
+    /// This route carries no body, so the key arrives as a parameter rather than in one: it is the one place the contract
+    /// puts a key outside the body, and the reason is that there is nothing else for a body to carry.
+    /// </remarks>
     public async ValueTask<WireFulfilResult> FulfilPromiseAsync(
         string versionId,
         string key,
+        string? idempotencyKey = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(key))
@@ -529,16 +622,45 @@ public sealed class MunariumOperations(
             return new WireProblem(InvalidRequestProblem, "key is required.", Status: 400, ExpectedHead: 0, ActualHead: 0);
         }
 
+        // The command names a promise as well as a version, so the scope names both. The key this command is made under
+        // is kept apart from the promise key it names: they are two different keys and only one of them is the caller's.
+        var scope = IdempotencyKeys.Of(IdempotencyKeys.PromiseFulfilment, string.Concat(versionId, "/", key));
+        var keyed = IdempotencyKeys.TryAccept(idempotencyKey, out var unusable);
+
+        if (unusable is not null)
+        {
+            return new WireProblem(InvalidRequestProblem, unusable, Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        var commandKey = (idempotencyKey ?? string.Empty).Trim();
+
+        // Only a fulfilment that fulfilled something is remembered. A key with nothing open wrote nothing, and answering a
+        // retry with "not fulfilled" would hide a promise opened in between.
+        if (keyed && await AnsweredAsync<WirePromiseFulfilment>(
+                scope, commandKey, WireJson.Default.WirePromiseFulfilment, cancellationToken).ConfigureAwait(false)
+            is { } answered)
+        {
+            return answered;
+        }
+
         var outcome = await _promises
             .FulfilAsync(versionId, key, cancellationToken)
             .ConfigureAwait(false);
 
-        return outcome switch
+        WireFulfilResult result = outcome switch
         {
             Promise => new WirePromiseFulfilment(Fulfilled: true),
             PromiseNotOpen => new WirePromiseFulfilment(Fulfilled: false),
             WriteContended contended => Contended(contended),
         };
+
+        if (keyed && result is WirePromiseFulfilment { Fulfilled: true } fulfilled)
+        {
+            await RememberAsync(scope, commandKey, fulfilled, WireJson.Default.WirePromiseFulfilment, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return result;
     }
 
     /// <summary>Reads the promises at a pin, and the overdue findings when they are asked for.</summary>
@@ -606,6 +728,24 @@ public sealed class MunariumOperations(
                 ActualHead: 0);
         }
 
+        var scope = IdempotencyKeys.Of(IdempotencyKeys.Counter, versionId);
+        var keyed = IdempotencyKeys.TryAccept(request.IdempotencyKey, out var unusable);
+
+        if (unusable is not null)
+        {
+            return new WireProblem(InvalidRequestProblem, unusable, Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        var key = (request.IdempotencyKey ?? string.Empty).Trim();
+
+        // A total is absolute rather than a delta, so a retry has to be answered with the total that landed: recording a
+        // second one under the same key would be recording the same measurement twice.
+        if (keyed && await AnsweredAsync<WireCounter>(scope, key, WireJson.Default.WireCounter, cancellationToken)
+            .ConfigureAwait(false) is { } answered)
+        {
+            return answered;
+        }
+
         var outcome = await _counters
             .RecordAsync(
                 versionId,
@@ -617,11 +757,19 @@ public sealed class MunariumOperations(
                 cancellationToken)
             .ConfigureAwait(false);
 
-        return outcome switch
+        WireCounterResult result = outcome switch
         {
             CounterTotal counter => CounterOf(counter),
             WriteContended contended => Contended(contended),
         };
+
+        if (keyed && result is WireCounter recorded)
+        {
+            await RememberAsync(scope, key, recorded, WireJson.Default.WireCounter, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return result;
     }
 
     /// <summary>Reads the counters at a pin, with the directives a writer would be given.</summary>
@@ -660,6 +808,26 @@ public sealed class MunariumOperations(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        // The version this command creates may be named by the caller or minted here, so the scope cannot name it in
+        // advance: a keyed creation is therefore scoped by its own key. That is what makes a retry of a version with a
+        // generated id land on the version that was created rather than on a second one - and a retry whose id the
+        // caller did supply is answered from the key before the ledger is asked to hold the same id twice.
+        var keyed = IdempotencyKeys.TryAccept(request.IdempotencyKey, out var unusable);
+
+        if (unusable is not null)
+        {
+            return new WireProblem(InvalidRequestProblem, unusable, Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        var key = (request.IdempotencyKey ?? string.Empty).Trim();
+        var scope = IdempotencyKeys.Of(IdempotencyKeys.Version, key);
+
+        if (keyed && await AnsweredAsync<WireVersion>(scope, key, WireJson.Default.WireVersion, cancellationToken)
+            .ConfigureAwait(false) is { } answered)
+        {
+            return answered;
+        }
 
         var versionId = request.VersionId.Trim();
         if (versionId.Length == 0)
@@ -710,7 +878,7 @@ public sealed class MunariumOperations(
                 request.Actor ?? string.Empty),
             cancellationToken).ConfigureAwait(false);
 
-        return outcome switch
+        WireVersionResult result = outcome switch
         {
             WireClaimOutcome { Status: WireClaimStatus.Accepted } accepted =>
                 new WireVersion(versionId, parent, asOf, label, accepted.Head),
@@ -726,6 +894,15 @@ public sealed class MunariumOperations(
 
             WireProblem problem => problem,
         };
+
+        // Only a version that came into being is remembered: a refused claim wrote a refusal, not a version, and a
+        // retry of one has to be able to reach the ledger again rather than be answered with the refusal forever.
+        if (keyed && result is WireVersion created)
+        {
+            await RememberAsync(scope, key, created, WireJson.Default.WireVersion, cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
     }
 
     /// <summary>The facts that were current at a pin.</summary>
