@@ -1078,7 +1078,7 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.True(version.Active);
         Assert.True(version.Watermark > 0, "a build reflects the ledger position it was made at");
         Assert.Equal("chunk@1", version.Manifest.Chunker);
-        Assert.Equal("text@1", version.Manifest.Extractors);
+        Assert.Equal(Munarium.Text.TextExtractor.Version(), version.Manifest.Extractors);
         Assert.Contains(DeterministicEmbeddingProvider.ModelName, version.Manifest.Embedder, StringComparison.Ordinal);
         Assert.Equal(2, version.Manifest.SourceContentHashes.Count);
 

@@ -214,8 +214,10 @@ in the order it is planned:
   building over it. A re-put of the same bytes
   writes nothing and indexes nothing, a changed document at one path is one source replaced, and the citation an answer
   carries resolves to the path and the hash it was stored under. Two limits are stated rather than hidden: the contract
-  carries a document's **text**, because this port reads text - a PDF or a DOCX is refused by name, since the upstream
-  extractors depend on a model capability this port has not ported - and the ingest writes into whichever version is
+  carries a document's **text**, so a DOCX is the one binary this port reads: its body comes out of its own XML, since a
+  `.docx` is a zip and no model is involved in that at all. A PDF is refused by name - its text layer needs a PDF parser
+  this port does not have, and a scan needs the OCR path, which upstream runs on a local inference runtime whose model
+  files this port cannot load - and the ingest writes into whichever version is
   serving, which is read at the moment of use so a cutover cannot split one document between two versions.
 - **Three of the four keyed planes are authorable; entities and ingest are not.** Every plane a snapshot carries is
   served: `GET /v1/snapshots` answers with one pin across all of them - facts resolved-current, the digest ladder

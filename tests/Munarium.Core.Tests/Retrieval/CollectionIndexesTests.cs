@@ -99,7 +99,7 @@ public class CollectionIndexesTests
             ShapeRef = "cuad-contracts@3",
             Engine = "exact@1",
             Chunker = "chunk@1",
-            Extractors = "text@1",
+            Extractors = "extract@1[docx@1]",
             Embedder = new EmbedderRef("local", "test-embedder", 3),
             SourceContentHashes = [],
             MaxChars = 1200,

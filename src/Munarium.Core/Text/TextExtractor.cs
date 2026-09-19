@@ -4,10 +4,16 @@ namespace Munarium.Text;
 /// Turns a document's bytes into the text an index can hold, for the media types this port can read.
 /// </summary>
 /// <remarks>
-/// Upstream extracts PDFs and DOCX through a model capability this port has not ported, so this refuses what it cannot
-/// read rather than guessing: indexing the bytes of a binary as though they were text would put a document into the
-/// index that no query can find and no citation can justify. The refusal names the media type, and a caller that
-/// wants a richer set of formats brings an extractor of its own - the seam is a media type in and text out.
+/// Upstream extracts PDFs and DOCX; this port reads DOCX as well, because a <c>.docx</c> is a zip of XML the base class
+/// library reads and no model is involved in that at all. What it cannot read it refuses rather than guessing: indexing
+/// the bytes of a binary as though they were text would put a document into the index that no query can find and no
+/// citation can justify. The refusal names the media type, and a caller that wants a richer set of formats brings an
+/// extractor of its own - the seam is a media type in and text out.
+/// <para>
+/// A PDF is the case that is genuinely out of reach here, and both halves of it are stated rather than implied: its text
+/// layer needs a PDF parser this port does not have, and a scan needs the OCR path, which upstream runs on a local
+/// inference runtime with model files this port cannot load.
+/// </para>
 /// <para>
 /// Media types arrive with parameters, so the type is read up to the first <c>;</c> and compared without case: a
 /// caller sending <c>text/plain; charset=utf-8</c> means the same thing as one sending <c>text/plain</c>, and a
@@ -22,6 +28,17 @@ public static class TextExtractor
     private static readonly string[] TextualSuffixes = ["+json", "+xml"];
 
     /// <summary>
+    /// The version of the extractor set, which joins an index version's identity.
+    /// </summary>
+    /// <remarks>
+    /// Bumped when an extractor changes its output for the same bytes: improving how a DOCX becomes text changes the text
+    /// for identical bytes, so a version built with one set has to differ from one built with another. The shape is the
+    /// original's, naming every extractor it covers.
+    /// </remarks>
+    /// <returns>The versioned reference an index manifest records.</returns>
+    public static string Version() => $"extract@1[{DocxExtractor.Id}]";
+
+    /// <summary>
     /// Reports whether a media type can be read as text.
     /// </summary>
     /// <param name="mediaType">The media type, with or without parameters.</param>
@@ -34,7 +51,8 @@ public static class TextExtractor
 
         return type.StartsWith("text/", StringComparison.Ordinal)
             || TextualApplications.Contains(type, StringComparer.Ordinal)
-            || TextualSuffixes.Any(suffix => type.EndsWith(suffix, StringComparison.Ordinal));
+            || TextualSuffixes.Any(suffix => type.EndsWith(suffix, StringComparison.Ordinal))
+            || string.Equals(type, DocxExtractor.Media, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -50,12 +68,17 @@ public static class TextExtractor
 
         var type = Normalize(mediaType);
 
+        if (string.Equals(type, DocxExtractor.Media, StringComparison.Ordinal))
+        {
+            return DocxExtractor.Read(bytes);
+        }
+
         if (!CanExtract(type))
         {
             throw new ArgumentException(
-                $"no extractor for media type '{type}' is ported; this port reads text/{'*'}, "
-                    + "application/json and application/xml, and the upstream extractors for PDF and DOCX depend on "
-                    + "a model capability it has not ported",
+                $"no extractor for media type '{type}' is ported; this port reads text/{'*'}, application/json, "
+                    + "application/xml and the DOCX word-processing type. A PDF is not read here: its text layer needs "
+                    + "a PDF parser this port does not have, and a scan needs the OCR path it cannot run",
                 nameof(mediaType));
         }
 

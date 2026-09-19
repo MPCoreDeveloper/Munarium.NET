@@ -48,7 +48,7 @@ public sealed class IndexBuilder(
     /// Identity material: improving how a document becomes text changes the text for identical bytes, so it has to
     /// produce a new version rather than silently serving chunks that no longer match the bytes they cite.
     /// </remarks>
-    public const string Extractors = "text@1";
+    public const string Extractors = "extract@1[docx@1]";
 
     private readonly ISourceStore _sources = sources ?? throw new ArgumentNullException(nameof(sources));
     private readonly ISourceRegistry _registry = registry ?? throw new ArgumentNullException(nameof(registry));

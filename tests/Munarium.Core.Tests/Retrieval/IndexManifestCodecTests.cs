@@ -61,7 +61,7 @@ public class IndexManifestCodecTests
         ShapeRef = "vendor@1",
         Engine = "exact@1",
         Chunker = "chunk@1",
-        Extractors = "text@1",
+        Extractors = "extract@1[docx@1]",
         MaxChars = 1200,
         Embedder = new EmbedderRef("local", "munarium-deterministic-v1", 256),
         SourceContentHashes = ["sha256:aaa", "sha256:bbb"],

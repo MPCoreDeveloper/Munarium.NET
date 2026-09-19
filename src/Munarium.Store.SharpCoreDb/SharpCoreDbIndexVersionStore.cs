@@ -149,7 +149,12 @@ public sealed class SharpCoreDbIndexVersionStore(
                     .Select(Map)
                     .Where(version => string.Equals(version.Tenant, tenant, StringComparison.Ordinal))
                     .Where(version => string.Equals(version.CollectionId, collectionId, StringComparison.Ordinal))
-                    .OrderByDescending(version => version.Watermark.Value)
+                    // Newest first, by when the version was made live, which is this port's counterpart to the
+                    // original's `built_at DESC`. The id is only ever the last tiebreaker: ordering two builds that
+                    // share a watermark by a hash is a coin toss dressed as determinism, and it read as stable only
+                    // until a change to the extractor version reshuffled it.
+                    .OrderByDescending(version => version.ActivatedAt ?? DateTimeOffset.MinValue)
+                    .ThenByDescending(version => version.Watermark.Value)
                     .ThenByDescending(version => version.Id, StringComparer.Ordinal),
             ];
 

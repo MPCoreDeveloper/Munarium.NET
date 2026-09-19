@@ -41,7 +41,7 @@ public class IndexBuilderTests
         Assert.All(chunks, chunk => Assert.StartsWith(chunk.Source.SourceId, chunk.Source.ChunkId, StringComparison.Ordinal));
         Assert.Equal(2, version.Manifest.SourceContentHashes.Count);
         Assert.Equal("chunk@1", version.Manifest.Chunker);
-        Assert.Equal("text@1", version.Manifest.Extractors);
+        Assert.Equal("extract@1[docx@1]", version.Manifest.Extractors);
         Assert.Equal("exact@1", version.Manifest.Engine);
         Assert.Equal("test-model", version.Manifest.Embedder.Model);
     }
