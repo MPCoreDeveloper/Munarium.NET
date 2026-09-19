@@ -185,7 +185,17 @@ in the order it is planned:
   answer's envelope and says whether the bytes it cites were in the version it names. What is not there is a persisted
   index: the chunks live in the process that built them, so a deployment that restarts rebuilds every live version from
   the rows before the first question arrives - which is why a version records the prefix it was built from - and a very
-  large corpus pays for that rebuild at every start rather than reading its vectors back from disk.
+  large corpus pays for that rebuild at every start rather than reading its vectors back from disk. The two-stage
+  collection selection a wide runbook may ask for is half there, and the half that is missing is written here rather than
+  left to be discovered: the ranking is in the kernel - `CollectionSelection`, with the original's own measured
+  thresholds as its tests, so a pool that is 85% phrase counts 3.55× and one that is 6% counts 1.18× - but the probe it
+  ranks cannot run yet, because a probe searches each permitted collection separately and this port's host serves **one**
+  instance: the whole deployment answers from one version, so there is no per-collection pool to probe. The store is
+  already per collection - `IIndexVersionStore` reads a collection's live version and a cutover moves exactly one
+  collection - so what is missing is the host: a reader for each collection's live version, an ingest that lands in the
+  right one, and then the fan-out that reports a `probe` event as each collection answers. Until then a runbook that
+  declares `collectionSelection` or `modelQueryExpansion` is parsed, validated and mapped, and nothing reads it: worth
+  knowing before trusting a `selection` in a profile.
 - **Ingestion is on the wire.** `PUT /v1/sources` stores a document's bytes, records the
   source row, cuts the text into `chunk@1` chunks, embeds them and writes them into the index version `/v1/search`
   answers from; `GET /v1/sources/{source_id}` answers where the bytes went, never the bytes, and `GET /v1/sources` lists
