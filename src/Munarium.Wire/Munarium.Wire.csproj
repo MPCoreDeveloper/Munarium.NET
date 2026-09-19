@@ -13,6 +13,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Munarium.Core\Munarium.Core.csproj" />
+    <!-- The operation surface applies runbooks, and applying is the reader's job plus the store's: the catalog lives
+         with the reader, so the wire references it rather than re-deriving what a document means. -->
+    <ProjectReference Include="..\Munarium.Runbooks\Munarium.Runbooks.csproj" />
   </ItemGroup>
 
   <!--

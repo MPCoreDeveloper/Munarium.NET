@@ -174,6 +174,11 @@ public sealed class MunariumKernel : IAsyncDisposable
         // bytes share the source store the documents live in and go under the reserved `evidence/` keyspace, which
         // document ingress refuses - so a document can never collide with an artifact.
         var evidence = new SharpCoreDbEvidenceStore(database);
+
+        // The applied runbooks: one row per version, because a session pins name@version and an earlier version has to
+        // keep answering after a newer one lands. A conversation's pool already holds a copy of the document it will
+        // read, so a later apply cannot change what the turns in flight were answered from.
+        var runbooks = new SharpCoreDbRunbookStore(database);
         var builder = new IndexBuilder(
             sourceStore,
             sourceRegistry,
@@ -207,6 +212,7 @@ public sealed class MunariumKernel : IAsyncDisposable
             catalogue,
             evidence,
             sourceStore,
+            runbooks,
             Tenant);
 
         return new MunariumKernel(provider, database, host, builder, catalogue, facts, operations, shapes);

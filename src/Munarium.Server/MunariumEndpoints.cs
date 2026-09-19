@@ -513,6 +513,37 @@ public static class MunariumEndpoints
 
 
         app.MapPost(
+            "/v1/runbooks",
+            async (
+                WireRunbookApply request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.ApplyRunbookAsync(request, cancellationToken).ConfigureAwait(false);
+
+                // An unreadable document is 400 and a removed version is 409: a caller has to be able to tell "your YAML
+                // is wrong" from "that version is gone", and the problem's own status is what carries which.
+                IResult answer = result switch
+                {
+                    WireAppliedRunbook applied => TypedResults.Json(applied, WireJson.Default.WireAppliedRunbook),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet(
+            "/v1/runbooks",
+            async (
+                [FromQuery(Name = "include_removed")] bool? includeRemoved,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+                await operations
+                    .ListRunbooksAsync(includeRemoved ?? false, cancellationToken)
+                    .ConfigureAwait(false));
+
+        app.MapPost(
             "/v1/evidence",
             async (
                 WireSealEvidenceRequest request,

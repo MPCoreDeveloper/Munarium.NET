@@ -1510,6 +1510,71 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/runbooks:
+    post:
+      operationId: ApplyRunbook
+      tags: [runbooks]
+      summary: Apply a runbook, and pin it as name@version.
+      description: |-
+        Reading is the reader's job and keeping is the store's, and this is where the two meet. A document that cannot be
+        read is never stored, and the refusal carries the reader's own complaint rather than a summary of it, because the
+        operator editing YAML wants the line.
+
+        Applying does not require a document to be wise, only readable: the findings are what an operator reads before
+        applying, and refusing on a warning about a cutover that will publish without a human would be refusing a runbook
+        that runs. A version that was removed is refused rather than resurrected - publish a new version instead - so the
+        turns that ran under the removed one keep naming the document they actually ran on.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunbookApply"
+      responses:
+        "200":
+          description: The version as applied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppliedRunbook"
+        "400":
+          description: The document could not be read as a runbook.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: That version was removed; publish a new version instead.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+    get:
+      operationId: ListRunbooks
+      tags: [runbooks]
+      summary: The runbook versions this deployment has applied.
+      description: |-
+        One row per version, because the reference is name@version: an earlier version keeps answering after a newer one
+        lands, since a session pins one and the turns that ran under it name it. A removed version is hidden unless the
+        caller asks for it, and then it is listed with its status - removal is visibility, not deletion.
+      parameters:
+        - name: include_removed
+          in: query
+          required: false
+          description: Whether removed versions are listed.
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: The applied versions, in name and then version order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunbookList"
+
+
 components:
   schemas:
     Problem:
@@ -3144,3 +3209,74 @@ components:
         hold:
           type: boolean
           description: Whether to place the hold, or lift it.
+
+    RunbookApply:
+      type: object
+      required: [yaml]
+      properties:
+        yaml:
+          type: string
+          description: |
+            The runbook as written. It is kept verbatim beside the mapping it produced: the mapping is what runs, and the
+            bytes are what the operator wrote.
+
+    AppliedRunbook:
+      type: object
+      required: [runbook_ref, name, version, status]
+      properties:
+        runbook_ref:
+          type: string
+          description: The pinned reference, name@version, which is what a session will name.
+        name:
+          type: string
+        version:
+          type: integer
+          format: int32
+        status:
+          type: string
+          enum: [active, remove_requested, removed]
+        created_at:
+          type: string
+          description: When this version was first applied.
+        updated_at:
+          type: string
+          description: When it was last applied, which is the same as created_at until it is re-applied.
+
+    Runbook:
+      type: object
+      required: [runbook_ref, name, version, status]
+      properties:
+        runbook_ref:
+          type: string
+        name:
+          type: string
+        version:
+          type: integer
+          format: int32
+        status:
+          type: string
+          enum: [active, remove_requested, removed]
+        removal_id:
+          type: string
+          description: The removal this version is armed with, when one is in flight. The YAML is never deleted.
+        removal_requested_at:
+          type: string
+        removal_requested_by:
+          type: string
+        removed_at:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    RunbookList:
+      type: object
+      required: [runbooks]
+      properties:
+        runbooks:
+          type: array
+          description: The applied versions, in name and then version order.
+          items:
+            $ref: "#/components/schemas/Runbook"
+

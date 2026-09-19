@@ -16,6 +16,11 @@ using Munarium.Ledger;
 using Munarium.Providers;
 using Munarium.Promises;
 using Munarium.Retrieval;
+using Munarium.Runbooks;
+
+// The kernel's runbook namespace and the runbook reader share a name, and both declare a Severity: the wire's findings
+// are the claims plane's, so that one keeps the short name here.
+using Severity = Munarium.Claims.Severity;
 using Munarium.Shapes;
 using Munarium.Sources;
 using Munarium.Versions;
@@ -50,6 +55,7 @@ public sealed class MunariumOperations(
     IndexCatalog catalogue,
     IEvidenceStore evidence,
     ISourceStore evidenceBytes,
+    IRunbookStore runbooks,
     string tenant)
 {
     /// <summary>The wire contract version this implementation speaks.</summary>
@@ -111,6 +117,7 @@ public sealed class MunariumOperations(
 
 
     private readonly IStorageBackend _storage = storage ?? throw new ArgumentNullException(nameof(storage));
+    private readonly IRunbookStore _runbooks = runbooks ?? throw new ArgumentNullException(nameof(runbooks));
     private readonly ClaimLedger _claims = claims ?? throw new ArgumentNullException(nameof(claims));
     private readonly CandidateLedger _candidates = candidates ?? throw new ArgumentNullException(nameof(candidates));
     private readonly FindingsLedger _findings = findings ?? throw new ArgumentNullException(nameof(findings));
@@ -1017,6 +1024,83 @@ public sealed class MunariumOperations(
             composed.ContentHash,
             composed.Pin.Value);
     }
+
+    /// <summary>The problem identifier a runbook this port cannot read answers with.</summary>
+    public const string RunbookInvalidProblem = "https://munarium.dev/problems/runbook-invalid";
+
+    /// <summary>The problem identifier a version that was removed answers with.</summary>
+    public const string RunbookRemovedProblem = "https://munarium.dev/problems/runbook-removed";
+
+    /// <summary>Applies a runbook version.</summary>
+    /// <remarks>
+    /// The catalog gates the write and the store keeps it, which is the same pair the sessions plane resolves through:
+    /// an unreadable document is refused with the reader's own complaint, a removed version is refused with what to do
+    /// instead, and everything else becomes a row a session can pin by name.
+    /// </remarks>
+    /// <param name="request">The document as written.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The version as applied, or why it was not.</returns>
+    public async ValueTask<WireApplyRunbookResult> ApplyRunbookAsync(
+        WireRunbookApply request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var result = await RunbookCatalog
+            .ApplyAsync(_runbooks, _tenant, request.Yaml, cancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            RunbookApplied applied => Applied(applied.Record),
+            RunbookRefusal refusal => Problem(refusal),
+        };
+    }
+
+    /// <summary>Lists the runbook versions this deployment has applied.</summary>
+    /// <param name="includeRemoved">Whether removed versions are listed.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The versions, in name and then version order.</returns>
+    public async ValueTask<WireRunbookList> ListRunbooksAsync(
+        bool includeRemoved = false,
+        CancellationToken cancellationToken = default)
+    {
+        var records = await _runbooks
+            .ListAsync(_tenant, includeRemoved, cancellationToken)
+            .ConfigureAwait(false);
+
+        return new WireRunbookList([.. records.Select(ToWireRunbook)]);
+    }
+
+    private static WireAppliedRunbook Applied(RunbookRecord record) => new(
+        record.Ref,
+        record.Name,
+        record.Version ?? 0,
+        record.Status.ToWireName(),
+        record.CreatedAt,
+        record.UpdatedAt);
+
+    private static WireRunbook ToWireRunbook(RunbookRecord record) => new(
+        record.Ref,
+        record.Name,
+        record.Version ?? 0,
+        record.Status.ToWireName(),
+        record.RemovalId,
+        record.RemovalRequestedAt,
+        record.RemovalRequestedBy,
+        record.RemovedAt,
+        record.CreatedAt,
+        record.UpdatedAt);
+
+    /// <summary>Answers a runbook refusal with the problem its code names, which is also its status.</summary>
+    /// <param name="refusal">The refusal.</param>
+    /// <returns>The problem.</returns>
+    private static WireProblem Problem(RunbookRefusal refusal) => refusal.Code switch
+    {
+        RunbookRefusalCodes.Removed => new WireProblem(
+            RunbookRemovedProblem, refusal.Message, Status: 409, ExpectedHead: 0, ActualHead: 0),
+        _ => new WireProblem(RunbookInvalidProblem, refusal.Message, Status: 400, ExpectedHead: 0, ActualHead: 0),
+    };
 
     /// <summary>Retrieves evidence for a question.</summary>
     /// <param name="query">The question.</param>

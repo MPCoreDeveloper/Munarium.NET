@@ -925,3 +925,53 @@ public readonly union WireEvidenceCommitResult(WireEvidenceCommit, WireProblem);
 public readonly union WireEvidencePurgeResult(WireEvidencePurge, WireProblem);
 
 
+
+/// <summary>A runbook as offered for application.</summary>
+/// <param name="Yaml">The document as written.</param>
+public sealed record WireRunbookApply(string Yaml);
+
+/// <summary>A runbook version as applied.</summary>
+/// <param name="RunbookRef">The pinned reference, <c>name@version</c>.</param>
+/// <param name="Name">The runbook's name.</param>
+/// <param name="Version">Its version.</param>
+/// <param name="Status">Where it stands: <c>active</c>, <c>remove_requested</c> or <c>removed</c>.</param>
+/// <param name="CreatedAt">When this version was first applied.</param>
+/// <param name="UpdatedAt">When it was last applied.</param>
+public sealed record WireAppliedRunbook(
+    string RunbookRef,
+    string Name,
+    int Version,
+    string Status,
+    string? CreatedAt = null,
+    string? UpdatedAt = null);
+
+/// <summary>One applied runbook version, as listed.</summary>
+/// <param name="RunbookRef">The pinned reference, <c>name@version</c>.</param>
+/// <param name="Name">The runbook's name.</param>
+/// <param name="Version">Its version.</param>
+/// <param name="Status">Where it stands.</param>
+/// <param name="RemovalId">The removal it is armed with, when one is in flight.</param>
+/// <param name="RemovalRequestedAt">When that removal was asked for.</param>
+/// <param name="RemovalRequestedBy">Who asked for it.</param>
+/// <param name="RemovedAt">When the removal was confirmed.</param>
+/// <param name="CreatedAt">When this version was first applied.</param>
+/// <param name="UpdatedAt">When it was last applied.</param>
+public sealed record WireRunbook(
+    string RunbookRef,
+    string Name,
+    int Version,
+    string Status,
+    string? RemovalId = null,
+    string? RemovalRequestedAt = null,
+    string? RemovalRequestedBy = null,
+    string? RemovedAt = null,
+    string? CreatedAt = null,
+    string? UpdatedAt = null);
+
+/// <summary>The applied runbook versions.</summary>
+/// <param name="Runbooks">The versions, in name and then version order.</param>
+public sealed record WireRunbookList(IReadOnlyList<WireRunbook> Runbooks);
+
+/// <summary>The result of applying a runbook: the version, or why it was not applied.</summary>
+public readonly union WireApplyRunbookResult(WireAppliedRunbook, WireProblem);
+

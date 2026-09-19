@@ -585,6 +585,90 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
     };
 
     /// <inheritdoc />
+    public override async Task<ApplyRunbookResponse> ApplyRunbookAsync(
+        ApplyRunbookRequest request,
+        ServerCallContext context)
+    {
+        var declared = request.Body?.Yaml ?? throw EvidenceGrpcMapping.Missing("yaml");
+
+        var result = await _operations
+            .ApplyRunbookAsync(new WireRunbookApply(declared), context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireAppliedRunbook applied => new ApplyRunbookResponse { Data = ToMessageAppliedRunbook(applied) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ListRunbooksResponse> ListRunbooksAsync(
+        ListRunbooksRequest request,
+        ServerCallContext context)
+    {
+        var listed = await _operations
+            .ListRunbooksAsync(request.IncludeRemoved, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        var message = new RunbookList();
+
+        foreach (var runbook in listed.Runbooks)
+        {
+            message.Runbooks.Add(ToMessageRunbook(runbook));
+        }
+
+        return new ListRunbooksResponse { Data = message };
+    }
+
+    /// <summary>Maps an applied version onto the contract's message.</summary>
+    /// <param name="applied">The version.</param>
+    /// <returns>The message.</returns>
+    private static AppliedRunbook ToMessageAppliedRunbook(WireAppliedRunbook applied) => new()
+    {
+        RunbookRef = applied.RunbookRef,
+        Name = applied.Name,
+        Version = applied.Version,
+        Status = StatusOf(applied.Status),
+        CreatedAt = applied.CreatedAt ?? string.Empty,
+        UpdatedAt = applied.UpdatedAt ?? string.Empty,
+    };
+
+    /// <summary>
+    /// Maps a runbook status name onto the contract's enumeration.
+    /// </summary>
+    /// <remarks>
+    /// Written out member by member rather than cast from one numbering to the other, like every other enumeration this
+    /// adapter crosses: a cast would follow whichever numbering each side happens to use, so a renumbering on either side
+    /// would silently change what a caller reads.
+    /// </remarks>
+    /// <param name="status">The status name the kernel reports.</param>
+    /// <returns>The message's member.</returns>
+    private static StatusEnum StatusOf(string status) => status switch
+    {
+        "remove_requested" => StatusEnum.RemoveRequested,
+        "removed" => StatusEnum.Removed,
+        _ => StatusEnum.Active,
+    };
+
+    /// <summary>Maps a listed version onto the contract's message.</summary>
+    /// <param name="runbook">The version.</param>
+    /// <returns>The message.</returns>
+    private static Runbook ToMessageRunbook(WireRunbook runbook) => new()
+    {
+        RunbookRef = runbook.RunbookRef,
+        Name = runbook.Name,
+        Version = runbook.Version,
+        Status = StatusOf(runbook.Status),
+        RemovalId = runbook.RemovalId ?? string.Empty,
+        RemovalRequestedAt = runbook.RemovalRequestedAt ?? string.Empty,
+        RemovalRequestedBy = runbook.RemovalRequestedBy ?? string.Empty,
+        RemovedAt = runbook.RemovedAt ?? string.Empty,
+        CreatedAt = runbook.CreatedAt ?? string.Empty,
+        UpdatedAt = runbook.UpdatedAt ?? string.Empty,
+    };
+
+    /// <inheritdoc />
     public override async Task<SealEvidenceResponse> SealEvidenceAsync(
         SealEvidenceRequest request,
         ServerCallContext context)
