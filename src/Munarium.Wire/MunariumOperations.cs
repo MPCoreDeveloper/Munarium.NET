@@ -1314,11 +1314,15 @@ public sealed class MunariumOperations(
     /// <summary>Runs one turn of a session.</summary>
     /// <param name="sessionId">The session's identity.</param>
     /// <param name="request">The question, and what the turn asks for.</param>
+    /// <param name="onProgress">
+    /// Called as the turn crosses each stage, or <see langword="null"/> to hear nothing.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>What the turn produced, or why nothing was.</returns>
     public async ValueTask<WireRunTurnResult> RunTurnAsync(
         string sessionId,
         WireTurnRequest request,
+        Action<WireTurnEvent>? onProgress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
@@ -1372,6 +1376,7 @@ public sealed class MunariumOperations(
                 new TurnModels(_modelId, _modelId),
                 complete,
                 request.TopK ?? 0,
+                onProgress is null ? null : progress => onProgress(Progress(progress)),
                 cancellationToken)
             .ConfigureAwait(false);
 
@@ -1390,6 +1395,48 @@ public sealed class MunariumOperations(
                 ActualHead: 0),
         };
     }
+
+    /// <summary>
+    /// Turns one of the kernel's progress events into the event the wire carries.
+    /// </summary>
+    /// <remarks>
+    /// A translation and nothing else, like the model-to-message mappings: the kernel's vocabulary and the contract's are
+    /// the same events, and the only difference is that the wire's is flat - one shape per stage rather than a union of
+    /// unions - because that is what the original's SSE frames are.
+    /// </remarks>
+    /// <param name="progress">What the kernel reported.</param>
+    /// <returns>The wire event.</returns>
+    private static WireTurnEvent Progress(TurnProgress progress) => progress switch
+    {
+        HierarchyProgress hierarchy => HierarchyProgressOf(hierarchy),
+        TurnModelResolved model => new WireTurnModelEvent(model.Provider, model.Model, model.Tier, model.WasOverride),
+        TurnMerged merged => new WireTurnMergeEvent(merged.Hits),
+        TurnComposed composed => new WireTurnComposeEvent(
+            composed.LayersUsed, composed.ContextCharacters, composed.LayersDropped),
+        TurnCompleted completed => new WireTurnCompletionEvent(
+            completed.Attempt, completed.Provider, completed.Model, completed.InputTokens, completed.OutputTokens),
+        TurnVerified verified => new WireTurnVerifyEvent(verified.Attempt, verified.Checks, verified.Violations),
+    };
+
+    /// <summary>Turns one of the hierarchy's own progress events into the event the wire carries.</summary>
+    /// <param name="progress">What the hierarchy reported.</param>
+    /// <returns>The wire event.</returns>
+    private static WireTurnEvent HierarchyProgressOf(HierarchyProgress progress) => progress switch
+    {
+        ProfileResolved resolved => new WireTurnProfileEvent(
+            resolved.Profile, resolved.Layers, resolved.IntentKind, resolved.IntentExplicit),
+        LayerStarted started => new WireTurnLayerStartEvent(
+            started.Layer, started.Role.ToWireName(), started.Requirement.ToWireName()),
+        SourceBound bound => new WireTurnLayerSourceEvent(bound.Layer, bound.Source, bound.Provider),
+        LayerCompleted completed => new WireTurnLayerCompleteEvent(
+            completed.Layer,
+            completed.Block,
+            completed.SupportsCompleteness,
+            completed.RefusalCode,
+            completed.ElapsedMilliseconds),
+        CoverageReported coverage => new WireTurnCoverageEvent(
+            coverage.CompletenessAvailable, coverage.DisclosedConflicts),
+    };
 
     private static WireTurnResponse ToWireTurn(SessionTurnExecuted executed) => new(
         executed.Ordinal,

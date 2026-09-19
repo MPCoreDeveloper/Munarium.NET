@@ -611,7 +611,7 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
             .RunTurnAsync(
                 request.SessionId,
                 new WireTurnRequest(body.Query, body.TopK, body.Complete, body.ResearchProfile),
-                context.CancellationToken)
+                cancellationToken: context.CancellationToken)
             .ConfigureAwait(false);
 
         return result switch
@@ -620,6 +620,27 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
             WireProblem problem => throw Problem(problem),
         };
     }
+
+    /// <summary>
+    /// Refuses the streamed turn by name, which is what the original's own protobuf does with it.
+    /// </summary>
+    /// <remarks>
+    /// The original streams a turn over SSE and gives it no gRPC twin: its session service carries the unary turn and
+    /// nothing that streams, because the progress events are a shape the stream is defined by rather than a message.
+    /// Answering with one event would be worse than refusing - it would look like a turn that reported a single stage -
+    /// and pretending to stream it unary would look like a turn that never reported any. So the call names the surface
+    /// that does serve it.
+    /// </remarks>
+    /// <param name="request">The request.</param>
+    /// <param name="context">The call context.</param>
+    /// <returns>Never; the call is refused.</returns>
+    public override Task<StreamTurnResponse> StreamTurnAsync(
+        StreamTurnRequest request,
+        ServerCallContext context) =>
+        throw new RpcException(new Status(
+            StatusCode.Unimplemented,
+            "the streamed turn is JSON-only, because the original streams it over SSE and its protobuf has no twin for "
+                + "it. Watch it over HTTP at POST /v1/sessions/{session_id}/turns/stream."));
 
     /// <inheritdoc />
     public override async Task<GetSessionResponse> GetSessionAsync(

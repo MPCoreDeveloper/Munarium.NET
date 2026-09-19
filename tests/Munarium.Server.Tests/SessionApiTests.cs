@@ -2,6 +2,7 @@ namespace Munarium.Server.Tests;
 
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Munarium.Wire;
 
 /// <summary>
@@ -114,6 +115,120 @@ public class SessionApiTests : IClassFixture<MunariumApiFactory>
         var problem = await response.Content.ReadFromJsonAsync(WireJson.Default.WireProblem);
 
         Assert.Equal(MunariumOperations.NoCompletionModelProblem, problem?.Type);
+    }
+
+    /// <summary>
+    /// The streamed turn is the same turn, reported while it runs: a frame per stage, then exactly one that says how it
+    /// ended.
+    /// </summary>
+    /// <remarks>
+    /// The stream is read to completion rather than consumed frame by frame, which still proves the part a client
+    /// depends on: the frames are the right ones, in the order they were written, with the terminal frame carrying what
+    /// the unary route would have answered.
+    /// </remarks>
+    [Fact]
+    public async Task AStreamedTurnReportsProgressThenItsResult()
+    {
+        var runbookRef = await ApplyWorkedExample();
+
+        var opened = await _client.PostAsync(
+            new Uri($"/v1/runbooks/{Name(runbookRef)}/sessions", UriKind.Relative),
+            content: null);
+
+        var session = await opened.Content.ReadFromJsonAsync(WireJson.Default.WireSessionCreated);
+        Assert.NotNull(session);
+
+        var response = await _client.PostAsJsonAsync(
+            new Uri($"/v1/sessions/{session.SessionId}/turns/stream", UriKind.Relative),
+            new WireTurnRequest("what does the policy say?", Complete: false),
+            WireJson.Default.WireTurnRequest);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
+
+        var body = await response.Content.ReadAsStringAsync();
+
+        // The frames are the original's: progress, then exactly one of done or error.
+        Assert.Contains("event: progress", body, StringComparison.Ordinal);
+        Assert.Contains("\"stage\":\"merge\"", body, StringComparison.Ordinal);
+        Assert.Contains("event: done", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("event: error", body, StringComparison.Ordinal);
+
+        // A stream that reported a stage after its result would be a stream whose frames are in the wrong order, and the
+        // order is the one thing a reader of a live stream has to be able to trust.
+        Assert.True(
+            body.IndexOf("event: progress", StringComparison.Ordinal)
+                < body.IndexOf("event: done", StringComparison.Ordinal),
+            "progress must be reported before the turn's result");
+
+        var turn = JsonSerializer.Deserialize(DataLines(body).Last(), WireJson.Default.WireTurnResponse);
+
+        Assert.NotNull(turn);
+        Assert.Equal(1, turn.Ordinal);
+        Assert.Equal("what does the policy say?", turn.Query);
+        Assert.Null(turn.Hierarchy);
+    }
+
+    /// <summary>
+    /// A streamed turn that cannot run still ends by saying so, because its status line is already sent.
+    /// </summary>
+    /// <remarks>
+    /// This is the difference between the two routes and the reason both exist: the unary route answers a closed
+    /// conversation with 409, and the streamed one opens the stream and then ends it with the same problem, because a
+    /// client that has already received a 200 cannot be told anything else.
+    /// </remarks>
+    [Fact]
+    public async Task AStreamedTurnThatCannotRunEndsWithAnErrorFrame()
+    {
+        var runbookRef = await ApplyWorkedExample();
+
+        var opened = await _client.PostAsync(
+            new Uri($"/v1/runbooks/{Name(runbookRef)}/sessions", UriKind.Relative),
+            content: null);
+
+        var session = await opened.Content.ReadFromJsonAsync(WireJson.Default.WireSessionCreated);
+        Assert.NotNull(session);
+
+        var closed = await _client.PostAsync(
+            new Uri($"/v1/sessions/{session.SessionId}/close", UriKind.Relative),
+            content: null);
+
+        Assert.Equal(HttpStatusCode.OK, closed.StatusCode);
+
+        var response = await _client.PostAsJsonAsync(
+            new Uri($"/v1/sessions/{session.SessionId}/turns/stream", UriKind.Relative),
+            new WireTurnRequest("anything else", Complete: false),
+            WireJson.Default.WireTurnRequest);
+
+        // The stream opened before the turn was attempted, so the failure cannot be a status: it is the last frame.
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
+
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Contains("event: error", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("event: done", body, StringComparison.Ordinal);
+
+        var problem = JsonSerializer.Deserialize(DataLines(body).Last(), WireJson.Default.WireProblem);
+
+        Assert.NotNull(problem);
+        Assert.Equal(409, problem.Status);
+    }
+
+    /// <summary>The data lines of a streamed body, in the order its frames carry them.</summary>
+    /// <param name="body">The body.</param>
+    /// <returns>One entry per frame, without its prefix.</returns>
+    private static List<string> DataLines(string body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        return
+        [
+            .. body
+                .Split('\n')
+                .Where(line => line.StartsWith("data: ", StringComparison.Ordinal))
+                .Select(line => line["data: ".Length..]),
+        ];
     }
 
     private async Task<WireTurnResponse> AskAsync(string sessionId, string query)

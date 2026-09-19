@@ -85,6 +85,108 @@ public class SessionTurnRunnerTests
     private static SessionTurnRunner Runner(ISessionStore sessions, IModelProvider model) =>
         new(sessions, new StubIndexHost(), model, model, "test-embedder", [], "acme");
 
+    /// <summary>
+    /// A turn reports the stages it crosses, in the order it crosses them - and reports nothing it did not do.
+    /// </summary>
+    /// <remarks>
+    /// The order is asserted because the order is the claim each event makes: the model is resolved before anything is
+    /// paid for, the retrieval is reported once per turn however many layers ask for it, and a check follows each
+    /// answer. Absence is asserted for the same reason a decision is kept off a turn that ran outside a profile: a
+    /// listener cannot tell "no layer ran" from "a layer ran and reported nothing" unless the events simply do not
+    /// appear.
+    /// </remarks>
+    [Fact]
+    public async Task ATurnReportsTheStagesItCrosses()
+    {
+        var sessions = new MemorySessions();
+        var session = await sessions.CreateAsync(Session());
+        var model = new StubModel("The policy holds. \"text of doc-1\" [doc-1]");
+        var reported = new List<TurnProgress>();
+
+        _ = Executed(await Runner(sessions, model).RunAsync(
+            session,
+            Document(),
+            "how many contracts lapse?",
+            requestedProfile: null,
+            new TurnModels("small-model", "big-model"),
+            complete: true,
+            topK: 0,
+            onProgress: reported.Add));
+
+        var stages = reported.Select(StageOf).ToList();
+
+        // The whole vocabulary of a turn that ran outside a profile, in the order it crosses it: the model is resolved
+        // before anything is paid for, the retrieval is reported once (one search however many layers ask for it), and
+        // the answer is read back by the check that follows it. No profile, no layer, and no compose - nothing composed
+        // a hierarchy's blocks here, and saying so would be reporting a stage that never ran.
+        Assert.Equal(["model", "merge", "completion", "verify"], stages);
+    }
+
+    /// <summary>
+    /// A turn under a profile reports the profile and its layers, and stops reporting where the turn stopped.
+    /// </summary>
+    /// <remarks>
+    /// The fixture's profile requires a plane no provider is bound to, which is the interesting case for a stream: the
+    /// turn is refused before a model is paid for, so the events say so by having no completion and no retrieval in them
+    /// rather than by reporting a stage that never ran.
+    /// </remarks>
+    [Fact]
+    public async Task ATurnUnderAProfileReportsTheHierarchyAndThenStops()
+    {
+        var sessions = new MemorySessions();
+        var session = await sessions.CreateAsync(Session());
+        var model = new StubModel("The register is the source.");
+        var reported = new List<TurnProgress>();
+
+        _ = Refused(await Runner(sessions, model).RunAsync(
+            session,
+            Document(withProfile: true),
+            "what does the register say?",
+            requestedProfile: null,
+            new TurnModels("small-model", "big-model"),
+            complete: true,
+            topK: 0,
+            onProgress: reported.Add));
+
+        var stages = reported.Select(StageOf).ToList();
+
+        // Every layer ran, so coverage is reported - a layer that could not answer completed with a refusal, which is
+        // what its completion says, and the run concludes over the blocks it collected.
+        Assert.Equal(["model", "profile", "layer_start", "layer_complete", "coverage"], stages);
+
+        // And the turn stopped there: a required layer that cannot answer is refused before the retrieval runs, so
+        // nothing downstream of it was reported and nothing was paid for.
+        Assert.DoesNotContain("merge", stages);
+        Assert.DoesNotContain("compose", stages);
+        Assert.DoesNotContain("completion", stages);
+        Assert.DoesNotContain("verify", stages);
+    }
+
+    /// <summary>The wire's name for a progress event, which is the stage it reports.</summary>
+    /// <param name="progress">The event.</param>
+    /// <returns>The stage's name.</returns>
+    private static string StageOf(TurnProgress progress) => progress switch
+    {
+        HierarchyProgress hierarchy => HierarchyStageOf(hierarchy),
+        TurnModelResolved => "model",
+        TurnMerged => "merge",
+        TurnComposed => "compose",
+        TurnCompleted => "completion",
+        TurnVerified => "verify",
+    };
+
+    /// <summary>The wire's name for one of the hierarchy's own events.</summary>
+    /// <param name="progress">The event.</param>
+    /// <returns>The stage's name.</returns>
+    private static string HierarchyStageOf(HierarchyProgress progress) => progress switch
+    {
+        ProfileResolved => "profile",
+        LayerStarted => "layer_start",
+        SourceBound => "layer_source",
+        LayerCompleted => "layer_complete",
+        CoverageReported => "coverage",
+    };
+
     /// <summary>A model that embeds anything and answers with one canned answer.</summary>
     private sealed class StubModel(string answer) : IModelProvider
     {

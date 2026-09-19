@@ -113,6 +113,7 @@ public sealed class SessionTurnRunner(
     /// <param name="models">The models each paid step uses.</param>
     /// <param name="complete">Whether the runbook's completion step runs, when it declares one.</param>
     /// <param name="topK">How many chunks the answer may carry, or zero for the runbook's own.</param>
+    /// <param name="onProgress">An optional listener; the turn's result never depends on one being present.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>What the turn produced, or why nothing was produced.</returns>
     public async ValueTask<SessionTurnResult> RunAsync(
@@ -123,6 +124,7 @@ public sealed class SessionTurnRunner(
         TurnModels models,
         bool complete,
         int topK = 0,
+        Action<TurnProgress>? onProgress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
@@ -148,7 +150,7 @@ public sealed class SessionTurnRunner(
 
         return problem is not null
             ? problem
-            : await AnswerAsync(session, document, question, intent, profile, models, complete, topK, cancellationToken)
+            : await AnswerAsync(session, document, question, intent, profile, models, complete, topK, onProgress, cancellationToken)
                 .ConfigureAwait(false);
     }
 
@@ -164,6 +166,7 @@ public sealed class SessionTurnRunner(
         TurnModels models,
         bool complete,
         int topK,
+        Action<TurnProgress>? onProgress,
         CancellationToken cancellationToken)
     {
         // The clearance is the session's rather than the caller's, which is the whole point of the snapshot: a turn
@@ -173,11 +176,24 @@ public sealed class SessionTurnRunner(
         var request = Completion(document, complete, question);
         RetrievalResult? hits = null;
 
+        // Which model is about to answer is known before anything is paid for, which is the only moment a stream can
+        // say it. A turn that runs no completion resolves none, so it reports none.
+        if (request is not null)
+        {
+            onProgress?.Invoke(new TurnModelResolved(_model.Id.Value, models.Completion, Tier: null, WasOverride: false));
+        }
+
         // One search per turn, however many layers ask for it: the evidence hierarchy composes what the retrieval
         // returned, it does not retrieve once per layer.
         async ValueTask<RetrievalResult> SearchOnceAsync(CancellationToken token)
         {
-            hits ??= await SearchAsync(document, question, topK, token).ConfigureAwait(false);
+            if (hits is { } already) return already;
+
+            hits = await SearchAsync(document, question, topK, token).ConfigureAwait(false);
+
+            // Reported where the retrieval returns rather than where the turn reads it: that is the boundary, and a
+            // layer that asks second is served the same search rather than a second one.
+            onProgress?.Invoke(new TurnMerged(hits.Chunks.Count));
 
             return hits;
         }
@@ -192,7 +208,12 @@ public sealed class SessionTurnRunner(
                 // Evidence without an answer: the hierarchy still decides, and the decision is still what the turn
                 // records, because the caller who asked for hits only may ask why it got those.
                 var run = await HierarchyRunner
-                    .ExecuteAsync(plan, _providers, (_, token) => SearchOnceAsync(token), cancellationToken: cancellationToken)
+                    .ExecuteAsync(
+                        plan,
+                        _providers,
+                        (_, token) => SearchOnceAsync(token),
+                        hierarchy => onProgress?.Invoke(hierarchy),
+                        cancellationToken: cancellationToken)
                     .ConfigureAwait(false);
 
                 if (run is RequiredLayerUnavailable refusal)
@@ -217,6 +238,7 @@ public sealed class SessionTurnRunner(
                         _model,
                         models.Completion,
                         document.Spec.Completion?.ContextCharBudget ?? TurnPipeline.DefaultContextBudget,
+                        onProgress,
                         cancellationToken: cancellationToken)
                     .ConfigureAwait(false);
 
@@ -237,7 +259,8 @@ public sealed class SessionTurnRunner(
 
         if (outcome is null && request is not null)
         {
-            outcome = await AnswerOverHitsAsync(request, retrieved, models, cancellationToken).ConfigureAwait(false);
+            outcome = await AnswerOverHitsAsync(request, retrieved, models, onProgress, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         var ordinal = await _sessions
@@ -335,12 +358,14 @@ public sealed class SessionTurnRunner(
     /// <param name="request">What the turn is asked to do.</param>
     /// <param name="hits">The merged hits.</param>
     /// <param name="models">The models each paid step uses.</param>
+    /// <param name="onProgress">An optional listener; the turn's result never depends on one being present.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The answer and what it cost.</returns>
     private async ValueTask<TurnOutcome> AnswerOverHitsAsync(
         TurnRequest request,
         RetrievalResult hits,
         TurnModels models,
+        Action<TurnProgress>? onProgress,
         CancellationToken cancellationToken) =>
         await TurnPipeline
             .AnswerOverTextAsync(
@@ -350,6 +375,7 @@ public sealed class SessionTurnRunner(
                 Labels(hits),
                 _model,
                 models.Completion,
+                onProgress,
                 cancellationToken)
             .ConfigureAwait(false);
 

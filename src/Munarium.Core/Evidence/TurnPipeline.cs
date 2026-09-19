@@ -150,7 +150,7 @@ public static class TurnPipeline
         IModelProvider model,
         string modelId,
         int contextBudget = DefaultContextBudget,
-        Action<HierarchyProgress>? onProgress = null,
+        Action<TurnProgress>? onProgress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(plan);
@@ -161,7 +161,7 @@ public static class TurnPipeline
         ArgumentNullException.ThrowIfNull(model);
 
         var executed = await HierarchyRunner
-            .ExecuteAsync(plan, providers, documentLayer, onProgress, cancellationToken)
+            .ExecuteAsync(plan, providers, documentLayer, hierarchy => onProgress?.Invoke(hierarchy), cancellationToken)
             .ConfigureAwait(false);
 
         return executed switch
@@ -174,6 +174,7 @@ public static class TurnPipeline
                 model,
                 modelId,
                 contextBudget,
+                onProgress,
                 cancellationToken).ConfigureAwait(false),
             RequiredLayerUnavailable unavailable => unavailable,
         };
@@ -190,12 +191,18 @@ public static class TurnPipeline
         IModelProvider model,
         string modelId,
         int contextBudget,
+        Action<TurnProgress>? onProgress,
         CancellationToken cancellationToken)
     {
         var composed = HierarchyComposer.Compose(plan, collected.Blocks, contextBudget);
         var documents = collected.Documents;
         var labels = documents is null ? [] : servedLabels(documents);
         var texts = documents is null ? [] : documents.Chunks.Select(chunk => chunk.Text).ToList();
+
+        onProgress?.Invoke(new TurnComposed(
+            composed.LayersUsed,
+            composed.Context.Length,
+            composed.LayersDropped));
 
         return await AnswerAsync(
             request,
@@ -208,6 +215,7 @@ public static class TurnPipeline
             labels,
             model,
             modelId,
+            onProgress,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -225,6 +233,7 @@ public static class TurnPipeline
     /// <param name="servedLabels">Every label the answer may cite.</param>
     /// <param name="model">The model to answer with.</param>
     /// <param name="modelId">The model to ask for, as the provider names it.</param>
+    /// <param name="onProgress">An optional listener; the turn's result never depends on one being present.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The answer, what it cost, and what was checked.</returns>
     public static async ValueTask<TurnOutcome> AnswerOverTextAsync(
@@ -234,6 +243,7 @@ public static class TurnPipeline
         IReadOnlyList<string> servedLabels,
         IModelProvider model,
         string modelId,
+        Action<TurnProgress>? onProgress = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -253,6 +263,7 @@ public static class TurnPipeline
             servedLabels,
             model,
             modelId,
+            onProgress,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -276,6 +287,7 @@ public static class TurnPipeline
         IReadOnlyList<string> labels,
         IModelProvider model,
         string modelId,
+        Action<TurnProgress>? onProgress,
         CancellationToken cancellationToken)
     {
         var budget = request.MaxTokens;
@@ -285,6 +297,8 @@ public static class TurnPipeline
         var outputTokens = answer.Usage.OutputTokens;
         var retriedForTruncation = answer.IsTruncated;
 
+        onProgress?.Invoke(Completed(0, model, answer));
+
         if (retriedForTruncation)
         {
             budget = request.MaxTokens * 4;
@@ -292,11 +306,18 @@ public static class TurnPipeline
             completions++;
             inputTokens += answer.Usage.InputTokens;
             outputTokens += answer.Usage.OutputTokens;
+
+            // The re-ask is attempt zero as well, because it is the same attempt: the model stopped early rather than
+            // answer badly, and numbering it apart would make a stream look like a turn that retried a wrong answer.
+            onProgress?.Invoke(Completed(0, model, answer));
         }
 
         var checks = request.Verification;
         var violations = Check(answer.Text, checks, servedTexts, labels);
         var firstPass = violations;
+
+        onProgress?.Invoke(new TurnVerified(0, checks.Names, violations.Count));
+
         var retries = 0;
 
         // Clamped exactly as the original clamps it: every retry is a paid call, so the ceiling on them is small and
@@ -316,7 +337,11 @@ public static class TurnPipeline
             inputTokens += answer.Usage.InputTokens;
             outputTokens += answer.Usage.OutputTokens;
 
+            onProgress?.Invoke(Completed(retries, model, answer));
+
             violations = Check(answer.Text, checks, servedTexts, labels);
+
+            onProgress?.Invoke(new TurnVerified(retries, checks.Names, violations.Count));
         }
 
         return new TurnOutcome
@@ -345,6 +370,14 @@ public static class TurnPipeline
         request.PromptTemplate
             .Replace("{context}", context, StringComparison.Ordinal)
             .Replace("{query}", request.Question, StringComparison.Ordinal);
+
+    /// <summary>Builds the event that reports one completion, with what it cost.</summary>
+    /// <param name="attempt">Which attempt it was.</param>
+    /// <param name="model">The provider that answered.</param>
+    /// <param name="answer">What it answered with.</param>
+    /// <returns>The event.</returns>
+    private static TurnCompleted Completed(int attempt, IModelProvider model, CompletionResponse answer) =>
+        new(attempt, model.Id.Value, answer.Model, answer.Usage.InputTokens, answer.Usage.OutputTokens);
 
     private static async ValueTask<CompletionResponse> CompleteAsync(
         IModelProvider model,

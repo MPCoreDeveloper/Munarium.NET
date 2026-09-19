@@ -1746,6 +1746,72 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/sessions/{session_id}/turns/stream:
+    post:
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          description: The session's identity.
+          schema:
+            type: string
+      operationId: StreamTurn
+      tags: [sessions]
+      summary: Ask a session a question, and watch the turn run.
+      description: |-
+        The same turn as `POST .../turns`, streamed while it runs: `progress` events, then exactly one terminal `done`
+        carrying what the unary route would have answered, or `error` carrying the problem body. Nothing is synthesized -
+        an event marks a stage boundary the turn actually crossed, so a stream with no `verify` event is the stream of a
+        turn that ran no check rather than one whose checks were dropped from the report.
+
+        A failure before the stream starts is answered exactly as the unary route answers it; a failure after it starts
+        arrives as the terminal `error`, because the status line is already sent. The events describe the turn rather
+        than produce it: a client that stops reading does not stop the turn, which still runs and still records what it
+        was told.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TurnRequest"
+      responses:
+        "200":
+          description: |-
+            `text/event-stream`: a `progress` event per stage crossed (TurnProgressEvent), terminated by exactly one
+            `done` (TurnResponse) or `error` (Problem).
+          # The media type is application/json because the original's own generated contract declares this response that
+          # way - its OpenAPI writer cannot express a stream - and mirroring the original is what keeps a client written
+          # against either contract able to read both. What the route actually answers is text/event-stream, which is what
+          # the summary above says and what the JSON surface sends.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TurnProgressEvent"
+        "400":
+          description: The question is empty, or the request names a profile nobody declared.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: No such session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The session is no longer open.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "503":
+          description: A required layer could not answer, or no completion model is configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
 
 components:
   schemas:
@@ -3560,6 +3626,139 @@ components:
           type: boolean
         verification:
           $ref: "#/components/schemas/TurnVerification"
+
+    TurnProgressEvent:
+      type: object
+      description: |-
+        One progress event on the streaming turn plane, tagged by `stage`. The original's vocabulary is flat - one event
+        type with a stage discriminator - so this schema carries every stage's fields and an event sets only its own:
+        `probe`, `selection`, `expansion` and `retrieval` come from the retrieval path's own stages, `merge` from the
+        fusion over them, `model`, `completion` and `verify` from answering, and `profile`, `layer_start`, `layer_source`,
+        `layer_complete`, `coverage` and `compose` from a research profile. A stage a turn never crosses produces no
+        event at all.
+      required: [stage]
+      properties:
+        stage:
+          type: string
+          description: Which stage is reporting.
+          enum: [probe, selection, expansion, retrieval, merge, model, completion, verify, profile, layer_start, layer_source, layer_complete, coverage, compose]
+        collection:
+          type: string
+          description: The collection a `probe` or `retrieval` event is about.
+        hits:
+          type: integer
+          format: int32
+          description: How many hits a `probe`, `retrieval` or `merge` event carried.
+        skipped:
+          type: boolean
+          description: Whether a `probe` or `retrieval` skipped a collection that has no active index.
+        probed:
+          type: integer
+          format: int32
+          description: How many collections a `selection` event probed.
+        selected:
+          type: integer
+          format: int32
+          description: How many of them a `selection` event chose for the deep search.
+        collections:
+          type: array
+          description: The chosen collections, in the runbook's order.
+          items:
+            type: string
+        provider:
+          type: string
+          description: The provider that served or answered with the event's model.
+        model:
+          type: string
+          description: The concrete model that answered.
+        terms:
+          type: array
+          description: The lexical variants an `expansion` event accepted, possibly none.
+          items:
+            type: string
+        input_tokens:
+          type: integer
+          format: int64
+          description: What the call cost to send.
+        output_tokens:
+          type: integer
+          format: int64
+          description: What the call cost to generate.
+        tier:
+          type: string
+          description: The tier a `model` event resolved when it resolved a tier rather than a model.
+        was_override:
+          type: boolean
+          description: Whether the model or tier came from the caller rather than the runbook.
+        attempt:
+          type: integer
+          format: int32
+          description: Zero for the answer and the truncation re-ask, one upward for each corrective retry.
+        checks:
+          type: array
+          description: The checks that ran, in the order a report lists them.
+          items:
+            type: string
+        violations:
+          type: integer
+          format: int32
+          description: How many violations the check found. A non-zero count may buy a corrective retry.
+        layer:
+          type: string
+          description: The layer a `verify` event checked, when a hierarchy was in play.
+        role:
+          type: string
+          description: The weight a `layer_start` event's evidence carries.
+        requirement:
+          type: string
+          description: Whether a `layer_start` event's evidence is required, optional or a fallback.
+        source:
+          type: string
+          description: The pinned source a `layer_source` event bound.
+        block:
+          type: string
+          description: The kind of block a `layer_complete` event produced.
+        supports_completeness:
+          type: boolean
+          description: Whether that block permits a completeness claim.
+        refusal_code:
+          type: string
+          description: The refusal's code, when a `layer_complete` event reports a layer that declined.
+        elapsed_ms:
+          type: integer
+          format: int64
+          description: How long the layer took.
+        completeness_available:
+          type: boolean
+          description: Whether any block of the run permits a completeness claim.
+        disclosed_conflicts:
+          type: integer
+          format: int32
+          description: How many conflicts between layers a `coverage` event preserved for disclosure.
+        layers:
+          type: array
+          description: The layers a `profile` event resolved, in execution order.
+          items:
+            type: string
+        intent_kind:
+          type: string
+          description: The intent's kind, when it had one.
+        intent_explicit:
+          type: boolean
+          description: Whether the intent was supplied rather than modelled.
+        layers_used:
+          type: integer
+          format: int32
+          description: How many layers a `compose` event put into the context.
+        context_chars:
+          type: integer
+          format: int32
+          description: How many characters that context came to.
+        layers_dropped:
+          type: array
+          description: The layers that did not fit the budget. Dropped whole, never half.
+          items:
+            type: string
 
     LayerOutcome:
       type: object

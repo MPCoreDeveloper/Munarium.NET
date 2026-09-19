@@ -726,6 +726,26 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
             Assert.Contains("JSON-only", refusal.Status.Detail, StringComparison.Ordinal);
         });
 
+    /// <summary>
+    /// The streamed turn has no gRPC twin, and this transport says so by name.
+    /// </summary>
+    /// <remarks>
+    /// The original streams a turn over SSE and its own protobuf carries no streaming method for sessions, so there is
+    /// nothing to map onto. Answering with one event would look like a turn that reported a single stage, and answering
+    /// unary with the whole turn would look like one that never reported any - a refusal is the only honest answer, and
+    /// it names the surface that does serve it.
+    /// </remarks>
+    [Fact]
+    public async Task TheStreamedTurnIsRefusedOverGrpc() =>
+        await WithClient(async client =>
+        {
+            var refusal = await Assert.ThrowsAsync<RpcException>(
+                () => client.StreamTurnAsync(new StreamTurnRequest { SessionId = "ses-unknown" }));
+
+            Assert.Equal(StatusCode.Unimplemented, refusal.StatusCode);
+            Assert.Contains("JSON-only", refusal.Status.Detail, StringComparison.Ordinal);
+        });
+
     /// <summary>An artifact whose bytes do not travel with the manifest takes an upload grant, and spends it once.</summary>
     [Fact]
     public async Task AnArtifactWithoutItsBytesTakesAGrantOverGrpc() =>

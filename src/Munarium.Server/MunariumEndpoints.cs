@@ -1,5 +1,7 @@
 namespace Munarium.Server;
 
+using System.Text.Json;
+using System.Threading.Channels;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -572,7 +574,9 @@ public static class MunariumEndpoints
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
-                var result = await operations.RunTurnAsync(sessionId, request, cancellationToken).ConfigureAwait(false);
+                var result = await operations
+                    .RunTurnAsync(sessionId, request, cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
 
                 IResult answer = result switch
                 {
@@ -582,6 +586,69 @@ public static class MunariumEndpoints
                 };
 
                 return answer;
+            });
+
+        // The streamed turn: the same operation as the route above, with the kernel's progress reported as it happens.
+        // The frame names are the original's - `progress`, then exactly one of `done` or `error` - and the terminal frame
+        // carries what the unary route would have answered, because a stream that ends without saying how it ended is no
+        // better than one that never started.
+        app.MapPost(
+            "/v1/sessions/{session_id}/turns/stream",
+            async (
+                [FromRoute(Name = "session_id")] string sessionId,
+                WireTurnRequest request,
+                HttpContext http,
+                MunariumOperations operations) =>
+            {
+                // The turn runs beside the writer rather than before it, and the hand-off is an unbounded channel
+                // because the alternative is a turn that stalls on a slow reader - which would make the time to the
+                // first byte a function of the network rather than of the work. This is the original's own design: it
+                // forwards progress events from a channel while the turn runs on its own task.
+                var frames = Channel.CreateUnbounded<WireTurnEvent>();
+
+                var running = Task.Run(async () =>
+                {
+                    // No cancellation token, deliberately: the turn's lifetime is the turn's and not the connection's.
+                    // A conversation that stopped listening has already paid for this turn and still has to be able to
+                    // say what it was told.
+                    var result = await operations
+                        .RunTurnAsync(sessionId, request, progress => frames.Writer.TryWrite(progress))
+                        .ConfigureAwait(false);
+
+                    frames.Writer.TryComplete();
+
+                    return result;
+                });
+
+                http.Response.ContentType = "text/event-stream";
+
+                // Nothing between this server and the client may hold the frames back: the original shipped a whole
+                // event sequence in one burst at the end of a turn because a middleware buffered it, and the first byte
+                // arrived after the work instead of during it.
+                http.Response.Headers.CacheControl = "no-cache";
+                http.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpResponseBodyFeature>()?.DisableBuffering();
+
+                await foreach (var progress in frames.Reader.ReadAllAsync().ConfigureAwait(false))
+                {
+                    if (!await TurnFrames.WriteFrameAsync(http.Response, "progress", TurnFrames.Json(progress))
+                        .ConfigureAwait(false))
+                    {
+                        // The client hung up. The turn still finishes, because its record is what the next client reads.
+                        await running.ConfigureAwait(false);
+
+                        return;
+                    }
+                }
+
+                var result = await running.ConfigureAwait(false);
+
+                var (name, data) = result switch
+                {
+                    WireTurnResponse turn => ("done", JsonSerializer.Serialize(turn, WireJson.Default.WireTurnResponse)),
+                    WireProblem problem => ("error", JsonSerializer.Serialize(problem, WireJson.Default.WireProblem)),
+                };
+
+                await TurnFrames.WriteFrameAsync(http.Response, name, data).ConfigureAwait(false);
             });
 
         app.MapGet(

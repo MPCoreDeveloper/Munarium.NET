@@ -13,6 +13,64 @@ using static Munarium.Core.Tests.Support.HierarchyFixture;
 public class TurnPipelineTests
 {
     /// <summary>
+    /// A turn over a hierarchy reports what it composed, and reports it between the layers and the answer.
+    /// </summary>
+    /// <remarks>
+    /// That position is the point of the event: it is the boundary between the evidence and the model - the last thing
+    /// the hierarchy knows and the first thing the prompt is built from - so it is reported there rather than at the end,
+    /// where a reader of a live stream could not tell whether the model had been called yet.
+    /// </remarks>
+    [Fact]
+    public async Task ATurnReportsWhatItComposedBetweenTheEvidenceAndTheAnswer()
+    {
+        var documents = new DocumentPath("doc-1");
+        var model = new FakeModel(Answer("The policy holds. \"text of doc-1\" [doc-1]"));
+        var reported = new List<TurnProgress>();
+        var composed = new List<TurnComposed>();
+
+        _ = Produced(await TurnPipeline.ExecuteAsync(
+            Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
+            Request(),
+            [],
+            documents.RunAsync,
+            Labels,
+            model,
+            "test-model",
+            onProgress: progress =>
+            {
+                reported.Add(progress);
+
+                if (progress is TurnComposed value)
+                {
+                    composed.Add(value);
+                }
+            }));
+
+        var reportedAt = At(reported, progress => progress is TurnComposed);
+
+        Assert.True(
+            reportedAt > At(reported, progress => progress is CoverageReported),
+            "the layers conclude before their blocks are composed");
+        Assert.True(
+            reportedAt < At(reported, progress => progress is TurnCompleted),
+            "the context is composed before anything is paid for");
+
+        // What the event says: one layer put a context together, and nothing was dropped to do it.
+        var context = Assert.Single(composed);
+
+        Assert.Equal(1, context.LayersUsed);
+        Assert.True(context.ContextCharacters > 0, "a composed context is not empty");
+        Assert.Empty(context.LayersDropped);
+    }
+
+    /// <summary>Where an event sits in the sequence, or -1 when the turn never reported it.</summary>
+    /// <param name="reported">What the turn reported.</param>
+    /// <param name="match">The event to look for.</param>
+    /// <returns>The position.</returns>
+    private static int At(List<TurnProgress> reported, Predicate<TurnProgress> match) =>
+        reported.FindIndex(match);
+
+    /// <summary>
     /// An answer that quotes what it was served and cites what it was served costs one completion - not two, not
     /// three: the checks exist to catch a lie, not to tax the truth.
     /// </summary>

@@ -1149,6 +1149,164 @@ public sealed record WireSessionClosed(string SessionId, string State);
 /// <summary>The result of opening a session: the session, or why it was not opened.</summary>
 public readonly union WireCreateSessionResult(WireSessionCreated, WireProblem);
 
+/// <summary>
+/// One progress event on the streaming turn plane.
+/// </summary>
+/// <remarks>
+/// The contract's vocabulary is flat - one event with a <c>stage</c> discriminator - and the port's split is one record
+/// per stage, so an event carries only its own stage's fields and a stage a turn never crossed produces no event at all.
+/// <para>
+/// Four of the contract's fourteen stages are deliberately absent from this union: <c>probe</c>, <c>selection</c>,
+/// <c>expansion</c> and <c>retrieval</c> come from a retrieval path that probes collection by collection, expands the
+/// query with a model and searches each collection in turn. This port serves one index across every collection a
+/// session may read and runs no query expansion, so it has no such boundary to report - and a record for them would be
+/// a shape nothing could ever produce.
+/// </para>
+/// </remarks>
+public readonly union WireTurnEvent(
+    WireTurnProfileEvent,
+    WireTurnLayerStartEvent,
+    WireTurnLayerSourceEvent,
+    WireTurnLayerCompleteEvent,
+    WireTurnCoverageEvent,
+    WireTurnComposeEvent,
+    WireTurnModelEvent,
+    WireTurnMergeEvent,
+    WireTurnCompletionEvent,
+    WireTurnVerifyEvent);
+
+/// <summary>
+/// What every progress event has in common: it names its own stage.
+/// </summary>
+/// <remarks>
+/// The stage is a property rather than a constructor argument, and both reasons are deliberate. A string a caller could
+/// pass would let a merge event go out claiming to be a completion's; and a property that reads no instance state is
+/// flagged by the analyzers as one that should be static - which would drop the discriminator the contract requires,
+/// because a static member is not serialized at all.
+/// </remarks>
+public interface IWireTurnEvent
+{
+    /// <summary>Gets the stage this event reports.</summary>
+    string Stage { get; }
+}
+
+/// <summary>The profile a turn resolved, before any layer ran.</summary>
+/// <param name="Profile">The profile's name.</param>
+/// <param name="Layers">The layers that will run, in order.</param>
+/// <param name="IntentKind">The intent's kind, when it had one.</param>
+/// <param name="IntentExplicit">Whether the intent was supplied rather than modelled.</param>
+public sealed record WireTurnProfileEvent(
+    string Profile,
+    IReadOnlyList<string> Layers,
+    string? IntentKind,
+    bool IntentExplicit) : IWireTurnEvent
+{
+    /// <inheritdoc />
+    public string Stage => "profile";
+}
+
+/// <summary>A layer began.</summary>
+/// <param name="Layer">The layer's name.</param>
+/// <param name="Role">The weight its evidence carries.</param>
+/// <param name="Requirement">Whether its evidence is required.</param>
+public sealed record WireTurnLayerStartEvent(string Layer, string Role, string Requirement) : IWireTurnEvent
+{
+    /// <inheritdoc />
+    public string Stage => "layer_start";
+}
+
+/// <summary>A provider was bound to a pinned source.</summary>
+/// <param name="Layer">The layer's name.</param>
+/// <param name="Source">The pinned source.</param>
+/// <param name="Provider">The provider that claimed it.</param>
+public sealed record WireTurnLayerSourceEvent(string Layer, string Source, string Provider) : IWireTurnEvent
+{
+    /// <inheritdoc />
+    public string Stage => "layer_source";
+}
+
+/// <summary>A layer finished, with what it produced.</summary>
+/// <param name="Layer">The layer's name.</param>
+/// <param name="Block">The block's kind.</param>
+/// <param name="SupportsCompleteness">Whether the block permits a completeness claim.</param>
+/// <param name="RefusalCode">The refusal's code, when the layer declined.</param>
+/// <param name="ElapsedMs">How long the layer took.</param>
+public sealed record WireTurnLayerCompleteEvent(
+    string Layer,
+    string Block,
+    bool SupportsCompleteness,
+    string? RefusalCode,
+    long ElapsedMs) : IWireTurnEvent
+{
+    /// <inheritdoc />
+    public string Stage => "layer_complete";
+}
+
+/// <summary>What the run's blocks collectively permit, once every layer has run.</summary>
+/// <param name="CompletenessAvailable">Whether any block permits a completeness claim.</param>
+/// <param name="DisclosedConflicts">How many conflicts between layers will be disclosed.</param>
+public sealed record WireTurnCoverageEvent(bool CompletenessAvailable, int DisclosedConflicts) : IWireTurnEvent
+{
+    /// <inheritdoc />
+    public string Stage => "coverage";
+}
+
+/// <summary>The hierarchy's blocks were composed into the model's context.</summary>
+/// <param name="LayersUsed">How many blocks went into the context.</param>
+/// <param name="ContextChars">How many characters that context came to.</param>
+/// <param name="LayersDropped">The layers that did not fit the budget, dropped whole.</param>
+public sealed record WireTurnComposeEvent(int LayersUsed, int ContextChars, IReadOnlyList<string> LayersDropped) : IWireTurnEvent
+{
+    /// <inheritdoc />
+    public string Stage => "compose";
+}
+
+/// <summary>The model the turn resolved for its paid steps, before any of them was paid for.</summary>
+/// <param name="Provider">The provider dialect that will answer.</param>
+/// <param name="Model">The model the deployment resolved.</param>
+/// <param name="Tier">The tier it resolved through, when it resolved a tier rather than a model.</param>
+/// <param name="WasOverride">Whether the caller asked for it rather than the runbook.</param>
+public sealed record WireTurnModelEvent(string Provider, string Model, string? Tier, bool WasOverride) : IWireTurnEvent
+{
+    /// <inheritdoc />
+    public string Stage => "model";
+}
+
+/// <summary>The retrieval the turn's evidence came from returned.</summary>
+/// <param name="Hits">How many chunks the merged result carried.</param>
+public sealed record WireTurnMergeEvent(int Hits) : IWireTurnEvent
+{
+    /// <inheritdoc />
+    public string Stage => "merge";
+}
+
+/// <summary>One paid completion returned.</summary>
+/// <param name="Attempt">Zero for the answer and its truncation re-ask, one upward per corrective retry.</param>
+/// <param name="Provider">The provider dialect that answered.</param>
+/// <param name="Model">The model that actually answered.</param>
+/// <param name="InputTokens">What the call cost to send.</param>
+/// <param name="OutputTokens">What the call cost to generate.</param>
+public sealed record WireTurnCompletionEvent(
+    int Attempt,
+    string Provider,
+    string Model,
+    int InputTokens,
+    int OutputTokens) : IWireTurnEvent
+{
+    /// <inheritdoc />
+    public string Stage => "completion";
+}
+
+/// <summary>Deterministic verification ran over the current answer.</summary>
+/// <param name="Attempt">The attempt the checks ran over.</param>
+/// <param name="Checks">The checks that ran, in the order a report lists them.</param>
+/// <param name="Violations">How many violations they found.</param>
+public sealed record WireTurnVerifyEvent(int Attempt, IReadOnlyList<string> Checks, int Violations) : IWireTurnEvent
+{
+    /// <inheritdoc />
+    public string Stage => "verify";
+}
+
 /// <summary>The result of running a turn: what it produced, or why nothing was.</summary>
 public readonly union WireRunTurnResult(WireTurnResponse, WireProblem);
 
