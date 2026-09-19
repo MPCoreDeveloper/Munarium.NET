@@ -49,7 +49,7 @@
     <PackageVersion Include="SharpCoreDB.Graph.Advanced" Version="2.1.0-RC.3" />
     <PackageVersion Include="SharpDispatch" Version="1.1.0-RC.1" />
     <PackageVersion Include="Posseth.UlidFactory" Version="2.1.0-RC.1" />
-    <PackageVersion Include="SharpPortico.SourceGenerator" Version="1.1.1" />
+    <PackageVersion Include="SharpPortico.SourceGenerator" Version="1.1.2-preview.1" />
     <PackageVersion Include="Google.Protobuf" Version="3.36.0" />
     <PackageVersion Include="Grpc.Core.Api" Version="2.66.0" />
     <PackageVersion Include="Grpc.Net.Client" Version="2.66.0" />
