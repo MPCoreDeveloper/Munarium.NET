@@ -71,6 +71,11 @@ public static class TurnFrames
         WireTurnModelEvent model => JsonSerializer.Serialize(model, WireJson.Default.WireTurnModelEvent),
         WireTurnExpansionEvent expansion =>
             JsonSerializer.Serialize(expansion, WireJson.Default.WireTurnExpansionEvent),
+        WireTurnProbeEvent probe => JsonSerializer.Serialize(probe, WireJson.Default.WireTurnProbeEvent),
+        WireTurnSelectionEvent selection =>
+            JsonSerializer.Serialize(selection, WireJson.Default.WireTurnSelectionEvent),
+        WireTurnRetrievalEvent retrieval =>
+            JsonSerializer.Serialize(retrieval, WireJson.Default.WireTurnRetrievalEvent),
         WireTurnMergeEvent merged => JsonSerializer.Serialize(merged, WireJson.Default.WireTurnMergeEvent),
         WireTurnCompletionEvent completion =>
             JsonSerializer.Serialize(completion, WireJson.Default.WireTurnCompletionEvent),

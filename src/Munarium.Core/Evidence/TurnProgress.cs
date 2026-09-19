@@ -23,6 +23,9 @@ public readonly union TurnProgress(
     HierarchyProgress,
     TurnModelResolved,
     TurnExpanded,
+    TurnProbed,
+    TurnSelected,
+    TurnRetrieved,
     TurnMerged,
     TurnComposed,
     TurnCompleted,
@@ -52,6 +55,24 @@ public sealed record TurnExpanded(
     IReadOnlyList<string> Terms,
     int InputTokens,
     int OutputTokens);
+
+/// <summary>One collection was probed with the question as asked.</summary>
+/// <param name="Collection">The collection's name.</param>
+/// <param name="Hits">What the probe found.</param>
+/// <param name="Skipped">Whether the collection has no live index in this process and was skipped.</param>
+public sealed record TurnProbed(string Collection, int Hits, bool Skipped);
+
+/// <summary>Which collections the probe chose for the deep search.</summary>
+/// <param name="Probed">How many collections were probed.</param>
+/// <param name="Selected">How many of them were chosen.</param>
+/// <param name="Collections">The chosen ones, in the runbook's order.</param>
+public sealed record TurnSelected(int Probed, int Selected, IReadOnlyList<string> Collections);
+
+/// <summary>One collection was searched with the widened question.</summary>
+/// <param name="Collection">The collection's name.</param>
+/// <param name="Hits">What the search found.</param>
+/// <param name="Skipped">Whether the collection turned out to have no reader.</param>
+public sealed record TurnRetrieved(string Collection, int Hits, bool Skipped);
 
 /// <summary>The retrieval the turn's evidence came from returned.</summary>
 /// <remarks>

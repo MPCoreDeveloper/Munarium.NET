@@ -18,6 +18,53 @@ public static class ReciprocalRankFusion
     public const int DefaultK = 60;
 
     /// <summary>
+    /// Fuses ranked lists into one answer, without sealing an envelope.
+    /// </summary>
+    /// <remarks>
+    /// The overload a merge across collections needs: one index version seals one envelope, and a turn that searched
+    /// several collections has one envelope per collection rather than one over all of them, so there is nothing here for
+    /// a single envelope to promise. The scoring is the same code as the sealing overload, deliberately - two copies of
+    /// a rank fusion that could drift is exactly the kind of thing an envelope's determinism would not survive.
+    /// </remarks>
+    /// <param name="rankings">The candidate lists, best first, one per retrieval leg.</param>
+    /// <param name="topK">How many fused chunks the answer may carry.</param>
+    /// <param name="k">The RRF constant.</param>
+    /// <returns>The fused chunks, best first.</returns>
+    public static IReadOnlyList<RetrievedChunk> Fuse(
+        IReadOnlyList<IReadOnlyList<RetrievedChunk>> rankings,
+        int topK,
+        int k = DefaultK)
+    {
+        ArgumentNullException.ThrowIfNull(rankings);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(topK);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(k);
+
+        var scores = new Dictionary<string, double>(StringComparer.Ordinal);
+        var chunks = new Dictionary<string, RetrievedChunk>(StringComparer.Ordinal);
+
+        foreach (var ranking in rankings)
+        {
+            for (var rank = 0; rank < ranking.Count; rank++)
+            {
+                var chunk = ranking[rank];
+                var chunkId = chunk.Source.ChunkId;
+
+                scores[chunkId] = scores.GetValueOrDefault(chunkId) + (1.0 / (k + rank + 1));
+                chunks[chunkId] = chunk;
+            }
+        }
+
+        return
+        [
+            .. chunks.Keys
+                .OrderByDescending(chunkId => scores[chunkId])
+                .ThenBy(chunkId => chunkId, StringComparer.Ordinal)
+                .Take(topK)
+                .Select(chunkId => chunks[chunkId] with { Score = scores[chunkId] }),
+        ];
+    }
+
+    /// <summary>
     /// Fuses ranked lists into one answer with a provenance envelope.
     /// </summary>
     /// <param name="rankings">The candidate lists, best first, one per retrieval leg.</param>
@@ -38,27 +85,7 @@ public static class ReciprocalRankFusion
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(topK);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(k);
 
-        var scores = new Dictionary<string, double>(StringComparer.Ordinal);
-        var chunks = new Dictionary<string, RetrievedChunk>(StringComparer.Ordinal);
-
-        foreach (var ranking in rankings)
-        {
-            for (var rank = 0; rank < ranking.Count; rank++)
-            {
-                var chunk = ranking[rank];
-                var chunkId = chunk.Source.ChunkId;
-
-                scores[chunkId] = scores.GetValueOrDefault(chunkId) + (1.0 / (k + rank + 1));
-                chunks[chunkId] = chunk;
-            }
-        }
-
-        var fused = chunks.Keys
-            .OrderByDescending(chunkId => scores[chunkId])
-            .ThenBy(chunkId => chunkId, StringComparer.Ordinal)
-            .Take(topK)
-            .Select(chunkId => chunks[chunkId] with { Score = scores[chunkId] })
-            .ToArray();
+        var fused = Fuse(rankings, topK, k);
 
         var envelope = new ProvenanceEnvelope(
             indexVersion,

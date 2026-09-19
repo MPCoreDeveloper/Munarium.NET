@@ -17,9 +17,9 @@ using Munarium.Retrieval;
 public static class SessionTurnPayloads
 {
     /// <summary>Writes the merged hits.</summary>
-    /// <param name="hits">The turn's retrieval.</param>
+    /// <param name="hits">The turn's merged hits.</param>
     /// <returns>The hits, as JSON.</returns>
-    public static string Hits(RetrievalResult hits)
+    public static string Hits(IReadOnlyList<RetrievedChunk> hits)
     {
         ArgumentNullException.ThrowIfNull(hits);
 
@@ -27,7 +27,7 @@ public static class SessionTurnPayloads
         {
             writer.WriteStartArray();
 
-            foreach (var chunk in hits.Chunks)
+            foreach (var chunk in hits)
             {
                 writer.WriteStartObject();
                 writer.WriteString("chunk_id", chunk.Source.ChunkId);
@@ -41,32 +41,37 @@ public static class SessionTurnPayloads
         });
     }
 
-    /// <summary>Writes the provenance the hits came with.</summary>
-    /// <param name="hits">The turn's retrieval.</param>
+    /// <summary>Writes the provenance the hits came with, one entry per collection that answered.</summary>
+    /// <param name="envelopes">The envelopes, in the order the collections were searched.</param>
     /// <returns>The envelopes, as JSON.</returns>
-    public static string Envelopes(RetrievalResult hits)
+    public static string Envelopes(IReadOnlyList<ProvenanceEnvelope> envelopes)
     {
-        ArgumentNullException.ThrowIfNull(hits);
+        ArgumentNullException.ThrowIfNull(envelopes);
 
         return Json(writer =>
         {
             writer.WriteStartArray();
-            writer.WriteStartObject();
-            writer.WriteString("index_version", hits.Envelope.IndexVersion);
-            writer.WriteNumber("ledger_watermark", hits.Envelope.LedgerWatermark.Value);
-            writer.WriteStartArray("sources");
 
-            foreach (var source in hits.Envelope.Sources)
+            foreach (var envelope in envelopes)
             {
                 writer.WriteStartObject();
-                writer.WriteString("chunk_id", source.ChunkId);
-                writer.WriteString("source_path", source.SourcePath);
-                writer.WriteString("content_hash", source.ContentHash);
+                writer.WriteString("index_version", envelope.IndexVersion);
+                writer.WriteNumber("ledger_watermark", envelope.LedgerWatermark.Value);
+                writer.WriteStartArray("sources");
+
+                foreach (var source in envelope.Sources)
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("chunk_id", source.ChunkId);
+                    writer.WriteString("source_path", source.SourcePath);
+                    writer.WriteString("content_hash", source.ContentHash);
+                    writer.WriteEndObject();
+                }
+
+                writer.WriteEndArray();
                 writer.WriteEndObject();
             }
 
-            writer.WriteEndArray();
-            writer.WriteEndObject();
             writer.WriteEndArray();
         });
     }

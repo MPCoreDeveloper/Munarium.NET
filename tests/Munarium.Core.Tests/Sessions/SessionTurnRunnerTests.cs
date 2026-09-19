@@ -38,7 +38,10 @@ public class SessionTurnRunnerTests
         State = SessionState.Open,
     };
 
-    private static RunbookDocument Document(bool withProfile = false, ModelQueryExpansionSpec? expansion = null) => new()
+    private static RunbookDocument Document(
+        bool withProfile = false,
+        ModelQueryExpansionSpec? expansion = null,
+        CollectionSelectionSpec? selection = null) => new()
     {
         ApiVersion = "munarium.dev/v2",
         Kind = "Runbook",
@@ -66,6 +69,7 @@ public class SessionTurnRunnerTests
             Retrieval = new RetrievalSpec
             {
                 TopK = 5,
+                CollectionSelection = selection,
                 ModelQueryExpansion = expansion,
                 DefaultResearchProfile = withProfile ? "register-first" : null,
                 ResearchProfiles = withProfile
@@ -101,6 +105,13 @@ public class SessionTurnRunnerTests
 
     private static SessionTurnRunner Runner(ISessionStore sessions, IModelProvider model, StubIndexHost index) =>
         new(sessions, index, model, model, "test-embedder", [], "acme");
+
+    private static SessionTurnRunner Runner(
+        ISessionStore sessions,
+        IModelProvider model,
+        StubIndexHost index,
+        ICollectionIndexes collections) =>
+        new(sessions, index, model, model, "test-embedder", [], "acme", collections);
 
     /// <summary>
     /// A turn reports the stages it crosses, in the order it crosses them - and reports nothing it did not do.
@@ -313,6 +324,104 @@ public class SessionTurnRunnerTests
             ValueTask.FromResult(new ProviderHealth(true, "test"));
     }
 
+    /// <summary>
+    /// A turn over several collections probes each of them, deepens the strongest, and merges the rest anyway.
+    /// </summary>
+    /// <remarks>
+    /// The last part is the whole point of the original's two stages: a collection that lost the selection is not
+    /// excluded, it is spared the deep search. Its probe pool still reaches the answer, and its envelope reaches the
+    /// record with it - otherwise the answer would cite a chunk nobody could explain later.
+    /// </remarks>
+    [Fact]
+    public async Task ATurnProbesEveryPermittedCollectionAndSearchesTheStrongest()
+    {
+        var sessions = new MemorySessions();
+        var session = await sessions.CreateAsync(Session() with { Access = new AccessContext(4, []) });
+        var index = new StubIndexHost();
+        var collections = new StubCollections("contracts", "minutes");
+        var reported = new List<TurnProgress>();
+        var selected = new List<TurnSelected>();
+
+        var executed = Executed(await Runner(sessions, new StubModel("[]"), index, collections).RunAsync(
+            session,
+            Document(selection: new CollectionSelectionSpec { MaxCollections = 1, ProbeCandidateN = 10 }),
+            "how many contracts lapse?",
+            requestedProfile: null,
+            new TurnModels("small-model", "small-model", "big-model"),
+            complete: false,
+            topK: 5,
+            onProgress: progress =>
+            {
+                reported.Add(progress);
+
+                if (progress is TurnSelected value)
+                {
+                    selected.Add(value);
+                }
+            }));
+
+        // Probed both, deepened one, merged - in that order, which is the order the events claim.
+        Assert.Equal(["probe", "probe", "selection", "retrieval", "merge"], reported.Select(StageOf));
+
+        var chosen = Assert.Single(selected);
+
+        Assert.Equal(2, chosen.Probed);
+        Assert.Equal(1, chosen.Selected);
+        Assert.Equal(["contracts"], chosen.Collections);
+
+        // The collection that lost the selection was spared the deep search, not dropped: it was probed once.
+        Assert.Equal(2, collections.Readers["contracts"].Asked.Count);
+        Assert.Single(collections.Readers["minutes"].Asked);
+
+        // And its chunk is in the answer, with its envelope in the record.
+        Assert.Equal(
+            ["contracts-chunk-0", "contracts-chunk-1", "minutes-chunk-0"],
+            executed.Hits.Select(chunk => chunk.Source.ChunkId).Order(StringComparer.Ordinal));
+        Assert.Equal(
+            ["idx-contracts", "idx-minutes"],
+            executed.Envelopes.Select(envelope => envelope.IndexVersion));
+
+        // The fan-out replaced the single search rather than adding to it.
+        Assert.Empty(index.Queries);
+    }
+
+    /// <summary>A collection with no live index is probed, reported skipped, and searched not at all.</summary>
+    /// <remarks>
+    /// Not an error: it is a collection this session may read and this deployment cannot search, which is exactly the
+    /// difference the probe reports as skipped rather than as a failure.
+    /// </remarks>
+    [Fact]
+    public async Task ACollectionWithNoLiveIndexIsProbedAndSkipped()
+    {
+        var sessions = new MemorySessions();
+        var session = await sessions.CreateAsync(Session() with { Access = new AccessContext(4, []) });
+        var collections = new StubCollections("contracts");
+        var probed = new List<TurnProbed>();
+
+        var executed = Executed(await Runner(sessions, new StubModel("[]"), new StubIndexHost(), collections).RunAsync(
+            session,
+            Document(selection: new CollectionSelectionSpec { MaxCollections = 2, ProbeCandidateN = 10 }),
+            "how many contracts lapse?",
+            requestedProfile: null,
+            new TurnModels("small-model", "small-model", "big-model"),
+            complete: false,
+            topK: 5,
+            onProgress: progress =>
+            {
+                if (progress is TurnProbed value)
+                {
+                    probed.Add(value);
+                }
+            }));
+
+        var expected = new[] { (Collection: "contracts", Hits: 2, Skipped: false), ("minutes", 0, true) };
+
+        Assert.Equal(expected, probed.Select(entry => (entry.Collection, entry.Hits, entry.Skipped)));
+
+        // Only the collection that has an index answered, so it is the only envelope.
+        Assert.Equal(["idx-contracts"], executed.Envelopes.Select(envelope => envelope.IndexVersion));
+    }
+
     /// <summary>The wire's name for a progress event, which is the stage it reports.</summary>
     /// <param name="progress">The event.</param>
     /// <returns>The stage's name.</returns>
@@ -321,6 +430,9 @@ public class SessionTurnRunnerTests
         HierarchyProgress hierarchy => HierarchyStageOf(hierarchy),
         TurnModelResolved => "model",
         TurnExpanded => "expansion",
+        TurnProbed => "probe",
+        TurnSelected => "selection",
+        TurnRetrieved => "retrieval",
         TurnMerged => "merge",
         TurnComposed => "compose",
         TurnCompleted => "completion",
@@ -338,6 +450,73 @@ public class SessionTurnRunnerTests
         LayerCompleted => "layer_complete",
         CoverageReported => "coverage",
     };
+
+    /// <summary>A deployment with one index per collection, each answering with chunks of its own.</summary>
+    /// <param name="searchable">The collections that have a live index here.</param>
+    private sealed class StubCollections(params string[] searchable) : ICollectionIndexes
+    {
+        private readonly Dictionary<string, CollectionReader> _readers = searchable.ToDictionary(
+            collection => collection,
+            collection => new CollectionReader(collection),
+            StringComparer.Ordinal);
+
+        /// <summary>Gets the readers, by collection.</summary>
+        public IReadOnlyDictionary<string, CollectionReader> Readers => _readers;
+
+        /// <inheritdoc />
+        public ValueTask<IRetrievalBackend?> ReaderForAsync(
+            string collection,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            return ValueTask.FromResult<IRetrievalBackend?>(
+                _readers.TryGetValue(collection, out var reader) ? reader : null);
+        }
+    }
+
+    /// <summary>One collection's index: it answers with chunks of its own, and remembers what it was asked.</summary>
+    /// <param name="collection">The collection it serves.</param>
+    private sealed class CollectionReader(string collection) : IRetrievalBackend
+    {
+        /// <summary>Gets the texts this collection was asked, in order.</summary>
+        public List<string> Asked { get; } = [];
+
+        /// <inheritdoc />
+        public ValueTask<RetrievalResult> SearchAsync(
+            RetrievalQuery query,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(query);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            Asked.Add(query.Text);
+
+            // One collection has two chunks and the other one, so the ranking's density has something to decide on
+            // without inventing scores: the fixture's collections differ by how much they have to say.
+            RetrievedChunk[] chunks = string.Equals(collection, "contracts", StringComparison.Ordinal)
+                ? [Chunk(collection, 0), Chunk(collection, 1)]
+                : [Chunk(collection, 0)];
+
+            return ValueTask.FromResult(
+                new RetrievalResult(
+                    chunks,
+                    new ProvenanceEnvelope(
+                        $"idx-{collection}",
+                        SequenceNumber.Zero,
+                        [.. chunks.Select(chunk => chunk.Source)])));
+        }
+
+        private static RetrievedChunk Chunk(string collection, int ordinal) => new(
+            new SourceReference(
+                $"{collection}-chunk-{ordinal}",
+                $"src-{collection}",
+                $"docs/{collection}.md",
+                "sha",
+                ordinal),
+            Score: 1.0,
+            $"text of {collection}");
+    }
 
     /// <summary>A model that embeds anything and answers with one canned answer.</summary>
     private sealed class StubModel(string answer) : IModelProvider
@@ -525,7 +704,7 @@ public class SessionTurnRunnerTests
 
         // `contracts` is level 2 and permitted; `minutes` is level 4 and is not searched at all.
         Assert.Equal(["contracts"], executed.CollectionsSearched);
-        Assert.Single(executed.Hits.Chunks);
+        Assert.Single(executed.Hits);
         Assert.Null(executed.Decision);
 
         Assert.NotNull(executed.Completion);
@@ -599,7 +778,7 @@ public class SessionTurnRunnerTests
             complete: false));
 
         Assert.Null(executed.Completion);
-        Assert.Single(executed.Hits.Chunks);
+        Assert.Single(executed.Hits);
 
         var recorded = Assert.Single(sessions.Turns);
 

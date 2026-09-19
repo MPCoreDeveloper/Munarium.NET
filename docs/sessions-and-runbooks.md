@@ -63,11 +63,10 @@ makes that order visible rather than merely asserted: `POST /v1/sessions/{sessio
 a profile's layers and their coverage, the composed context, each paid completion and the check that read it
 back - and ends with exactly one `done` carrying what the unary route would have answered, or an `error`
 carrying the problem, because a stream that has already sent its status line cannot be told anything else. It
-reports the original's vocabulary and only the stages this port actually has: `expansion` is a paid call a
-runbook declares, and `probe`, `selection` and `retrieval` come from a retrieval path that probes collection
-by collection and searches each one in turn, which this port does not do because it serves one index across
-the collections a session may read - [the index versions piece](sources-and-retrieval.md#index-versions) names
-what is missing for the probe. The stream is JSON-only, and by construction rather than by convenience: the
+reports the original's vocabulary in full: `expansion` is a paid call a runbook declares, and `probe`, `selection` and
+`retrieval` come from a retrieval path that probes collection by collection and searches each one in turn - which is
+what a turn over a deployment with an index per collection does, and a deployment that built one corpus reports the
+retrieval alone rather than a stage it never crossed. The stream is JSON-only, and by construction rather than by convenience: the
 original's own protobuf carries no streaming
 method for sessions, so the generated gRPC method refuses by name rather than answering with one event that
 would look like a turn that reported a single stage.

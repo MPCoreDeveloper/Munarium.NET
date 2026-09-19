@@ -1156,10 +1156,11 @@ public readonly union WireCreateSessionResult(WireSessionCreated, WireProblem);
 /// The contract's vocabulary is flat - one event with a <c>stage</c> discriminator - and the port's split is one record
 /// per stage, so an event carries only its own stage's fields and a stage a turn never crossed produces no event at all.
 /// <para>
-/// Three of the contract's fourteen stages are deliberately absent from this union: <c>probe</c>, <c>selection</c> and
-/// <c>retrieval</c> come from a retrieval path that probes collection by collection and searches each one in turn. This
-/// port serves one index across every collection a session may read, so it has no such boundary to report - and a record
-/// for them would be a shape nothing could ever produce.
+/// Every stage the contract declares is here, which is what makes the vocabulary complete: <c>probe</c>, <c>selection</c>
+/// and <c>retrieval</c> come from a retrieval path that probes collection by collection and searches each one in turn. A
+/// deployment that built one corpus instead reports the retrieval alone, and that is the rule for the whole union rather
+/// than a gap in it: the events describe the stages a turn actually crosses, so a stream missing one is a stream of a
+/// turn that did not cross it.
 /// </para>
 /// </remarks>
 public readonly union WireTurnEvent(
@@ -1171,6 +1172,9 @@ public readonly union WireTurnEvent(
     WireTurnComposeEvent,
     WireTurnModelEvent,
     WireTurnExpansionEvent,
+    WireTurnProbeEvent,
+    WireTurnSelectionEvent,
+    WireTurnRetrievalEvent,
     WireTurnMergeEvent,
     WireTurnCompletionEvent,
     WireTurnVerifyEvent);
@@ -1287,6 +1291,36 @@ public sealed record WireTurnExpansionEvent(
 {
     /// <inheritdoc />
     public string Stage => "expansion";
+}
+
+/// <summary>One collection was probed with the question as asked.</summary>
+/// <param name="Collection">The collection's name.</param>
+/// <param name="Hits">What the probe found.</param>
+/// <param name="Skipped">Whether the collection has no live index here and was skipped.</param>
+public sealed record WireTurnProbeEvent(string Collection, int Hits, bool Skipped) : IWireTurnEvent
+{
+    /// <inheritdoc />
+    public string Stage => "probe";
+}
+
+/// <summary>Which collections the probe chose for the deep search.</summary>
+/// <param name="Probed">How many collections were probed.</param>
+/// <param name="Selected">How many of them were chosen.</param>
+/// <param name="Collections">The chosen ones, in the runbook's order.</param>
+public sealed record WireTurnSelectionEvent(int Probed, int Selected, IReadOnlyList<string> Collections) : IWireTurnEvent
+{
+    /// <inheritdoc />
+    public string Stage => "selection";
+}
+
+/// <summary>One collection was searched with the widened question.</summary>
+/// <param name="Collection">The collection's name.</param>
+/// <param name="Hits">What the search found.</param>
+/// <param name="Skipped">Whether the collection turned out to have no reader.</param>
+public sealed record WireTurnRetrievalEvent(string Collection, int Hits, bool Skipped) : IWireTurnEvent
+{
+    /// <inheritdoc />
+    public string Stage => "retrieval";
 }
 
 /// <summary>The retrieval the turn's evidence came from returned.</summary>

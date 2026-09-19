@@ -55,6 +55,7 @@ public sealed class MunariumOperations(
     IIdempotencyStore idempotency,
     IndexBuilder indexBuilder,
     IndexCatalog catalogue,
+    IIndexVersionStore indexVersions,
     IEvidenceStore evidence,
     ISourceStore evidenceBytes,
     IRunbookStore runbooks,
@@ -146,7 +147,8 @@ public sealed class MunariumOperations(
         model ?? embedder,
         embeddingModel,
         [],
-        tenant);
+        tenant,
+        new CollectionIndexes(indexVersions, indexHost, tenant));
 
     /// <summary>The problem identifier a session nobody opened answers with.</summary>
     public const string SessionNotFoundProblem = "https://munarium.dev/problems/session-not-found";
@@ -1412,6 +1414,9 @@ public sealed class MunariumOperations(
         TurnModelResolved model => new WireTurnModelEvent(model.Provider, model.Model, model.Tier, model.WasOverride),
         TurnExpanded expanded => new WireTurnExpansionEvent(
             expanded.Provider, expanded.Model, expanded.Terms, expanded.InputTokens, expanded.OutputTokens),
+        TurnProbed probed => new WireTurnProbeEvent(probed.Collection, probed.Hits, probed.Skipped),
+        TurnSelected selected => new WireTurnSelectionEvent(selected.Probed, selected.Selected, selected.Collections),
+        TurnRetrieved retrieved => new WireTurnRetrievalEvent(retrieved.Collection, retrieved.Hits, retrieved.Skipped),
         TurnMerged merged => new WireTurnMergeEvent(merged.Hits),
         TurnComposed composed => new WireTurnComposeEvent(
             composed.LayersUsed, composed.ContextCharacters, composed.LayersDropped),
@@ -1447,22 +1452,22 @@ public sealed class MunariumOperations(
         executed.Intent.Explicit,
         executed.CollectionsSearched,
         [
-            .. executed.Hits.Chunks.Select(chunk => new WireTurnHit(
+            .. executed.Hits.Select(chunk => new WireTurnHit(
                 chunk.Source.ChunkId,
                 chunk.Source.SourcePath,
                 chunk.Score,
                 chunk.Text)),
         ],
         [
-            new WireTurnEnvelope(
-                executed.Hits.Envelope.IndexVersion,
-                executed.Hits.Envelope.LedgerWatermark.Value,
+            .. executed.Envelopes.Select(envelope => new WireTurnEnvelope(
+                envelope.IndexVersion,
+                envelope.LedgerWatermark.Value,
                 [
-                    .. executed.Hits.Envelope.Sources.Select(source => new WireTurnSource(
+                    .. envelope.Sources.Select(source => new WireTurnSource(
                         source.ChunkId,
                         source.SourcePath,
                         source.ContentHash)),
-                ]),
+                ])),
         ],
         executed.Completion is null ? null : ToWireCompletion(executed.Completion),
         executed.Decision is null ? null : ToWireDecision(executed.Decision));

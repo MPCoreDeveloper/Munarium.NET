@@ -214,6 +214,7 @@ public sealed class MunariumKernel : IAsyncDisposable
             idempotency,
             builder,
             catalogue,
+            versionStore,
             evidence,
             sourceStore,
             runbooks,
