@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
+using Munarium.Access;
 using Munarium.Evidence;
 using Munarium.Wire;
 
@@ -578,11 +579,32 @@ public static class MunariumEndpoints
             "/v1/runbooks/{name}/sessions",
             async (
                 [FromRoute(Name = "name")] string name,
+                HttpContext context,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
+                // The session plane carries the query scope, and the capability decides who the session belongs to: a
+                // caller cannot open a conversation as somebody else by forgetting to say who it is.
+                var access = MunariumKernel.Gate.Resolve(
+                    context.Request.Headers.Authorization.ToString(),
+                    AccessScope.Query,
+                    DateTimeOffset.UtcNow);
+
+                if (access is not EvidencePrincipal principal)
+                {
+                    return TypedResults.Json(
+                        new WireProblem(
+                            MunariumOperations.UnauthorizedProblem,
+                            access is AccessRefused refused ? refused.Reason : AccessGate.MissingReason,
+                            Status: 401,
+                            ExpectedHead: 0,
+                            ActualHead: 0),
+                        WireJson.Default.WireProblem,
+                        statusCode: 401);
+                }
+
                 var result = await operations
-                    .CreateSessionAsync(name, MunariumKernel.Principal, cancellationToken)
+                    .CreateSessionAsync(name, principal, cancellationToken)
                     .ConfigureAwait(false);
 
                 IResult answer = result switch

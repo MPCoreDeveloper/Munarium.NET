@@ -61,6 +61,19 @@ public sealed class MunariumKernel : IAsyncDisposable
     /// </remarks>
     public static byte[] AccessSecret { get; } = AccessTokens.Secret();
 
+    /// <summary>Gets the gate a request is resolved through.</summary>
+    /// <remarks>
+    /// Authorization is off unless a deployment turns it on, which is the original default and the reason every test
+    /// passes with no capability presented.
+    /// </remarks>
+    public static AccessGate Gate { get; } = new(
+        AccessSecret,
+        string.Equals(
+            Environment.GetEnvironmentVariable("MUNARIUM_REQUIRE_AUTHORIZATION"),
+            "true",
+            StringComparison.OrdinalIgnoreCase),
+        Principal);
+
     /// <summary>
     /// The index version a deployment starts by serving.
     /// </summary>

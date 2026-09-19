@@ -125,7 +125,20 @@ public static class AccessTokens
 
         // The signature is checked before the claims are read: a claim from an unsigned token is a claim anybody could have
         // written, and parsing first would be trusting the input to decide whether to trust the input.
-        if (!CryptographicOperations.FixedTimeEquals(Sign(secret, signing), UnBase64Url(parts[2])))
+        byte[] signature;
+
+        try
+        {
+            signature = UnBase64Url(parts[2]);
+        }
+        catch (FormatException)
+        {
+            // A signature that is not base64url is not a signature, and a caller-supplied token must never throw: it is
+            // refused like everything else that is not a capability.
+            return new AccessRefused("the capability signature is not base64url");
+        }
+
+        if (!CryptographicOperations.FixedTimeEquals(Sign(secret, signing), signature))
         {
             return new AccessRefused("the capability was not signed with this deployment's secret");
         }

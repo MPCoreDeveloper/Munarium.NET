@@ -79,6 +79,8 @@ public sealed class MunariumOperations(
     /// <summary>The problem identifier a document this port cannot read answers with.</summary>
     public const string UnsupportedMediaTypeProblem = "https://munarium.dev/problems/unsupported-media-type";
 
+    /// <summary>The problem identifier a request without a usable capability answers with.</summary>
+    public const string UnauthorizedProblem = "https://munarium.dev/problems/unauthorized";
     /// <summary>The problem identifier a document that is not the one declared answers with.</summary>
     public const string ContentHashMismatchProblem = "https://munarium.dev/problems/content-hash-mismatch";
 
