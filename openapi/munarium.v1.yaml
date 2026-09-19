@@ -1575,6 +1575,178 @@ paths:
                 $ref: "#/components/schemas/RunbookList"
 
 
+  /v1/sessions/{session_id}:
+    get:
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          description: The session's identity.
+          schema:
+            type: string
+      operationId: GetSession
+      tags: [sessions]
+      summary: A session, and every turn it recorded.
+      description: |-
+        The transcript, with the payloads as they were recorded: the merged hits, the per-collection provenance, the
+        completion audit and the hierarchy decision - the last of which is on the turn rather than inside the audit,
+        because the audit capture is capped and exactly the large layered turns whose bodies get summarized away are the
+        ones whose decision has to survive somewhere else.
+      responses:
+        "200":
+          description: The session and its turns, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "404":
+          description: No such session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/sessions/{session_id}/close:
+    post:
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          description: The session's identity.
+          schema:
+            type: string
+      operationId: CloseSession
+      tags: [sessions]
+      summary: Close a session.
+      description: |-
+        Closing is one-way, so this reports whether it happened rather than performing it silently twice: a replayed
+        close is visible instead of being indistinguishable from a first one. A closed session takes no further turns,
+        and its transcript stays readable - the clearance it snapshotted is still on the row, which is what the earlier
+        turns were answered under.
+      responses:
+        "200":
+          description: The session as closed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionClosed"
+        "404":
+          description: No such session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+
+  /v1/runbooks/{name}/sessions:
+    post:
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The runbook's name, or its reference.
+          schema:
+            type: string
+      operationId: CreateSession
+      tags: [sessions]
+      summary: Open a session over a runbook.
+      description: |-
+        A session is a conversation with a memory of what it may see. It pins the runbook by name@version, so the next
+        version of a document cannot silently change what an open conversation searches, and it snapshots the clearance it
+        was opened with, so a token that changes or a runbook that is upgraded mid conversation never alters what the
+        turns in flight can read.
+
+        Opening refuses twice, and the second refusal is the interesting one: a clearance that does not name the runbook
+        is refused by name, and a clearance that covers the runbook but none of its collections is refused rather than
+        opened empty - an empty session would answer every question with a confident nothing, and the caller could not
+        tell that apart from an empty corpus. The permitted list is the least-privilege echo the client gets back, and
+        it is the same list the rule is measured by.
+      responses:
+        "200":
+          description: The session's identity, the version it pinned, and what it may read.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionCreated"
+        "400":
+          description: No runbook by that name has been applied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The clearance does not cover the runbook, or none of its collections.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "410":
+          description: That version was removed, so it opens no sessions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/sessions/{session_id}/turns:
+    post:
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          description: The session's identity.
+          schema:
+            type: string
+      operationId: RunTurn
+      tags: [sessions]
+      summary: Ask a session a question.
+      description: |-
+        The order is the design. The session is closed or open, and a closed one is refused before anything is read. Then
+        the intent, because the plan a turn runs under is a function of the question. Then the evidence, and only then a
+        model - a required layer that cannot answer stops the turn before a completion is paid for. Then the turn is
+        recorded, decision included, so "why did the model see this?" is answerable for every turn rather than only for
+        the ones small enough to keep.
+
+        `complete` runs the runbook's completion step when it declares one, and a deployment with no completion model
+        configured answers 503 rather than pretending: the request is well formed, the deployment is not equipped.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TurnRequest"
+      responses:
+        "200":
+          description: What the turn produced, and what it cost.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TurnResponse"
+        "400":
+          description: The question is empty, or the request names a profile nobody declared.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: No such session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The session is no longer open.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "503":
+          description: A required layer could not answer, or no completion model is configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+
 components:
   schemas:
     Problem:
@@ -3242,7 +3414,7 @@ components:
           type: string
           description: When it was last applied, which is the same as created_at until it is re-applied.
 
-    Runbook:
+    RunbookVersion:
       type: object
       required: [runbook_ref, name, version, status]
       properties:
@@ -3250,6 +3422,289 @@ components:
           type: string
         name:
           type: string
+        version:
+          type: integer
+          format: int32
+        status:
+          type: string
+          enum: [active, remove_requested, removed]
+        removal_id:
+          type: string
+          description: The removal this version is armed with, when one is in flight. The YAML is never deleted.
+        removal_requested_at:
+          type: string
+        removal_requested_by:
+          type: string
+        removed_at:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    SessionCreated:
+      type: object
+      required: [session_id, runbook_ref, permitted_collections]
+      properties:
+        session_id:
+          type: string
+        runbook_ref:
+          type: string
+          description: The version this session pinned, name@version, which every turn reads.
+        permitted_collections:
+          type: array
+          description: The collections the clearance covers, in the document's order.
+          items:
+            type: string
+
+    TurnRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+        top_k:
+          type: integer
+          format: int32
+          description: How many chunks the answer may carry, or absent for the runbook's own.
+        complete:
+          type: boolean
+          description: |-
+            Whether the runbook's completion step runs, when it declares one. Absent means run it: a caller that asked a
+            question of a runbook that declares a completion is asking to be answered.
+        research_profile:
+          type: string
+          description: The profile to run under, or absent for the runbook's default.
+
+    TurnHit:
+      type: object
+      required: [chunk_id, source_path, score, text]
+      properties:
+        chunk_id:
+          type: string
+          description: The chunk's identity, which is also the label a citation names.
+        source_path:
+          type: string
+        score:
+          type: number
+          format: double
+        text:
+          type: string
+
+    TurnSource:
+      type: object
+      required: [chunk_id, source_path, content_hash]
+      properties:
+        chunk_id:
+          type: string
+        source_path:
+          type: string
+        content_hash:
+          type: string
+
+    TurnEnvelope:
+      type: object
+      required: [index_version, ledger_watermark, sources]
+      properties:
+        index_version:
+          type: string
+        ledger_watermark:
+          type: integer
+          format: int64
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/TurnSource"
+
+    TurnVerification:
+      type: object
+      required: [checks, retries, first_pass_violations, violations]
+      properties:
+        checks:
+          type: array
+          description: The checks that ran, in the order a report lists them.
+          items:
+            type: string
+        retries:
+          type: integer
+          format: int32
+        first_pass_violations:
+          type: array
+          description: What the first answer failed, before any correction.
+          items:
+            type: string
+        violations:
+          type: array
+          description: What the last one failed, or empty when it stands clean.
+          items:
+            type: string
+
+    TurnCompletion:
+      type: object
+      required: [text, input_tokens, output_tokens, completions, retried_for_truncation, verification]
+      properties:
+        text:
+          type: string
+          description: The answer that stands.
+        input_tokens:
+          type: integer
+          format: int32
+          description: Tokens across every call the turn paid for, not only the answer that stands.
+        output_tokens:
+          type: integer
+          format: int32
+        completions:
+          type: integer
+          format: int32
+        retried_for_truncation:
+          type: boolean
+        verification:
+          $ref: "#/components/schemas/TurnVerification"
+
+    LayerOutcome:
+      type: object
+      required: [layer, role, requirement, block, supports_completeness, elapsed_ms]
+      properties:
+        layer:
+          type: string
+        role:
+          type: string
+        requirement:
+          type: string
+        block:
+          type: string
+        evidence_id:
+          type: string
+        supports_completeness:
+          type: boolean
+        refusal_code:
+          type: string
+        elapsed_ms:
+          type: integer
+          format: int64
+
+    HierarchyDecision:
+      type: object
+      required: [profile, intent_explicit, layers, completeness_available, disclosed_conflicts, conflicts_policy]
+      properties:
+        profile:
+          type: string
+        intent_kind:
+          type: string
+        intent_explicit:
+          type: boolean
+        layers:
+          type: array
+          items:
+            $ref: "#/components/schemas/LayerOutcome"
+        completeness_available:
+          type: boolean
+        disclosed_conflicts:
+          type: integer
+          format: int32
+        conflicts_policy:
+          type: string
+
+    TurnResponse:
+      type: object
+      required: [ordinal, query, intent_explicit, collections_searched, hits, envelopes]
+      properties:
+        ordinal:
+          type: integer
+          format: int32
+        query:
+          type: string
+        intent_kind:
+          type: string
+        intent_explicit:
+          type: boolean
+        collections_searched:
+          type: array
+          items:
+            type: string
+        hits:
+          type: array
+          items:
+            $ref: "#/components/schemas/TurnHit"
+        envelopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TurnEnvelope"
+        completion:
+          $ref: "#/components/schemas/TurnCompletion"
+        hierarchy:
+          $ref: "#/components/schemas/HierarchyDecision"
+
+    SessionTurn:
+      type: object
+      required: [ordinal, query, collections_searched, hits, envelope]
+      properties:
+        ordinal:
+          type: integer
+          format: int32
+        query:
+          type: string
+        collections_searched:
+          type: array
+          items:
+            type: string
+        hits:
+          type: string
+          description: The merged hits, as the store recorded them, as JSON text.
+        envelope:
+          type: string
+          description: The provenance, as the store recorded it, as JSON text.
+        completion:
+          type: string
+          description: The completion audit, when there was one, as JSON text.
+        hierarchy:
+          type: string
+          description: The hierarchy decision, when a research profile ran, as JSON text.
+        created_at:
+          type: string
+
+    SessionResponse:
+      type: object
+      required: [session_id, uid, runbook_ref, access_level, compartments, state, turns]
+      properties:
+        session_id:
+          type: string
+        uid:
+          type: string
+        runbook_ref:
+          type: string
+        access_level:
+          type: integer
+          format: int32
+        compartments:
+          type: array
+          items:
+            type: string
+        state:
+          type: string
+          description: |-
+            Where the session stands: open, closed or expired.
+        created_at:
+          type: string
+        last_turn_at:
+          type: string
+        turns:
+          type: array
+          description: The turns, oldest first.
+          items:
+            $ref: "#/components/schemas/SessionTurn"
+
+    SessionClosed:
+      type: object
+      required: [session_id, state]
+      properties:
+        session_id:
+          type: string
+        state:
+          type: string
+          description: |-
+            Where it now stands: open, closed or expired.
+
         version:
           type: integer
           format: int32
@@ -3278,5 +3733,5 @@ components:
           type: array
           description: The applied versions, in name and then version order.
           items:
-            $ref: "#/components/schemas/Runbook"
+            $ref: "#/components/schemas/RunbookVersion"
 

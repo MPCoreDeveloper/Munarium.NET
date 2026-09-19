@@ -179,6 +179,10 @@ public sealed class MunariumKernel : IAsyncDisposable
         // keep answering after a newer one lands. A conversation's pool already holds a copy of the document it will
         // read, so a later apply cannot change what the turns in flight were answered from.
         var runbooks = new SharpCoreDbRunbookStore(database);
+
+        // The conversations: sessions with the clearance they snapshotted, and the turns they recorded with the ordinal
+        // the store allocated and the decision recorded beside them.
+        var sessions = new SharpCoreDbSessionStore(database);
         var builder = new IndexBuilder(
             sourceStore,
             sourceRegistry,
@@ -213,6 +217,7 @@ public sealed class MunariumKernel : IAsyncDisposable
             evidence,
             sourceStore,
             runbooks,
+            sessions,
             Tenant);
 
         return new MunariumKernel(provider, database, host, builder, catalogue, facts, operations, shapes);

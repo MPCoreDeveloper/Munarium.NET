@@ -544,6 +544,85 @@ public static class MunariumEndpoints
                     .ConfigureAwait(false));
 
         app.MapPost(
+            "/v1/runbooks/{name}/sessions",
+            async (
+                [FromRoute(Name = "name")] string name,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .CreateSessionAsync(name, MunariumKernel.Principal, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireSessionCreated created => TypedResults.Json(created, WireJson.Default.WireSessionCreated),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapPost(
+            "/v1/sessions/{session_id}/turns",
+            async (
+                [FromRoute(Name = "session_id")] string sessionId,
+                WireTurnRequest request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.RunTurnAsync(sessionId, request, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireTurnResponse turn => TypedResults.Json(turn, WireJson.Default.WireTurnResponse),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet(
+            "/v1/sessions/{session_id}",
+            async (
+                [FromRoute(Name = "session_id")] string sessionId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.GetSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireSession session => TypedResults.Json(session, WireJson.Default.WireSession),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapPost(
+            "/v1/sessions/{session_id}/close",
+            async (
+                [FromRoute(Name = "session_id")] string sessionId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.CloseSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireSessionClosed closed => TypedResults.Json(closed, WireJson.Default.WireSessionClosed),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapPost(
             "/v1/evidence",
             async (
                 WireSealEvidenceRequest request,

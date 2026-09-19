@@ -12,6 +12,11 @@ using Munarium.Evidence;
 /// reflection at runtime.
 /// </remarks>
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower)]
+[JsonSerializable(typeof(WireSessionCreated))]
+[JsonSerializable(typeof(WireTurnRequest))]
+[JsonSerializable(typeof(WireTurnResponse))]
+[JsonSerializable(typeof(WireSession))]
+[JsonSerializable(typeof(WireSessionClosed))]
 [JsonSerializable(typeof(WireRunbookApply))]
 [JsonSerializable(typeof(WireAppliedRunbook))]
 [JsonSerializable(typeof(WireRunbook))]

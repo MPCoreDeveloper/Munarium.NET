@@ -585,6 +585,78 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
     };
 
     /// <inheritdoc />
+    public override async Task<CreateSessionResponse> CreateSessionAsync(
+        CreateSessionRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .CreateSessionAsync(request.Name, MunariumKernel.Principal, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireSessionCreated created => new CreateSessionResponse { Data = ToMessageSessionCreated(created) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<RunTurnResponse> RunTurnAsync(
+        RunTurnRequest request,
+        ServerCallContext context)
+    {
+        var body = request.Body ?? throw EvidenceGrpcMapping.Missing("body");
+
+        var result = await _operations
+            .RunTurnAsync(
+                request.SessionId,
+                new WireTurnRequest(body.Query, body.TopK, body.Complete, body.ResearchProfile),
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireTurnResponse turn => new RunTurnResponse { Data = ToMessageTurn(turn) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<GetSessionResponse> GetSessionAsync(
+        GetSessionRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .GetSessionAsync(request.SessionId, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireSession session => new GetSessionResponse { Data = ToMessageSession(session) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<CloseSessionResponse> CloseSessionAsync(
+        CloseSessionRequest request,
+        ServerCallContext context)
+    {
+        var result = await _operations
+            .CloseSessionAsync(request.SessionId, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireSessionClosed closed => new CloseSessionResponse
+            {
+                Data = new SessionClosed { SessionId = closed.SessionId, State = closed.State },
+            },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
     public override async Task<ApplyRunbookResponse> ApplyRunbookAsync(
         ApplyRunbookRequest request,
         ServerCallContext context)
@@ -615,10 +687,166 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
 
         foreach (var runbook in listed.Runbooks)
         {
-            message.Runbooks.Add(ToMessageRunbook(runbook));
+            message.Runbooks.Add(ToMessageRunbookVersion(runbook));
         }
 
         return new ListRunbooksResponse { Data = message };
+    }
+
+    /// <summary>Maps an opened session onto the contract's message.</summary>
+    /// <param name="created">The session.</param>
+    /// <returns>The message.</returns>
+    private static SessionCreated ToMessageSessionCreated(WireSessionCreated created)
+    {
+        var message = new SessionCreated { SessionId = created.SessionId, RunbookRef = created.RunbookRef };
+
+        message.PermittedCollections.AddRange(created.PermittedCollections);
+
+        return message;
+    }
+
+    /// <summary>Maps a turn onto the contract's message.</summary>
+    /// <param name="turn">The turn.</param>
+    /// <returns>The message.</returns>
+    private static TurnResponse ToMessageTurn(WireTurnResponse turn)
+    {
+        var message = new TurnResponse
+        {
+            Ordinal = turn.Ordinal,
+            Query = turn.Query,
+            IntentKind = turn.IntentKind ?? string.Empty,
+            IntentExplicit = turn.IntentExplicit,
+        };
+
+        message.CollectionsSearched.AddRange(turn.CollectionsSearched);
+
+        foreach (var hit in turn.Hits)
+        {
+            message.Hits.Add(new TurnHit
+            {
+                ChunkId = hit.ChunkId,
+                SourcePath = hit.SourcePath,
+                Score = hit.Score,
+                Text = hit.Text,
+            });
+        }
+
+        foreach (var envelope in turn.Envelopes)
+        {
+            var wire = new TurnEnvelope
+            {
+                IndexVersion = envelope.IndexVersion,
+                LedgerWatermark = envelope.LedgerWatermark,
+            };
+
+            foreach (var source in envelope.Sources)
+            {
+                wire.Sources.Add(new TurnSource
+                {
+                    ChunkId = source.ChunkId,
+                    SourcePath = source.SourcePath,
+                    ContentHash = source.ContentHash,
+                });
+            }
+
+            message.Envelopes.Add(wire);
+        }
+
+        // This generator's message-typed fields are never null, so absence is expressed the way every other absent
+        // message in this contract is: as an empty one. A completion only reaches here when one was produced, so the
+        // empty message means "none ran" rather than "one ran and said nothing".
+        message.Completion = turn.Completion is null ? new TurnCompletion() : ToMessageCompletion(turn.Completion);
+        message.Hierarchy = turn.Hierarchy is null ? new HierarchyDecision() : ToMessageHierarchy(turn.Hierarchy);
+
+        return message;
+    }
+
+    private static TurnCompletion ToMessageCompletion(WireTurnCompletion completion)
+    {
+        var verification = new TurnVerification { Retries = completion.Verification.Retries };
+
+        verification.Checks.AddRange(completion.Verification.Checks);
+        verification.FirstPassViolations.AddRange(completion.Verification.FirstPassViolations);
+        verification.Violations.AddRange(completion.Verification.Violations);
+
+        return new TurnCompletion
+        {
+            Text = completion.Text,
+            InputTokens = completion.InputTokens,
+            OutputTokens = completion.OutputTokens,
+            Completions = completion.Completions,
+            RetriedForTruncation = completion.RetriedForTruncation,
+            Verification = verification,
+        };
+    }
+
+    private static HierarchyDecision ToMessageHierarchy(WireHierarchyDecision decision)
+    {
+        var message = new HierarchyDecision
+        {
+            Profile = decision.Profile,
+            IntentKind = decision.IntentKind ?? string.Empty,
+            IntentExplicit = decision.IntentExplicit,
+            CompletenessAvailable = decision.CompletenessAvailable,
+            DisclosedConflicts = decision.DisclosedConflicts,
+            ConflictsPolicy = decision.ConflictsPolicy,
+        };
+
+        foreach (var layer in decision.Layers)
+        {
+            message.Layers.Add(new LayerOutcome
+            {
+                Layer = layer.Layer,
+                Role = layer.Role,
+                Requirement = layer.Requirement,
+                Block = layer.Block,
+                EvidenceId = layer.EvidenceId ?? string.Empty,
+                SupportsCompleteness = layer.SupportsCompleteness,
+                RefusalCode = layer.RefusalCode ?? string.Empty,
+                ElapsedMs = layer.ElapsedMs,
+            });
+        }
+
+        return message;
+    }
+
+    /// <summary>Maps a session and its transcript onto the contract's message.</summary>
+    /// <param name="session">The session.</param>
+    /// <returns>The message.</returns>
+    private static SessionResponse ToMessageSession(WireSession session)
+    {
+        var message = new SessionResponse
+        {
+            SessionId = session.SessionId,
+            Uid = session.Uid,
+            RunbookRef = session.RunbookRef,
+            AccessLevel = session.AccessLevel,
+            State = session.State,
+            CreatedAt = session.CreatedAt ?? string.Empty,
+            LastTurnAt = session.LastTurnAt ?? string.Empty,
+        };
+
+        message.Compartments.AddRange(session.Compartments);
+
+        foreach (var turn in session.Turns)
+        {
+            var wire = new SessionTurn
+            {
+                Ordinal = turn.Ordinal,
+                Query = turn.Query,
+                Hits = turn.Hits,
+                Envelope = turn.Envelope,
+                Completion = turn.Completion ?? string.Empty,
+                Hierarchy = turn.Hierarchy ?? string.Empty,
+                CreatedAt = turn.CreatedAt ?? string.Empty,
+            };
+
+            wire.CollectionsSearched.AddRange(turn.CollectionsSearched);
+
+            message.Turns.Add(wire);
+        }
+
+        return message;
     }
 
     /// <summary>Maps an applied version onto the contract's message.</summary>
@@ -654,7 +882,7 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
     /// <summary>Maps a listed version onto the contract's message.</summary>
     /// <param name="runbook">The version.</param>
     /// <returns>The message.</returns>
-    private static Runbook ToMessageRunbook(WireRunbook runbook) => new()
+    private static RunbookVersion ToMessageRunbookVersion(WireRunbook runbook) => new()
     {
         RunbookRef = runbook.RunbookRef,
         Name = runbook.Name,

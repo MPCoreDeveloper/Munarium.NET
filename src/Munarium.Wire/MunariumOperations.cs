@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using Munarium.Access;
 using Munarium.Claims;
 using Munarium.Commands;
 using Munarium.Context;
@@ -17,6 +18,7 @@ using Munarium.Providers;
 using Munarium.Promises;
 using Munarium.Retrieval;
 using Munarium.Runbooks;
+using Munarium.Sessions;
 
 // The kernel's runbook namespace and the runbook reader share a name, and both declare a Severity: the wire's findings
 // are the claims plane's, so that one keeps the short name here.
@@ -56,7 +58,10 @@ public sealed class MunariumOperations(
     IEvidenceStore evidence,
     ISourceStore evidenceBytes,
     IRunbookStore runbooks,
-    string tenant)
+    ISessionStore sessions,
+    string tenant,
+    IModelProvider? model = null,
+    string modelId = "")
 {
     /// <summary>The wire contract version this implementation speaks.</summary>
     public const string Contract = "mmp.v1";
@@ -118,6 +123,64 @@ public sealed class MunariumOperations(
 
     private readonly IStorageBackend _storage = storage ?? throw new ArgumentNullException(nameof(storage));
     private readonly IRunbookStore _runbooks = runbooks ?? throw new ArgumentNullException(nameof(runbooks));
+    private readonly ISessionStore _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
+    private readonly IModelProvider? _model = model;
+    private readonly string _modelId = modelId ?? string.Empty;
+
+    /// <summary>
+    /// The turn runner, over the seams this surface already holds.
+    /// </summary>
+    /// <remarks>
+    /// No evidence providers are bound: this port has not ported the fact or semantic planes into a running deployment,
+    /// so a profile whose layers name one refuses <c>source-not-bound</c> - which is the honest answer, and the one the
+    /// hierarchy exists to give rather than answering from documents that were never declared.
+    /// <para>
+    /// The embedder stands in for the model when none is configured, and it is never reached in that case: the turn
+    /// operation refuses any modelled step outright rather than asking a provider that cannot answer.
+    /// </para>
+    /// </remarks>
+    private readonly SessionTurnRunner _turns = new(
+        sessions,
+        indexHost,
+        embedder,
+        model ?? embedder,
+        embeddingModel,
+        [],
+        tenant);
+
+    /// <summary>The problem identifier a session nobody opened answers with.</summary>
+    public const string SessionNotFoundProblem = "https://munarium.dev/problems/session-not-found";
+
+    /// <summary>The problem identifier a session whose runbook was removed answers with.</summary>
+    public const string SessionRunbookRemovedProblem = "https://munarium.dev/problems/session-runbook-removed";
+
+    /// <summary>The problem identifier a clearance that cannot open a session answers with.</summary>
+    public const string SessionForbiddenProblem = "https://munarium.dev/problems/session-forbidden";
+
+    /// <summary>The problem identifier a session that is no longer open answers with.</summary>
+    public const string SessionClosedProblem = "https://munarium.dev/problems/session-closed";
+
+    /// <summary>The problem identifier a required layer that could not answer produces.</summary>
+    public const string RequiredLayerProblem = "https://munarium.dev/problems/required-layer-unavailable";
+
+    /// <summary>The problem identifier a modelled step with no model configured produces.</summary>
+    public const string NoCompletionModelProblem = "https://munarium.dev/problems/no-completion-model";
+
+    /// <summary>The problem identifier a profile nobody declared produces.</summary>
+    public const string UnknownProfileProblem = "https://munarium.dev/problems/unknown-research-profile";
+
+    /// <summary>The problem identifier a runbook nobody applied produces.</summary>
+    public const string UnknownRunbookProblem = "https://munarium.dev/problems/unknown-runbook";
+
+    /// <summary>
+    /// The most turns a transcript read returns.
+    /// </summary>
+    /// <remarks>
+    /// A bound rather than a page: a conversation is operator-scale, and a read that could return an unbounded transcript
+    /// is a read that can be made to hold an unbounded response. An unbounded <em>store</em> is still the store's to
+    /// bound, which is where retention belongs.
+    /// </remarks>
+    public const int SessionTurnLimit = 200;
     private readonly ClaimLedger _claims = claims ?? throw new ArgumentNullException(nameof(claims));
     private readonly CandidateLedger _candidates = candidates ?? throw new ArgumentNullException(nameof(candidates));
     private readonly FindingsLedger _findings = findings ?? throw new ArgumentNullException(nameof(findings));
@@ -1091,6 +1154,302 @@ public sealed class MunariumOperations(
         record.RemovedAt,
         record.CreatedAt,
         record.UpdatedAt);
+
+    /// <summary>Opens a session over an applied runbook.</summary>
+    /// <param name="name">The runbook's name, or its reference.</param>
+    /// <param name="principal">The clearance to snapshot for the conversation.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The session, or why it was not opened.</returns>
+    public async ValueTask<WireCreateSessionResult> CreateSessionAsync(
+        string name,
+        EvidencePrincipal principal,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(principal);
+
+        var resolved = await RunbookCatalog
+            .ResolveAsync(_runbooks, _tenant, name, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (resolved is null)
+        {
+            // Nobody applied that, and it was removed, are different answers for an operator - so the second is asked for
+            // explicitly rather than reported as absence.
+            var hidden = await _runbooks
+                .ResolveAsync(_tenant, name, includeRemoved: true, cancellationToken)
+                .ConfigureAwait(false);
+
+            return hidden is null
+                ? new WireProblem(
+                    UnknownRunbookProblem,
+                    $"no runbook '{name}' has been applied",
+                    Status: 400,
+                    ExpectedHead: 0,
+                    ActualHead: 0)
+                : new WireProblem(
+                    SessionRunbookRemovedProblem,
+                    $"runbook '{hidden.Ref}' was removed; publish a new version instead",
+                    Status: 410,
+                    ExpectedHead: 0,
+                    ActualHead: 0);
+        }
+
+        var opening = SessionCreation.Open(
+            resolved.Document,
+            new AccessContext(principal.Level, principal.Compartments, principal.AllCompartments),
+            principal.Uid,
+            _tenant);
+
+        return opening switch
+        {
+            SessionOpened opened => new WireSessionCreated(
+                (await _sessions.CreateAsync(opened.Session, cancellationToken).ConfigureAwait(false)).Id,
+                opened.Session.RunbookRef,
+                opened.PermittedCollections),
+            SessionRefusal refusal => new WireProblem(
+                SessionForbiddenProblem, refusal.Message, Status: 403, ExpectedHead: 0, ActualHead: 0),
+        };
+    }
+
+    /// <summary>Reads a session and the turns it recorded.</summary>
+    /// <param name="sessionId">The session's identity.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The transcript, or why it could not be read.</returns>
+    public async ValueTask<WireSessionResult> GetSessionAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+
+        var session = await _sessions.GetAsync(_tenant, sessionId, cancellationToken).ConfigureAwait(false);
+
+        if (session is null)
+        {
+            return NotFoundSession(sessionId);
+        }
+
+        var turns = await _sessions
+            .TurnsAsync(_tenant, sessionId, SessionTurnLimit, cancellationToken)
+            .ConfigureAwait(false);
+
+        return new WireSession(
+            session.Id,
+            session.Uid,
+            session.RunbookRef,
+            session.Access.Level,
+            session.Access.Compartments,
+            session.State.ToWireName(),
+            session.CreatedAt,
+            session.LastTurnAt,
+            [.. turns.Select(ToWireSessionTurn)]);
+    }
+
+    /// <summary>Closes a session.</summary>
+    /// <param name="sessionId">The session's identity.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The session as closed, or why it was not.</returns>
+    public async ValueTask<WireCloseSessionResult> CloseSessionAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+
+        if (await _sessions.GetAsync(_tenant, sessionId, cancellationToken).ConfigureAwait(false) is null)
+        {
+            return NotFoundSession(sessionId);
+        }
+
+        var closed = await _sessions.CloseAsync(_tenant, sessionId, cancellationToken).ConfigureAwait(false);
+
+        // A replay is visible rather than silent: the honest answer to a second close is that it did not happen.
+        return closed
+            ? new WireSessionClosed(sessionId, SessionState.Closed.ToWireName())
+            : new WireProblem(
+                SessionClosedProblem,
+                $"session '{sessionId}' is not open",
+                Status: 409,
+                ExpectedHead: 0,
+                ActualHead: 0);
+    }
+
+    private static WireProblem NotFoundSession(string sessionId) => new(
+        SessionNotFoundProblem,
+        $"no session '{sessionId}'",
+        Status: 404,
+        ExpectedHead: 0,
+        ActualHead: 0);
+
+    private static WireSessionTurn ToWireSessionTurn(TurnRecord turn) => new(
+        turn.Ordinal,
+        turn.Query,
+        turn.CollectionsSearched,
+        Payload(turn.HitsJson),
+        Payload(turn.EnvelopeJson),
+        turn.CompletionJson is null ? null : Payload(turn.CompletionJson),
+        turn.HierarchyJson is null ? null : Payload(turn.HierarchyJson),
+        turn.CreatedAt);
+
+    /// <summary>
+    /// Reads a recorded payload as JSON.
+    /// </summary>
+    /// <remarks>
+    /// The bytes are this server's own, so a payload that no longer parses is shown as null rather than taking the whole
+    /// transcript down with it: a conversation is worth more than the one field that cannot be rendered.
+    /// </remarks>
+    /// <param name="json">The recorded payload.</param>
+    /// <returns>The element.</returns>
+    private static string Payload(string json)
+    {
+        try
+        {
+            return JsonElement.Parse(json).GetRawText();
+        }
+        catch (JsonException)
+        {
+            return "null";
+        }
+    }
+
+    /// <summary>Runs one turn of a session.</summary>
+    /// <param name="sessionId">The session's identity.</param>
+    /// <param name="request">The question, and what the turn asks for.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What the turn produced, or why nothing was.</returns>
+    public async ValueTask<WireRunTurnResult> RunTurnAsync(
+        string sessionId,
+        WireTurnRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        ArgumentNullException.ThrowIfNull(request);
+
+        var session = await _sessions.GetAsync(_tenant, sessionId, cancellationToken).ConfigureAwait(false);
+
+        if (session is null)
+        {
+            return NotFoundSession(sessionId);
+        }
+
+        // The document is resolved from the session's own pin rather than by the name it was opened with, which is what
+        // makes the pin a pin: a conversation keeps reading the version it was opened over.
+        var resolved = await RunbookCatalog
+            .ResolveAsync(_runbooks, _tenant, session.RunbookRef, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (resolved is null)
+        {
+            return new WireProblem(
+                SessionRunbookRemovedProblem,
+                $"runbook '{session.RunbookRef}' can no longer be read",
+                Status: 410,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        var complete = request.Complete ?? true;
+
+        // A modelled step with no model configured is refused before anything is read: the request is well formed, the
+        // deployment is not equipped, and asking a provider that cannot answer would report a bug rather than a fact.
+        if (_model is null
+            && ((complete && resolved.Document.Spec.Completion is not null)
+                || IntentResolution.IsPinned(resolved.Document)))
+        {
+            return new WireProblem(
+                NoCompletionModelProblem,
+                "this deployment has no model configured for the runbook's modelled steps",
+                Status: 503,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        var run = await _turns
+            .RunAsync(
+                session,
+                resolved.Document,
+                request.Query,
+                request.ResearchProfile,
+                new TurnModels(_modelId, _modelId),
+                complete,
+                request.TopK ?? 0,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return run switch
+        {
+            SessionTurnExecuted executed => ToWireTurn(executed),
+            SessionRefusal refusal => new WireProblem(
+                SessionClosedProblem, refusal.Message, Status: 409, ExpectedHead: 0, ActualHead: 0),
+            ResearchProblem problem => new WireProblem(
+                UnknownProfileProblem, problem.Detail, Status: 400, ExpectedHead: 0, ActualHead: 0),
+            RequiredLayerUnavailable refused => new WireProblem(
+                RequiredLayerProblem,
+                $"the required layer '{refused.Layer}' could not answer ({refused.RefusalCode})",
+                Status: 503,
+                ExpectedHead: 0,
+                ActualHead: 0),
+        };
+    }
+
+    private static WireTurnResponse ToWireTurn(SessionTurnExecuted executed) => new(
+        executed.Ordinal,
+        executed.Question,
+        executed.Intent.Kind,
+        executed.Intent.Explicit,
+        executed.CollectionsSearched,
+        [
+            .. executed.Hits.Chunks.Select(chunk => new WireTurnHit(
+                chunk.Source.ChunkId,
+                chunk.Source.SourcePath,
+                chunk.Score,
+                chunk.Text)),
+        ],
+        [
+            new WireTurnEnvelope(
+                executed.Hits.Envelope.IndexVersion,
+                executed.Hits.Envelope.LedgerWatermark.Value,
+                [
+                    .. executed.Hits.Envelope.Sources.Select(source => new WireTurnSource(
+                        source.ChunkId,
+                        source.SourcePath,
+                        source.ContentHash)),
+                ]),
+        ],
+        executed.Completion is null ? null : ToWireCompletion(executed.Completion),
+        executed.Decision is null ? null : ToWireDecision(executed.Decision));
+
+    private static WireTurnCompletion ToWireCompletion(TurnOutcome outcome) => new(
+        outcome.Answer,
+        outcome.InputTokens,
+        outcome.OutputTokens,
+        outcome.Completions,
+        outcome.RetriedForTruncation,
+        new WireTurnVerification(
+            outcome.Checks,
+            outcome.Retries,
+            outcome.FirstPassViolations,
+            outcome.Violations));
+
+    private static WireHierarchyDecision ToWireDecision(EvidenceHierarchyDecision decision) => new(
+        decision.Profile,
+        decision.IntentKind,
+        decision.IntentExplicit,
+        [
+            .. decision.Layers.Select(layer => new WireLayerOutcome(
+                layer.Layer,
+
+                // The enums' own names are the wire names: required, optional, fallback, and the three roles.
+                layer.Role.ToString().ToLowerInvariant(),
+                layer.Requirement.ToString().ToLowerInvariant(),
+                layer.Block,
+                layer.EvidenceId,
+                layer.SupportsCompleteness,
+                layer.RefusalCode,
+                layer.ElapsedMilliseconds)),
+        ],
+        decision.CompletenessAvailable,
+        decision.DisclosedConflicts,
+        decision.ConflictsPolicy);
 
     /// <summary>Answers a runbook refusal with the problem its code names, which is also its status.</summary>
     /// <param name="refusal">The refusal.</param>

@@ -975,3 +975,186 @@ public sealed record WireRunbookList(IReadOnlyList<WireRunbook> Runbooks);
 /// <summary>The result of applying a runbook: the version, or why it was not applied.</summary>
 public readonly union WireApplyRunbookResult(WireAppliedRunbook, WireProblem);
 
+
+/// <summary>A session that was opened.</summary>
+/// <param name="SessionId">Its identity.</param>
+/// <param name="RunbookRef">The version it pinned, <c>name@version</c>.</param>
+/// <param name="PermittedCollections">The collections its clearance covers, in the document's order.</param>
+public sealed record WireSessionCreated(
+    string SessionId,
+    string RunbookRef,
+    IReadOnlyList<string> PermittedCollections);
+
+/// <summary>What a turn is asked to do.</summary>
+/// <param name="Query">The question as asked.</param>
+/// <param name="TopK">How many chunks the answer may carry, or absent for the runbook's own.</param>
+/// <param name="Complete">Whether the runbook's completion step runs, when it declares one.</param>
+/// <param name="ResearchProfile">The profile to run under, or absent for the runbook's default.</param>
+public sealed record WireTurnRequest(
+    string Query,
+    int? TopK = null,
+    bool? Complete = null,
+    string? ResearchProfile = null);
+
+/// <summary>One hit a turn retrieved.</summary>
+/// <param name="ChunkId">The chunk's identity, which is also the label a citation names.</param>
+/// <param name="SourcePath">The document it came from.</param>
+/// <param name="Score">Its fused score.</param>
+/// <param name="Text">Its text.</param>
+public sealed record WireTurnHit(string ChunkId, string SourcePath, double Score, string Text);
+
+/// <summary>One source inside a turn's provenance.</summary>
+/// <param name="ChunkId">The chunk's identity.</param>
+/// <param name="SourcePath">The document's path.</param>
+/// <param name="ContentHash">The hash the version indexed.</param>
+public sealed record WireTurnSource(string ChunkId, string SourcePath, string ContentHash);
+
+/// <summary>The provenance a turn's hits came with.</summary>
+/// <param name="IndexVersion">The version that answered.</param>
+/// <param name="LedgerWatermark">The ledger position it reflects.</param>
+/// <param name="Sources">The sources the hits name.</param>
+public sealed record WireTurnEnvelope(
+    string IndexVersion,
+    long LedgerWatermark,
+    IReadOnlyList<WireTurnSource> Sources);
+
+/// <summary>What a turn's answer was checked against, and what was found.</summary>
+/// <param name="Checks">The checks that ran, in the order a report lists them.</param>
+/// <param name="Retries">How many corrective completions were paid for.</param>
+/// <param name="FirstPassViolations">What the first answer failed, before any correction.</param>
+/// <param name="Violations">What the last one failed, or empty when it stands clean.</param>
+public sealed record WireTurnVerification(
+    IReadOnlyList<string> Checks,
+    int Retries,
+    IReadOnlyList<string> FirstPassViolations,
+    IReadOnlyList<string> Violations);
+
+/// <summary>What a turn's answer cost, and what it was found to be.</summary>
+/// <param name="Text">The answer that stands.</param>
+/// <param name="InputTokens">Tokens consumed across every call, not just the last.</param>
+/// <param name="OutputTokens">Tokens produced across every call.</param>
+/// <param name="Completions">How many completions the turn paid for.</param>
+/// <param name="RetriedForTruncation">Whether any attempt was retried for stopping early.</param>
+/// <param name="Verification">What was checked.</param>
+public sealed record WireTurnCompletion(
+    string Text,
+    int InputTokens,
+    int OutputTokens,
+    int Completions,
+    bool RetriedForTruncation,
+    WireTurnVerification Verification);
+
+/// <summary>What one evidence layer produced.</summary>
+/// <param name="Layer">Its name.</param>
+/// <param name="Role">The weight its evidence carries.</param>
+/// <param name="Requirement">Whether its evidence was required.</param>
+/// <param name="Block">What it produced: hits, a table, a count, a slice, or a refusal.</param>
+/// <param name="EvidenceId">The sealed artifact, when there is one.</param>
+/// <param name="SupportsCompleteness">Whether an answer may claim completeness on this layer.</param>
+/// <param name="RefusalCode">Why it could not answer, when it could not.</param>
+/// <param name="ElapsedMs">How long it took.</param>
+public sealed record WireLayerOutcome(
+    string Layer,
+    string Role,
+    string Requirement,
+    string Block,
+    string? EvidenceId,
+    bool SupportsCompleteness,
+    string? RefusalCode,
+    long ElapsedMs);
+
+/// <summary>Why the model saw what it saw.</summary>
+/// <param name="Profile">The profile that ran.</param>
+/// <param name="IntentKind">What the question was understood to be asking, when that was modelled.</param>
+/// <param name="IntentExplicit">Whether the intent was supplied rather than modelled.</param>
+/// <param name="Layers">What each layer produced, in execution order.</param>
+/// <param name="CompletenessAvailable">Whether a completeness claim was permissible at all.</param>
+/// <param name="DisclosedConflicts">How many conflicts the policy disclosed.</param>
+/// <param name="ConflictsPolicy">The policy that decided.</param>
+public sealed record WireHierarchyDecision(
+    string Profile,
+    string? IntentKind,
+    bool IntentExplicit,
+    IReadOnlyList<WireLayerOutcome> Layers,
+    bool CompletenessAvailable,
+    int DisclosedConflicts,
+    string ConflictsPolicy);
+
+/// <summary>What a turn produced.</summary>
+/// <param name="Ordinal">Its position in the conversation, one-based.</param>
+/// <param name="Query">The question as asked.</param>
+/// <param name="IntentKind">What it was understood to be asking, when that was modelled.</param>
+/// <param name="IntentExplicit">Whether the intent was supplied rather than modelled.</param>
+/// <param name="CollectionsSearched">The collections it searched, after access filtering.</param>
+/// <param name="Hits">The merged hits.</param>
+/// <param name="Envelopes">The provenance they came with.</param>
+/// <param name="Completion">The answer, when a model answered.</param>
+/// <param name="Hierarchy">What the hierarchy decided, when a research profile ran.</param>
+public sealed record WireTurnResponse(
+    int Ordinal,
+    string Query,
+    string? IntentKind,
+    bool IntentExplicit,
+    IReadOnlyList<string> CollectionsSearched,
+    IReadOnlyList<WireTurnHit> Hits,
+    IReadOnlyList<WireTurnEnvelope> Envelopes,
+    WireTurnCompletion? Completion = null,
+    WireHierarchyDecision? Hierarchy = null);
+
+/// <summary>One turn as it was recorded, with the payloads as the store kept them.</summary>
+/// <param name="Ordinal">Its position in the conversation, one-based.</param>
+/// <param name="Query">The question as asked.</param>
+/// <param name="CollectionsSearched">The collections it searched.</param>
+/// <param name="Hits">The merged hits, as recorded, as JSON text.</param>
+/// <param name="Envelope">The provenance, as recorded, as JSON text.</param>
+/// <param name="Completion">The completion audit, as recorded, when there was one.</param>
+/// <param name="Hierarchy">The hierarchy decision, as recorded, when a profile ran.</param>
+/// <param name="CreatedAt">When it was recorded.</param>
+public sealed record WireSessionTurn(
+    int Ordinal,
+    string Query,
+    IReadOnlyList<string> CollectionsSearched,
+    string Hits,
+    string Envelope,
+    string? Completion = null,
+    string? Hierarchy = null,
+    string? CreatedAt = null);
+
+/// <summary>A session and its turns.</summary>
+/// <param name="SessionId">Its identity.</param>
+/// <param name="Uid">The caller it speaks for.</param>
+/// <param name="RunbookRef">The version it pinned.</param>
+/// <param name="AccessLevel">The level it snapshotted.</param>
+/// <param name="Compartments">The compartments it snapshotted.</param>
+/// <param name="State">Where it stands: <c>open</c>, <c>closed</c> or <c>expired</c>.</param>
+/// <param name="CreatedAt">When it was opened.</param>
+/// <param name="LastTurnAt">When its last turn was recorded.</param>
+/// <param name="Turns">Its turns, oldest first.</param>
+public sealed record WireSession(
+    string SessionId,
+    string Uid,
+    string RunbookRef,
+    int AccessLevel,
+    IReadOnlyList<string> Compartments,
+    string State,
+    string? CreatedAt,
+    string? LastTurnAt,
+    IReadOnlyList<WireSessionTurn> Turns);
+
+/// <summary>A session that was closed.</summary>
+/// <param name="SessionId">Its identity.</param>
+/// <param name="State">Where it now stands.</param>
+public sealed record WireSessionClosed(string SessionId, string State);
+
+/// <summary>The result of opening a session: the session, or why it was not opened.</summary>
+public readonly union WireCreateSessionResult(WireSessionCreated, WireProblem);
+
+/// <summary>The result of running a turn: what it produced, or why nothing was.</summary>
+public readonly union WireRunTurnResult(WireTurnResponse, WireProblem);
+
+/// <summary>The result of reading a session: the transcript, or why it could not be read.</summary>
+public readonly union WireSessionResult(WireSession, WireProblem);
+
+/// <summary>The result of closing a session: the session, or why it was not closed.</summary>
+public readonly union WireCloseSessionResult(WireSessionClosed, WireProblem);
+
