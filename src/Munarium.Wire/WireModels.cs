@@ -658,14 +658,16 @@ public static class WireSourceKinds
 
 /// <summary>A document as it is offered for ingest.</summary>
 /// <param name="Path">The logical path, which is the source's identity.</param>
-/// <param name="MediaType">The media type of the text, with or without parameters.</param>
-/// <param name="Content">The document's text, which is read as UTF-8.</param>
+/// <param name="MediaType">The media type of the document, with or without parameters.</param>
+/// <param name="Content">The document's text, which is read as UTF-8: exactly one of this and ContentBase64.</param>
 /// <param name="ContentSha256">The hash the caller declares, or empty to have the server hash what arrived.</param>
+/// <param name="ContentBase64">The document's bytes as standard base64, for a document that is not text.</param>
 public sealed record WireSourceIngest(
     string Path,
     string MediaType,
-    string Content,
-    string? ContentSha256);
+    string? Content = null,
+    string? ContentSha256 = null,
+    string? ContentBase64 = null);
 
 /// <summary>A document as it was stored, and how much of it reached the index.</summary>
 /// <param name="SourceId">The source's identity, derived from the tenant and the path.</param>

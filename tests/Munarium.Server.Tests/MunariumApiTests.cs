@@ -1,5 +1,7 @@
 namespace Munarium.Server.Tests;
 
+using System.IO.Compression;
+using System.Text;
 using Munarium.Context;
 using Munarium.Ledger;
 using Munarium.Providers;
@@ -1024,6 +1026,111 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
     }
 
+    /// <summary>
+    /// A document that is not text travels as bytes, and it is read: a DOCX out of its own XML.
+    /// </summary>
+    /// <remarks>
+    /// This is what the bytes form is for, and it is the whole chain again - the row is written, extraction turns the
+    /// bytes into text, and the text is chunked and indexed - so a binary document is retrievable like any other.
+    /// </remarks>
+    [Fact]
+    public async Task ADocxArrivesAsBytesAndIsIndexed()
+    {
+        using var put = await _client.PutAsJsonAsync(
+            "/v1/sources",
+            AsBytes("docs/policy.docx", DocxMediaType, Docx("Vacation Policy", "Employees accrue 15 days.")),
+            WireJson.Default.WireSourceIngest);
+
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+
+        var ingested = (await put.Content.ReadFromJsonAsync(WireJson.Default.WireIngestedSource))!;
+
+        Assert.Equal("new", ingested.Kind);
+        Assert.True(ingested.ChunksIndexed > 0, "a DOCX's paragraphs should have been chunked and indexed");
+        Assert.Equal(DocxMediaType, ingested.MediaType);
+    }
+
+    /// <summary>A PDF's text layer is read through the same seam, which is what makes a PDF retrievable at all.</summary>
+    [Fact]
+    public async Task APdfArrivesAsBytesAndIsIndexed()
+    {
+        using var put = await _client.PutAsJsonAsync(
+            "/v1/sources",
+            AsBytes("docs/settlement.pdf", "application/pdf", Pdf("The quarterly settlement was approved on 14 March")),
+            WireJson.Default.WireSourceIngest);
+
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+
+        var ingested = (await put.Content.ReadFromJsonAsync(WireJson.Default.WireIngestedSource))!;
+
+        Assert.True(ingested.ChunksIndexed > 0, "a PDF with a text layer should have been chunked and indexed");
+    }
+
+    /// <summary>
+    /// A scan has no text layer, so it is stored and indexes nothing: not a failure, but the honest answer - and the row
+    /// still accounts for the bytes.
+    /// </summary>
+    [Fact]
+    public async Task AScanIsStoredAndIndexesNothing()
+    {
+        using var put = await _client.PutAsJsonAsync(
+            "/v1/sources",
+            AsBytes("docs/scan.pdf", "application/pdf", Pdf(string.Empty)),
+            WireJson.Default.WireSourceIngest);
+
+        Assert.Equal(HttpStatusCode.OK, put.StatusCode);
+
+        var ingested = (await put.Content.ReadFromJsonAsync(WireJson.Default.WireIngestedSource))!;
+
+        Assert.Equal(0, ingested.ChunksIndexed);
+
+        var info = await GetAsync($"/v1/sources/{ingested.SourceId}", WireJson.Default.WireSourceInfo);
+
+        Assert.Equal("docs/scan.pdf", info.Path);
+        Assert.True(info.Bytes > 0, "the bytes are stored even when nothing is indexed");
+    }
+
+    /// <summary>One document, one way to carry it: a body with both forms, or with neither, is malformed.</summary>
+    /// <param name="both">Whether the body carries both forms rather than neither.</param>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ADocumentCarriedBothWaysOrNeitherIsRefused(bool both)
+    {
+        using var put = await _client.PutAsJsonAsync(
+            "/v1/sources",
+            new WireSourceIngest(
+                "docs/ambiguous.txt",
+                "text/plain",
+                both ? "The Bell rang twice." : null,
+                string.Empty,
+                both ? Convert.ToBase64String("The Bell rang twice."u8.ToArray()) : null),
+            WireJson.Default.WireSourceIngest);
+
+        Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
+
+        var problem = (await put.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
+
+        Assert.Equal(MunariumOperations.InvalidRequestProblem, problem.Type);
+        Assert.Contains("content", problem.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>Base64 that is not base64 is a malformed request rather than a document that arrived.</summary>
+    [Fact]
+    public async Task Base64ThatIsNotBase64IsRefused()
+    {
+        using var put = await _client.PutAsJsonAsync(
+            "/v1/sources",
+            new WireSourceIngest("docs/broken.docx", DocxMediaType, null, string.Empty, "not base64 at all!!"),
+            WireJson.Default.WireSourceIngest);
+
+        Assert.Equal(HttpStatusCode.BadRequest, put.StatusCode);
+
+        var problem = (await put.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
+
+        Assert.Contains("base64", problem.Detail, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task ADeclaredHashThatDoesNotMatchIsRefused()
     {
@@ -1602,4 +1709,70 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
-}
+
+    /// <summary>The media type a DOCX declares.</summary>
+    private const string DocxMediaType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+    /// <summary>Offers a document as bytes, which is one of the two ways a document travels.</summary>
+    private static WireSourceIngest AsBytes(string path, string mediaType, byte[] bytes) =>
+        new(path, mediaType, null, string.Empty, Convert.ToBase64String(bytes));
+
+    /// <summary>Builds a DOCX around its paragraphs, which is all the extractor reads.</summary>
+    private static byte[] Docx(params string[] paragraphs)
+    {
+        var xml = new StringBuilder("""<w:document xmlns:w="x"><w:body>""");
+
+        foreach (var paragraph in paragraphs)
+        {
+            xml.Append($"<w:p><w:r><w:t>{paragraph}</w:t></w:r></w:p>");
+        }
+
+        xml.Append("</w:body></w:document>");
+
+        using var buffer = new MemoryStream();
+
+        using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            using var entry = archive.CreateEntry("word/document.xml").Open();
+
+            entry.Write(Encoding.UTF8.GetBytes(xml.ToString()));
+        }
+
+        return buffer.ToArray();
+    }
+
+    /// <summary>Builds a one-page PDF with a text layer - or without one when the text is empty.</summary>
+    private static byte[] Pdf(string text)
+    {
+        var content = $"BT /F1 12 Tf 72 720 Td ({text}) Tj ET";
+        string[] objects =
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> "
+                + "/Contents 4 0 R >>",
+            $"<< /Length {content.Length} >>\nstream\n{content}\nendstream",
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        ];
+
+        var pdf = new StringBuilder("%PDF-1.4\n");
+        var offsets = new List<int>();
+
+        for (var index = 0; index < objects.Length; index++)
+        {
+            offsets.Add(pdf.Length);
+            pdf.Append($"{index + 1} 0 obj\n{objects[index]}\nendobj\n");
+        }
+
+        var xrefAt = pdf.Length;
+        pdf.Append($"xref\n0 {objects.Length + 1}\n0000000000 65535 f \n");
+
+        foreach (var offset in offsets)
+        {
+            pdf.Append($"{offset:0000000000} 00000 n \n");
+        }
+
+        pdf.Append($"trailer\n<< /Size {objects.Length + 1} /Root 1 0 R >>\nstartxref\n{xrefAt}\n%%EOF\n");
+
+        return Encoding.ASCII.GetBytes(pdf.ToString());
+    }}

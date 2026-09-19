@@ -832,11 +832,13 @@ paths:
         nothing and embeds nothing, because a document indexed twice would answer twice and displace other documents by
         existing.
 
-        The document travels as text rather than as bytes, because this port reads text: text/*, application/json and
-        application/xml, as UTF-8. A deployment that ingests PDFs or DOCX brings an extractor of its own - the upstream
-        extractors depend on a model capability this port has not ported - and until then a PDF is refused by name
-        rather than indexed as bytes no query can find. A deployment that has to stream a large document puts an object
-        store behind the source seam and hands over its location, which is what that seam is for.
+        The document travels either as its text (content) or as its bytes (content_base64), and exactly one of the two
+        is present. Bytes are what a binary document needs, and this port reads both binaries upstream reads: a DOCX
+        out of its own XML, and a PDF's text layer through a pure managed parser, so neither needs a model, a native
+        library or a rasterizer. A scan has no text layer, so it is stored and indexes nothing rather than being
+        indexed as bytes no query can find - OCR is the capability this port has not ported. A deployment that has to
+        stream a large document puts an object store behind the source seam and hands over its location, which is what
+        that seam is for.
       requestBody:
         required: true
         content:
@@ -2730,7 +2732,7 @@ components:
 
     SourceIngest:
       type: object
-      required: [path, media_type, content]
+      required: [path, media_type]
       properties:
         path:
           type: string
@@ -2739,12 +2741,18 @@ components:
             path with different bytes is one source replaced.
         media_type:
           type: string
-          description: The media type of the text, with or without parameters, for example "text/plain; charset=utf-8".
+          description: The media type of the document, with or without parameters, for example "text/plain; charset=utf-8" or "application/pdf".
         content:
           type: string
           description: |
-            The document's text. It travels as text rather than as bytes because this port reads text, and a declared
-            hash is taken over its UTF-8 encoding.
+            The document's text, for a document that is already text. Exactly one of content and content_base64 is
+            present; when this one is, a declared hash is taken over its UTF-8 encoding.
+        content_base64:
+          type: string
+          description: |
+            The document's bytes as standard base64, for a document that is not text - a DOCX or a PDF. Exactly one of
+            content and content_base64 is present; when this one is, a declared hash is taken over the bytes it decodes
+            to, which is what makes the declaration checkable against what arrived.
         content_sha256:
           type: string
           description: |

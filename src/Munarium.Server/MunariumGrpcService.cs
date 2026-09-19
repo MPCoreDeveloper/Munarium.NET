@@ -391,7 +391,8 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
                     request.Body?.Path ?? string.Empty,
                     request.Body?.MediaType ?? string.Empty,
                     request.Body?.Content ?? string.Empty,
-                    request.Body?.ContentSha256 ?? string.Empty),
+                    request.Body?.ContentSha256 ?? string.Empty,
+                request.Body?.ContentBase64),
                 context.CancellationToken)
             .ConfigureAwait(false);
 

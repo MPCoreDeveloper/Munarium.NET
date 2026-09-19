@@ -190,6 +190,31 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
         });
 
     /// <summary>
+    /// The same document over gRPC, carried as bytes: the generated message has the base64 field because the contract
+    /// says so, which is what keeps the two transports one contract rather than two that drift.
+    /// </summary>
+    [Fact]
+    public async Task ADocumentTravelsAsBytesOverGrpcToo()
+    {
+        await WithClient(async client =>
+        {
+            var response = await client.IngestSourceAsync(new IngestSourceRequest
+            {
+                Body = new SourceIngest
+                {
+                    Path = "grpc/settlement.txt",
+                    MediaType = "text/plain",
+                    ContentBase64 = Convert.ToBase64String(
+                        "The quarterly settlement was approved on 14 March."u8.ToArray()),
+                },
+            });
+
+            Assert.Equal("new", response.Data.Kind);
+            Assert.True(response.Data.ChunksIndexed > 0, "the bytes should have been decoded, chunked and indexed");
+        });
+    }
+
+    /// <summary>
     /// A refusal travels as a refusal over gRPC too, and nothing is stored: the two surfaces are the same contract, so
     /// a document one of them refuses cannot be one the other accepts.
     /// </summary>

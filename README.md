@@ -213,13 +213,14 @@ in the order it is planned:
   what the deployment holds, optionally under one prefix - which is how an operator checks a collection's binding before
   building over it. A re-put of the same bytes
   writes nothing and indexes nothing, a changed document at one path is one source replaced, and the citation an answer
-  carries resolves to the path and the hash it was stored under. Two limits are stated rather than hidden: the contract
-  carries a document's **text**, and both binaries upstream reads are read here: a DOCX out of its own XML, since a
+  carries resolves to the path and the hash it was stored under. A document travels as its **text** or as its **bytes**
+  (base64, exactly one of the two), and both binaries upstream reads are read here: a DOCX out of its own XML, since a
   `.docx` is a zip the base class library opens, and a PDF's text layer through PdfPig - pure managed, so no native
   library, no rasterizer and no model are involved, and CI proves it by extracting from a PDF inside the NativeAOT binary
-  it publishes per platform. OCR is the capability that is not ported, so a scan reads as **empty** - which is not a miss
-  hidden but the signal that path keys on - and a PDF whose fonts carry no Unicode mapping yields those fonts' own codes,
-  which no text-layer reader can turn into words. The ingest writes into whichever version is
+  it publishes per platform, so a binary document is retrievable like any other. OCR is the capability that is not
+  ported, so a scan reads as **empty** - not a miss hidden but the signal that path keys on - and a PDF whose fonts carry
+  no Unicode mapping yields those fonts' own codes, which no text-layer reader can turn into words. A further limit is
+  that the ingest writes into whichever version is
   serving, which is read at the moment of use so a cutover cannot split one document between two versions.
 - **Three of the four keyed planes are authorable; entities and ingest are not.** Every plane a snapshot carries is
   served: `GET /v1/snapshots` answers with one pin across all of them - facts resolved-current, the digest ladder

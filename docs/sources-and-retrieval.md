@@ -24,7 +24,8 @@ opaque chunk ids stay opaque where the engine's fusion parses them back to numbe
 
 ## How a document becomes text
 
-The wire carries a document's **text**, and the seam that turns bytes into it is `TextExtractor`. A DOCX is read out
+The wire carries a document's **text** or its **bytes** (base64, exactly one of the two), and the seam that turns either
+into text is `TextExtractor`. A DOCX is read out
 of its own XML — a `.docx` is a zip the base class library opens, so no model, no native library and no rasterizer are
 involved — and a PDF's text layer is read through PdfPig, which is pure managed and therefore survives a NativeAOT
 publish. That last part is not taken on trust: the AOT smoke tool extracts text from a hand-written PDF inside the

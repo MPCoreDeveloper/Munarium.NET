@@ -1578,6 +1578,49 @@ public sealed class MunariumOperations(
                 ActualHead: 0);
         }
 
+        // One document, two ways to carry it, told apart by which form carries something - which is the original's own
+        // idiom for the evidence bytes. A body carrying both, or neither, is malformed rather than worth guessing at:
+        // guessing which one a caller meant would store bytes they did not send. Presence is non-emptiness rather than
+        // non-nullness because a protobuf string field that was never set reads as empty, so the two transports would
+        // otherwise disagree about the same request.
+        var asText = !string.IsNullOrEmpty(request.Content);
+        var asBytes = !string.IsNullOrEmpty(request.ContentBase64);
+
+        if (asText == asBytes)
+        {
+            return new WireProblem(
+                InvalidRequestProblem,
+                asText
+                    ? "a document travels as 'content' or as 'content_base64', never both: they would be two documents."
+                    : "a document travels as 'content' (its text) or 'content_base64' (its bytes), and neither carries anything.",
+                Status: 400,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        byte[] bytes;
+
+        if (asBytes)
+        {
+            try
+            {
+                bytes = Convert.FromBase64String(request.ContentBase64!);
+            }
+            catch (FormatException notBase64)
+            {
+                return new WireProblem(
+                    InvalidRequestProblem,
+                    $"content_base64 is not valid base64: {notBase64.Message}",
+                    Status: 400,
+                    ExpectedHead: 0,
+                    ActualHead: 0);
+            }
+        }
+        else
+        {
+            bytes = Encoding.UTF8.GetBytes(request.Content!);
+        }
+
         DocumentOutcome outcome;
 
         try
@@ -1587,7 +1630,7 @@ public sealed class MunariumOperations(
                     _tenant,
                     path,
                     request.MediaType ?? string.Empty,
-                    Encoding.UTF8.GetBytes(request.Content ?? string.Empty),
+                    bytes,
                     request.ContentSha256 is { Length: > 0 } declared ? declared : null,
                     cancellationToken)
                 .ConfigureAwait(false);
