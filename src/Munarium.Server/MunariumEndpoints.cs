@@ -785,6 +785,7 @@ public static class MunariumEndpoints
             async (
                 [FromRoute(Name = "evidence_id")] string evidenceId,
                 [FromQuery(Name = "grant")] string grant,
+                HttpContext context,
                 WireEvidenceBytesUpload request,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
@@ -799,8 +800,26 @@ public static class MunariumEndpoints
                         statusCode: 400);
                 }
 
+                var access = MunariumKernel.Gate.Resolve(
+                    context.Request.Headers.Authorization.ToString(),
+                    AccessScope.Evidence,
+                    DateTimeOffset.UtcNow);
+
+                if (access is not EvidencePrincipal principal)
+                {
+                    return TypedResults.Json(
+                        new WireProblem(
+                            MunariumOperations.UnauthorizedProblem,
+                            access is AccessRefused refused ? refused.Reason : AccessGate.MissingReason,
+                            Status: 401,
+                            ExpectedHead: 0,
+                            ActualHead: 0),
+                        WireJson.Default.WireProblem,
+                        statusCode: 401);
+                }
+
                 var refusal = await operations
-                    .PutEvidenceBytesAsync(MunariumKernel.Principal, evidenceId, grant ?? string.Empty, bytes, cancellationToken)
+                    .PutEvidenceBytesAsync(principal, evidenceId, grant ?? string.Empty, bytes, cancellationToken)
                     .ConfigureAwait(false);
 
                 IResult answer = refusal is null
@@ -814,11 +833,30 @@ public static class MunariumEndpoints
             "/v1/evidence/{evidence_id}/commit",
             async (
                 [FromRoute(Name = "evidence_id")] string evidenceId,
+                HttpContext context,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
+                var access = MunariumKernel.Gate.Resolve(
+                    context.Request.Headers.Authorization.ToString(),
+                    AccessScope.Evidence,
+                    DateTimeOffset.UtcNow);
+
+                if (access is not EvidencePrincipal principal)
+                {
+                    return TypedResults.Json(
+                        new WireProblem(
+                            MunariumOperations.UnauthorizedProblem,
+                            access is AccessRefused refused ? refused.Reason : AccessGate.MissingReason,
+                            Status: 401,
+                            ExpectedHead: 0,
+                            ActualHead: 0),
+                        WireJson.Default.WireProblem,
+                        statusCode: 401);
+                }
+
                 var result = await operations
-                    .CommitEvidenceAsync(MunariumKernel.Principal, evidenceId, cancellationToken)
+                    .CommitEvidenceAsync(principal, evidenceId, cancellationToken)
                     .ConfigureAwait(false);
 
                 IResult answer = result switch
@@ -836,11 +874,30 @@ public static class MunariumEndpoints
             "/v1/evidence/{evidence_id}",
             async (
                 [FromRoute(Name = "evidence_id")] string evidenceId,
+                HttpContext context,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
+                var access = MunariumKernel.Gate.Resolve(
+                    context.Request.Headers.Authorization.ToString(),
+                    AccessScope.Evidence,
+                    DateTimeOffset.UtcNow);
+
+                if (access is not EvidencePrincipal principal)
+                {
+                    return TypedResults.Json(
+                        new WireProblem(
+                            MunariumOperations.UnauthorizedProblem,
+                            access is AccessRefused refused ? refused.Reason : AccessGate.MissingReason,
+                            Status: 401,
+                            ExpectedHead: 0,
+                            ActualHead: 0),
+                        WireJson.Default.WireProblem,
+                        statusCode: 401);
+                }
+
                 var result = await operations
-                    .ReadEvidenceManifestAsync(MunariumKernel.Principal, evidenceId, cancellationToken)
+                    .ReadEvidenceManifestAsync(principal, evidenceId, cancellationToken)
                     .ConfigureAwait(false);
 
                 IResult answer = result switch
@@ -858,12 +915,31 @@ public static class MunariumEndpoints
             async (
                 [FromRoute(Name = "evidence_id")] string evidenceId,
                 [FromQuery(Name = "from")] long? from,
+                HttpContext context,
                 [FromQuery(Name = "limit")] long? limit,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
+                var access = MunariumKernel.Gate.Resolve(
+                    context.Request.Headers.Authorization.ToString(),
+                    AccessScope.Evidence,
+                    DateTimeOffset.UtcNow);
+
+                if (access is not EvidencePrincipal principal)
+                {
+                    return TypedResults.Json(
+                        new WireProblem(
+                            MunariumOperations.UnauthorizedProblem,
+                            access is AccessRefused refused ? refused.Reason : AccessGate.MissingReason,
+                            Status: 401,
+                            ExpectedHead: 0,
+                            ActualHead: 0),
+                        WireJson.Default.WireProblem,
+                        statusCode: 401);
+                }
+
                 var result = await operations
-                    .ReadEvidenceRowsAsync(MunariumKernel.Principal, evidenceId, from ?? 0, limit ?? 0, cancellationToken)
+                    .ReadEvidenceRowsAsync(principal, evidenceId, from ?? 0, limit ?? 0, cancellationToken)
                     .ConfigureAwait(false);
 
                 IResult answer = result switch
