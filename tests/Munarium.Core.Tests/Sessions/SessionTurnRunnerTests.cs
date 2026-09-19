@@ -38,7 +38,7 @@ public class SessionTurnRunnerTests
         State = SessionState.Open,
     };
 
-    private static RunbookDocument Document(bool withProfile = false) => new()
+    private static RunbookDocument Document(bool withProfile = false, ModelQueryExpansionSpec? expansion = null) => new()
     {
         ApiVersion = "munarium.dev/v2",
         Kind = "Runbook",
@@ -50,9 +50,23 @@ public class SessionTurnRunnerTests
                 new CollectionSpec { Name = "contracts", Shape = "cuad-contracts@3", AccessLevel = 2 },
                 new CollectionSpec { Name = "minutes", Shape = "minutes@1", AccessLevel = 4 },
             ],
+
+            // The step runs only when the runbook both declares it and pins the task that widens a query, which is the
+            // original's rule: a declaration without a task level is a profile asking for something no model was named
+            // for.
+            Models = expansion is null
+                ? new ModelsSpec()
+                : new ModelsSpec
+                {
+                    Tasks = new SortedDictionary<string, ModelSpec>(StringComparer.Ordinal)
+                    {
+                        [TaskLevels.QueryExpansion] = new ModelSpec(),
+                    },
+                },
             Retrieval = new RetrievalSpec
             {
                 TopK = 5,
+                ModelQueryExpansion = expansion,
                 DefaultResearchProfile = withProfile ? "register-first" : null,
                 ResearchProfiles = withProfile
                     ?
@@ -83,7 +97,10 @@ public class SessionTurnRunnerTests
     };
 
     private static SessionTurnRunner Runner(ISessionStore sessions, IModelProvider model) =>
-        new(sessions, new StubIndexHost(), model, model, "test-embedder", [], "acme");
+        Runner(sessions, model, new StubIndexHost());
+
+    private static SessionTurnRunner Runner(ISessionStore sessions, IModelProvider model, StubIndexHost index) =>
+        new(sessions, index, model, model, "test-embedder", [], "acme");
 
     /// <summary>
     /// A turn reports the stages it crosses, in the order it crosses them - and reports nothing it did not do.
@@ -108,7 +125,7 @@ public class SessionTurnRunnerTests
             Document(),
             "how many contracts lapse?",
             requestedProfile: null,
-            new TurnModels("small-model", "big-model"),
+            new TurnModels("small-model", "small-model", "big-model"),
             complete: true,
             topK: 0,
             onProgress: reported.Add));
@@ -143,7 +160,7 @@ public class SessionTurnRunnerTests
             Document(withProfile: true),
             "what does the register say?",
             requestedProfile: null,
-            new TurnModels("small-model", "big-model"),
+            new TurnModels("small-model", "small-model", "big-model"),
             complete: true,
             topK: 0,
             onProgress: reported.Add));
@@ -162,6 +179,140 @@ public class SessionTurnRunnerTests
         Assert.DoesNotContain("verify", stages);
     }
 
+    /// <summary>
+    /// A turn that declares the query-expansion step searches with what the model widened, and reports the paid step.
+    /// </summary>
+    /// <remarks>
+    /// Both halves matter and they are asserted together: the variants have to reach the text the search reads - a step
+    /// that is paid for and then not used is worse than no step - and the caller has to be able to see which model ran,
+    /// which terms were accepted and what the call cost.
+    /// </remarks>
+    [Fact]
+    public async Task ATurnSearchesWithTheQueryAModelWidened()
+    {
+        var sessions = new MemorySessions();
+        var session = await sessions.CreateAsync(Session());
+        var model = new StubModel("[\"expire\", \"renew\", \"lapsed\"]");
+        var index = new StubIndexHost();
+        var reported = new List<TurnProgress>();
+        var expanded = new List<TurnExpanded>();
+
+        _ = Executed(await Runner(sessions, model, index).RunAsync(
+            session,
+            Document(expansion: new ModelQueryExpansionSpec { MaxTerms = 3 }),
+            "how many contracts lapse?",
+            requestedProfile: null,
+            new TurnModels("small-model", "small-model", "big-model"),
+            complete: false,
+            topK: 0,
+            onProgress: progress =>
+            {
+                reported.Add(progress);
+
+                if (progress is TurnExpanded value)
+                {
+                    expanded.Add(value);
+                }
+            }));
+
+        Assert.Equal("how many contracts lapse? expire renew lapsed", Assert.Single(index.Queries));
+
+        var applied = Assert.Single(expanded);
+
+        Assert.Equal(["expire", "renew", "lapsed"], applied.Terms);
+        Assert.Equal(ProviderId.Local.Value, applied.Provider);
+        Assert.Equal("small-model", applied.Model);
+        Assert.Equal(10, applied.InputTokens);
+        Assert.Equal(5, applied.OutputTokens);
+
+        // The step is reported before the search it widened, which is the only order that tells a reader the widening
+        // happened before the candidates were chosen.
+        Assert.Equal(["expansion", "merge"], reported.Select(StageOf));
+    }
+
+    /// <summary>A step that fails where the runbook lets it fail leaves the turn searching the question as asked.</summary>
+    /// <remarks>
+    /// And it reports nothing, because nothing happened: a stream that showed an expansion the runbook tolerated the
+    /// failure of would be describing a step that produced no terms rather than one that produced none.
+    /// </remarks>
+    [Fact]
+    public async Task AnExpansionTheRunbookToleratesLeavesTheQuestionAsAsked()
+    {
+        var sessions = new MemorySessions();
+        var session = await sessions.CreateAsync(Session());
+        var index = new StubIndexHost();
+        var reported = new List<TurnProgress>();
+
+        _ = Executed(await Runner(sessions, new FailingModel(), index).RunAsync(
+            session,
+            Document(expansion: new ModelQueryExpansionSpec()),
+            "how many contracts lapse?",
+            requestedProfile: null,
+            new TurnModels("small-model", "small-model", "big-model"),
+            complete: false,
+            topK: 0,
+            onProgress: reported.Add));
+
+        Assert.Equal("how many contracts lapse?", Assert.Single(index.Queries));
+        Assert.DoesNotContain("expansion", reported.Select(StageOf));
+    }
+
+    /// <summary>A step the runbook requires fails the turn when it cannot run.</summary>
+    /// <remarks>
+    /// Which is the whole difference between the two settings: a caller who asked for a widened search and silently got
+    /// the narrow one is reading a different search than the one they configured.
+    /// </remarks>
+    [Fact]
+    public async Task AnExpansionTheRunbookRequiresFailsTheTurn()
+    {
+        var sessions = new MemorySessions();
+        var session = await sessions.CreateAsync(Session());
+        var index = new StubIndexHost();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Runner(sessions, new FailingModel(), index).RunAsync(
+                session,
+                Document(expansion: new ModelQueryExpansionSpec { Required = true }),
+                "how many contracts lapse?",
+                requestedProfile: null,
+                new TurnModels("small-model", "small-model", "big-model"),
+                complete: false,
+                topK: 0));
+
+        Assert.Empty(index.Queries);
+    }
+
+    /// <summary>A model that embeds anything and cannot answer at all.</summary>
+    private sealed class FailingModel : IModelProvider
+    {
+        public ProviderId Id => ProviderId.Local;
+
+        public ValueTask<CompletionResponse> CompleteAsync(
+            CompletionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            throw new HttpRequestException("the provider is not reachable");
+        }
+
+        public ValueTask<EmbeddingResponse> EmbedAsync(
+            EmbeddingRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            return ValueTask.FromResult(
+                new EmbeddingResponse(
+                    [.. request.Inputs.Select(_ => new ReadOnlyMemory<float>(new float[3]))],
+                    request.Model,
+                    new TokenUsage(1, 0)));
+        }
+
+        public ValueTask<ProviderHealth> HealthAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult(new ProviderHealth(true, "test"));
+    }
+
     /// <summary>The wire's name for a progress event, which is the stage it reports.</summary>
     /// <param name="progress">The event.</param>
     /// <returns>The stage's name.</returns>
@@ -169,6 +320,7 @@ public class SessionTurnRunnerTests
     {
         HierarchyProgress hierarchy => HierarchyStageOf(hierarchy),
         TurnModelResolved => "model",
+        TurnExpanded => "expansion",
         TurnMerged => "merge",
         TurnComposed => "compose",
         TurnCompleted => "completion",
@@ -230,13 +382,16 @@ public class SessionTurnRunnerTests
     /// <summary>An index host whose serving reader answers with one canned chunk.</summary>
     private sealed class StubIndexHost : IIndexHost
     {
+        /// <summary>Gets the texts the turn searched with, in the order it searched.</summary>
+        public List<string> Queries { get; } = [];
+
         public string Engine => "exact@1";
 
         public string ServingVersion => "idx-test";
 
         public IIndexWriter ServingWriter => throw new NotSupportedException("A turn writes nothing to an index.");
 
-        public IRetrievalBackend ServingReader => new StubReader();
+        public IRetrievalBackend ServingReader => new StubReader(Queries);
 
         public IndexInstance Build(string indexVersion, SequenceNumber watermark) =>
             throw new NotSupportedException("A turn builds no index.");
@@ -245,7 +400,7 @@ public class SessionTurnRunnerTests
 
         public bool Serve(string indexVersion) => false;
 
-        private sealed class StubReader : IRetrievalBackend
+        private sealed class StubReader(List<string> queries) : IRetrievalBackend
         {
             public ValueTask<RetrievalResult> SearchAsync(
                 RetrievalQuery query,
@@ -253,6 +408,8 @@ public class SessionTurnRunnerTests
             {
                 ArgumentNullException.ThrowIfNull(query);
                 cancellationToken.ThrowIfCancellationRequested();
+
+                queries.Add(query.Text);
 
                 var chunk = new RetrievedChunk(
                     new SourceReference("doc-1", "source-1", "docs/policy.pdf", "sha256:abc", ChunkOrdinal: 0),
@@ -356,7 +513,7 @@ public class SessionTurnRunnerTests
             Document(),
             "how many contracts lapse?",
             requestedProfile: null,
-            new TurnModels("small-model", "big-model"),
+            new TurnModels("small-model", "small-model", "big-model"),
             complete: true,
             topK: 0));
 
@@ -410,7 +567,7 @@ public class SessionTurnRunnerTests
             Document(),
             "anything",
             requestedProfile: null,
-            new TurnModels("small-model", "big-model"),
+            new TurnModels("small-model", "small-model", "big-model"),
             complete: true));
 
         Assert.Equal(SessionRefusalCodes.SessionClosed, refusal.Code);
@@ -435,7 +592,7 @@ public class SessionTurnRunnerTests
             Document(),
             "how many contracts lapse?",
             requestedProfile: null,
-            new TurnModels("small-model", "big-model"),
+            new TurnModels("small-model", "small-model", "big-model"),
             complete: false));
 
         Assert.Null(executed.Completion);
@@ -464,7 +621,7 @@ public class SessionTurnRunnerTests
             Document(withProfile: true),
             "how many contracts lapse?",
             requestedProfile: null,
-            new TurnModels("small-model", "big-model"),
+            new TurnModels("small-model", "small-model", "big-model"),
             complete: true));
 
         Assert.Equal("register", refusal.Layer);

@@ -1156,11 +1156,10 @@ public readonly union WireCreateSessionResult(WireSessionCreated, WireProblem);
 /// The contract's vocabulary is flat - one event with a <c>stage</c> discriminator - and the port's split is one record
 /// per stage, so an event carries only its own stage's fields and a stage a turn never crossed produces no event at all.
 /// <para>
-/// Four of the contract's fourteen stages are deliberately absent from this union: <c>probe</c>, <c>selection</c>,
-/// <c>expansion</c> and <c>retrieval</c> come from a retrieval path that probes collection by collection, expands the
-/// query with a model and searches each collection in turn. This port serves one index across every collection a
-/// session may read and runs no query expansion, so it has no such boundary to report - and a record for them would be
-/// a shape nothing could ever produce.
+/// Three of the contract's fourteen stages are deliberately absent from this union: <c>probe</c>, <c>selection</c> and
+/// <c>retrieval</c> come from a retrieval path that probes collection by collection and searches each one in turn. This
+/// port serves one index across every collection a session may read, so it has no such boundary to report - and a record
+/// for them would be a shape nothing could ever produce.
 /// </para>
 /// </remarks>
 public readonly union WireTurnEvent(
@@ -1171,6 +1170,7 @@ public readonly union WireTurnEvent(
     WireTurnCoverageEvent,
     WireTurnComposeEvent,
     WireTurnModelEvent,
+    WireTurnExpansionEvent,
     WireTurnMergeEvent,
     WireTurnCompletionEvent,
     WireTurnVerifyEvent);
@@ -1270,6 +1270,23 @@ public sealed record WireTurnModelEvent(string Provider, string Model, string? T
 {
     /// <inheritdoc />
     public string Stage => "model";
+}
+
+/// <summary>The query was widened by a model, and this is what the call cost.</summary>
+/// <param name="Provider">The provider dialect that answered.</param>
+/// <param name="Model">The model that answered.</param>
+/// <param name="Terms">The accepted variants, in the order the model offered them.</param>
+/// <param name="InputTokens">What the call cost to send.</param>
+/// <param name="OutputTokens">What the call cost to generate.</param>
+public sealed record WireTurnExpansionEvent(
+    string Provider,
+    string Model,
+    IReadOnlyList<string> Terms,
+    int InputTokens,
+    int OutputTokens) : IWireTurnEvent
+{
+    /// <inheritdoc />
+    public string Stage => "expansion";
 }
 
 /// <summary>The retrieval the turn's evidence came from returned.</summary>

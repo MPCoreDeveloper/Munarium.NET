@@ -1373,7 +1373,7 @@ public sealed class MunariumOperations(
                 resolved.Document,
                 request.Query,
                 request.ResearchProfile,
-                new TurnModels(_modelId, _modelId),
+                new TurnModels(_modelId, _modelId, _modelId),
                 complete,
                 request.TopK ?? 0,
                 onProgress is null ? null : progress => onProgress(Progress(progress)),
@@ -1410,6 +1410,8 @@ public sealed class MunariumOperations(
     {
         HierarchyProgress hierarchy => HierarchyProgressOf(hierarchy),
         TurnModelResolved model => new WireTurnModelEvent(model.Provider, model.Model, model.Tier, model.WasOverride),
+        TurnExpanded expanded => new WireTurnExpansionEvent(
+            expanded.Provider, expanded.Model, expanded.Terms, expanded.InputTokens, expanded.OutputTokens),
         TurnMerged merged => new WireTurnMergeEvent(merged.Hits),
         TurnComposed composed => new WireTurnComposeEvent(
             composed.LayersUsed, composed.ContextCharacters, composed.LayersDropped),

@@ -91,6 +91,7 @@ using Munarium.Evidence;
 [JsonSerializable(typeof(WireTurnCoverageEvent))]
 [JsonSerializable(typeof(WireTurnComposeEvent))]
 [JsonSerializable(typeof(WireTurnModelEvent))]
+[JsonSerializable(typeof(WireTurnExpansionEvent))]
 [JsonSerializable(typeof(WireTurnMergeEvent))]
 [JsonSerializable(typeof(WireTurnCompletionEvent))]
 [JsonSerializable(typeof(WireTurnVerifyEvent))]

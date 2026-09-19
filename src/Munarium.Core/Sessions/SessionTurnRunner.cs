@@ -7,8 +7,9 @@ using Munarium.Runbooks;
 
 /// <summary>The model each paid step of a turn uses, already resolved by the deployment.</summary>
 /// <param name="Intent">The model the intent task classifies with.</param>
+/// <param name="Expansion">The model the query-expansion task widens with.</param>
 /// <param name="Completion">The model that answers.</param>
-public sealed record TurnModels(string Intent, string Completion);
+public sealed record TurnModels(string Intent, string Expansion, string Completion);
 
 /// <summary>What one turn of a session produced.</summary>
 public sealed record SessionTurnExecuted
@@ -189,7 +190,10 @@ public sealed class SessionTurnRunner(
         {
             if (hits is { } already) return already;
 
-            hits = await SearchAsync(document, question, topK, token).ConfigureAwait(false);
+            var widened = await WidenAsync(document, question, models.Expansion, onProgress, token)
+                .ConfigureAwait(false);
+
+            hits = await SearchAsync(document, widened, topK, token).ConfigureAwait(false);
 
             // Reported where the retrieval returns rather than where the turn reads it: that is the boundary, and a
             // layer that asks second is served the same search rather than a second one.
@@ -315,6 +319,55 @@ public sealed class SessionTurnRunner(
                     spec.Verification?.Citations ?? false,
                     spec.Verification?.MaxRetries ?? 1))
             : null;
+
+    /// <summary>
+    /// Widens the question through the runbook's query-expansion step, when it declares one.
+    /// </summary>
+    /// <remarks>
+    /// The step is optional, and the runbook decides whether a failure is fatal: a declared step that fails falls back to
+    /// the question as asked, and one the runbook marks <c>required</c> fails the turn - because a caller who asked for a
+    /// widened search and silently got the narrow one is reading a different search than the one they configured. Nothing
+    /// is reported when nothing happened: a failure the runbook tolerates produces no event, so a stream cannot show an
+    /// expansion that did not run.
+    /// </remarks>
+    /// <param name="document">The runbook.</param>
+    /// <param name="question">The question as asked.</param>
+    /// <param name="modelId">The model to widen with.</param>
+    /// <param name="onProgress">An optional listener.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The text to search with.</returns>
+    private async ValueTask<string> WidenAsync(
+        RunbookDocument document,
+        string question,
+        string modelId,
+        Action<TurnProgress>? onProgress,
+        CancellationToken cancellationToken)
+    {
+        var result = await QueryExpansion
+            .ResolveAsync(document, question, _model, modelId, cancellationToken)
+            .ConfigureAwait(false);
+
+        switch (result)
+        {
+            case QueryExpansionApplied applied:
+                onProgress?.Invoke(new TurnExpanded(
+                    applied.Provider,
+                    applied.Model,
+                    applied.Terms,
+                    applied.InputTokens,
+                    applied.OutputTokens));
+
+                return QueryExpansion.Widen(question, applied.Terms);
+
+            case QueryExpansionUnavailable unavailable
+                when document.Spec.Retrieval?.ModelQueryExpansion?.Required is true:
+                throw new InvalidOperationException(
+                    $"the runbook requires a query expansion and it produced nothing: {unavailable.Reason}");
+
+            default:
+                return question;
+        }
+    }
 
     /// <summary>
     /// Searches the deployment's serving index, in the runbook's own words.

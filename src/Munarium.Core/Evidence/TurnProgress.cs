@@ -22,6 +22,7 @@ namespace Munarium.Evidence;
 public readonly union TurnProgress(
     HierarchyProgress,
     TurnModelResolved,
+    TurnExpanded,
     TurnMerged,
     TurnComposed,
     TurnCompleted,
@@ -33,6 +34,24 @@ public readonly union TurnProgress(
 /// <param name="Tier">The tier it resolved through, when it resolved a tier rather than a model.</param>
 /// <param name="WasOverride">Whether the caller asked for it rather than the runbook.</param>
 public sealed record TurnModelResolved(string Provider, string Model, string? Tier, bool WasOverride);
+
+/// <summary>The query was widened by a model, and this is what the call cost.</summary>
+/// <remarks>
+/// Reported with the provider and model in it rather than as a separate model event, because a paid step has to be visible
+/// to the caller and not only to the log: a caller paying for an expansion is entitled to see which model ran, which terms
+/// it accepted and what the call cost.
+/// </remarks>
+/// <param name="Provider">The provider dialect that answered.</param>
+/// <param name="Model">The model that answered.</param>
+/// <param name="Terms">The accepted variants, in the order the model offered them.</param>
+/// <param name="InputTokens">What the call cost to send.</param>
+/// <param name="OutputTokens">What the call cost to generate.</param>
+public sealed record TurnExpanded(
+    string Provider,
+    string Model,
+    IReadOnlyList<string> Terms,
+    int InputTokens,
+    int OutputTokens);
 
 /// <summary>The retrieval the turn's evidence came from returned.</summary>
 /// <remarks>
