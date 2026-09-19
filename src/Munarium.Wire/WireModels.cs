@@ -717,6 +717,30 @@ public sealed record WireSourceInfo(
     string? ExtractionStatus = null,
     string? ExtractionMethod = null);
 
+/// <summary>A capability as it is asked for.</summary>
+/// <param name="Subject">The end-user identity the caller asserts, which must match the uid header on every call.</param>
+/// <param name="Level">The access level the capability should carry.</param>
+/// <param name="Compartments">The need-to-know compartments it should carry.</param>
+/// <param name="Scopes">The capabilities, from query, ingest, findings and evidence.</param>
+/// <param name="Runbooks">The runbook names permitted, or absent for any the level permits.</param>
+/// <param name="LifetimeSeconds">How long it should live, or 0 for the deployment default.</param>
+public sealed record WireAccessTokenRequest(
+    string Subject,
+    int Level,
+    IReadOnlyList<string> Compartments,
+    IReadOnlyList<string> Scopes,
+    IReadOnlyList<string>? Runbooks = null,
+    long LifetimeSeconds = 0);
+
+/// <summary>A minted capability, and what it carries.</summary>
+/// <param name="Token">The token itself, returned once and never stored: it is a bearer credential.</param>
+/// <param name="TokenId">Its identity, which is what a revocation names.</param>
+/// <param name="ExpiresAt">When it stops being valid, in seconds since the epoch.</param>
+public sealed record WireAccessToken(string Token, string TokenId, long ExpiresAt);
+
+/// <summary>The result of issuing a capability: the capability, or why it could not be issued.</summary>
+public readonly union WireAccessTokenResult(WireAccessToken, WireProblem);
+
 /// <summary>The result of ingesting a document: what was stored and indexed, or why nothing was.</summary>
 public readonly union WireIngestResult(WireIngestedSource, WireProblem);
 

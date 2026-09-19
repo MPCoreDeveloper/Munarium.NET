@@ -28,6 +28,35 @@ public static class MunariumEndpoints
 
         app.MapGet("/healthz", () => TypedResults.Ok(MunariumOperations.Health()));
 
+        // The capability plane: the identity provider in front authenticates people, and this is where the authority it
+        // asserts is exchanged for a short-lived credential. Nothing here decides anything about the ledger; it mints what
+        // the contract asks for, or refuses by naming the rule that refused.
+        app.MapPost(
+            "/v1/access-tokens",
+            (
+                WireAccessTokenRequest request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var result = operations.IssueAccessToken(
+                    request,
+                    MunariumKernel.AccessSecret,
+                    DateTimeOffset.UtcNow);
+
+                IResult answer = result switch
+                {
+                    WireAccessToken issued => TypedResults.Json(
+                        issued, WireJson.Default.WireAccessToken),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+
         app.MapPost(
             "/v1/versions",
             async (

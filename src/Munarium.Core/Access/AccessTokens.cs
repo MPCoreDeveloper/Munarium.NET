@@ -76,6 +76,17 @@ public static class AccessTokens
         };
     }
 
+    /// <summary>Gets the secret a deployment signs with, or a generated one when it set none.</summary>
+    /// <remarks>
+    /// A configured secret is what makes a capability survive a restart; without one every token is invalid the moment
+    /// the process ends, which is the right behaviour for a development run and the wrong one for a deployment.
+    /// </remarks>
+    /// <returns>The secret.</returns>
+    public static byte[] Secret() =>
+        Environment.GetEnvironmentVariable("MUNARIUM_ACCESS_SECRET") is { Length: > 0 } configured
+            ? Encoding.UTF8.GetBytes(configured)
+            : RandomNumberGenerator.GetBytes(32);
+
     /// <summary>Signs claims into a token.</summary>
     /// <param name="secret">The server-held secret.</param>
     /// <param name="claims">The claims, already issued.</param>

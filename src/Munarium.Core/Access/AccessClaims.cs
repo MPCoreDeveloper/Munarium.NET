@@ -1,5 +1,7 @@
 namespace Munarium.Access;
 
+using Munarium.Evidence;
+
 /// <summary>The scopes a capability can carry.</summary>
 /// <remarks>
 /// The original names four, and the distinctions are the point rather than the names: a reconciliation service must not be
@@ -72,6 +74,21 @@ public sealed record AccessClaims
     /// <summary>Reads the capability as the context the kernel's gates ask about.</summary>
     /// <returns>The context.</returns>
     public AccessContext ToContext() => new(Level, Compartments, Runbooks: Runbooks);
+
+    /// <summary>Reads the capability as the principal a plane resolves as.</summary>
+    /// <remarks>
+    /// A capability is never an unrestricted principal: <see cref="EvidencePrincipal.ForDeployment"/> is what a deployment
+    /// without authorization hands to everybody, and the whole point of a token is that it says something narrower. A
+    /// capability that clears every compartment says so one compartment at a time, which is a list and not a flag.
+    /// </remarks>
+    /// <returns>The principal.</returns>
+    public EvidencePrincipal ToPrincipal() => new()
+    {
+        Tenant = Tenant,
+        Uid = Subject,
+        Level = Level,
+        Compartments = Compartments,
+    };
 }
 
 /// <summary>Why a capability was refused.</summary>

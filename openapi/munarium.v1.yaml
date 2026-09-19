@@ -923,6 +923,36 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/access-tokens:
+    post:
+      operationId: IssueAccessToken
+      tags: [access]
+      summary: Exchange authority for a capability.
+      description: |
+        The identity provider in front authenticates people; this mints the short-lived, least-privilege capability
+        they then carry, and it refuses what cannot be issued. An unnamed subject cannot be audited, a capability with
+        no scope can do nothing, and a scope nobody defined is a typo that would otherwise look like authority. The
+        lifetime is clamped to a day rather than refused, because a capability that outlives a secret rotation is the
+        worse failure of the two.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessTokenRequest"
+      responses:
+        "200":
+          description: The capability, which is returned once and never stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessToken"
+        "400":
+          description: What was asked for cannot be issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
   /v1/indexes:
     post:
       operationId: BuildIndexVersion
@@ -2833,6 +2863,51 @@ components:
             extractor found nothing are different facts.
         ingested_at:
           type: string
+
+    AccessTokenRequest:
+      type: object
+      required: [subject, level, scopes]
+      properties:
+        subject:
+          type: string
+          description: The end-user identity the caller asserts, which must match the uid header on every call made with the token.
+        level:
+          type: integer
+          description: The access level the capability carries.
+        compartments:
+          type: array
+          items:
+            type: string
+          description: The need-to-know compartments it carries.
+        scopes:
+          type: array
+          items:
+            type: string
+          description: One or more of query, ingest, findings and evidence.
+        runbooks:
+          type: array
+          items:
+            type: string
+          description: The runbook names permitted, or absent for any the level permits.
+        lifetime_seconds:
+          type: integer
+          format: int64
+          description: How long it should live, or 0 for the deployment default.
+
+    AccessToken:
+      type: object
+      required: [token, token_id, expires_at]
+      properties:
+        token:
+          type: string
+          description: The capability itself. Returned once and never stored, because it is a bearer credential.
+        token_id:
+          type: string
+          description: Its identity, which is what a revocation names.
+        expires_at:
+          type: integer
+          format: int64
+          description: When it stops being valid, in seconds since the epoch.
 
     IndexManifest:
       type: object

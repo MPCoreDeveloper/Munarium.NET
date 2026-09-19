@@ -1548,6 +1548,60 @@ public sealed class MunariumOperations(
                 [.. result.Envelope.Sources.Select(ToWire)]));
     }
 
+    /// <summary>Issues a capability: authority exchanged for a short-lived, least-privilege credential.</summary>
+    /// <remarks>
+    /// The secret and the instant are passed in rather than read here: a deployment owns its secret, and a clock that a
+    /// test cannot place would make an expiry assertion a matter of luck. Both surfaces call this, so the two cannot
+    /// disagree about what an unissuable capability is.
+    /// </remarks>
+    /// <param name="request">What is asked for.</param>
+    /// <param name="secret">The deployment secret to sign with.</param>
+    /// <param name="now">The instant to issue at.</param>
+    /// <returns>The capability, or why it could not be issued.</returns>
+    public WireAccessTokenResult IssueAccessToken(
+        WireAccessTokenRequest request,
+        ReadOnlySpan<byte> secret,
+        DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        try
+        {
+            var capability = AccessTokens.Issue(
+                new AccessClaims
+                {
+                    Subject = request.Subject ?? string.Empty,
+                    Tenant = _tenant,
+                    Level = request.Level,
+                    Compartments = request.Compartments ?? [],
+                    Scopes = request.Scopes ?? [],
+                    Runbooks = request.Runbooks,
+
+                    // A capability names itself so that it can be withdrawn: a bearer credential cannot be recalled,
+                    // so the only way to refuse one is to know which one it is.
+                    TokenId = LedgerIds.New(),
+                    IssuedAt = 0,
+                    ExpiresAt = 0,
+                },
+                now,
+                request.LifetimeSeconds > 0 ? TimeSpan.FromSeconds(request.LifetimeSeconds) : null);
+
+            return new WireAccessToken(
+                AccessTokens.Mint(secret, capability),
+                capability.TokenId,
+                capability.ExpiresAt);
+        }
+        catch (ArgumentException refused)
+        {
+            return new WireProblem(
+                InvalidRequestProblem,
+                refused.Message,
+                Status: 400,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+    }
+
     /// <summary>
     /// Ingests a document: the bytes are stored, the row is recorded, and the text is indexed.
     /// </summary>

@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Munarium.Claims;
 using Munarium.Context;
 using Munarium.Counters;
+using Munarium.Access;
 using Munarium.Evidence;
 using Munarium.Facts;
 using Munarium.Governance;
@@ -51,6 +52,14 @@ public sealed class MunariumKernel : IAsyncDisposable
     /// caller's claim.
     /// </remarks>
     public static EvidencePrincipal Principal => EvidencePrincipal.ForDeployment(Tenant);
+
+    /// <summary>Gets the secret capabilities are signed with.</summary>
+    /// <remarks>
+    /// Read from MUNARIUM_ACCESS_SECRET, and generated when the deployment does not set one - which keeps a development
+    /// run working without a hard-coded secret, at the price of every capability becoming invalid when the process
+    /// restarts. That price is stated rather than hidden: a deployment that issues credentials sets it.
+    /// </remarks>
+    public static byte[] AccessSecret { get; } = AccessTokens.Secret();
 
     /// <summary>
     /// The index version a deployment starts by serving.

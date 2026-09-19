@@ -2,6 +2,7 @@ namespace Munarium.Server.Tests;
 
 using System.IO.Compression;
 using System.Text;
+using Munarium.Access;
 using Munarium.Context;
 using Munarium.Ledger;
 using Munarium.Providers;
@@ -1010,7 +1011,73 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     /// A document this port cannot read is refused by name before anything is stored: an unreadable document that was
     /// stored anyway would be a source that can never be retrieved.
     /// </summary>
+    /// <summary>A capability is minted, and it verifies against the deployment secret with the claims that were asked for.</summary>
+    /// <remarks>
+    /// This is the whole plane in one test: what the route issues is a signed capability this process can verify, which is
+    /// exactly what a data plane does with it - and it reads as a principal narrower than the deployment one.
+    /// </remarks>
     [Fact]
+    public async Task ACapabilityIsIssuedAndVerifies()
+    {
+        using var post = await _client.PostAsJsonAsync(
+            "/v1/access-tokens",
+            new WireAccessTokenRequest("tyler@example.com", 3, ["north"], [AccessScope.Query], ["vendor-memory"], 60),
+            WireJson.Default.WireAccessTokenRequest);
+
+        Assert.Equal(HttpStatusCode.OK, post.StatusCode);
+
+        var issued = (await post.Content.ReadFromJsonAsync(WireJson.Default.WireAccessToken))!;
+
+        Assert.NotEmpty(issued.TokenId);
+
+        var outcome = AccessTokens.Verify(MunariumKernel.AccessSecret, issued.Token, DateTimeOffset.UtcNow);
+
+        Assert.True(outcome is AccessClaims, $"the capability was refused: {outcome}");
+
+        if (outcome is not AccessClaims verified)
+        {
+            throw new InvalidOperationException($"the capability was refused: {outcome}");
+        }
+
+        Assert.Equal("tyler@example.com", verified.Subject);
+        Assert.Equal(3, verified.Level);
+        Assert.Equal(["north"], verified.Compartments);
+        Assert.Equal([AccessScope.Query], verified.Scopes);
+        Assert.Equal(issued.TokenId, verified.TokenId);
+        Assert.Equal(issued.ExpiresAt, verified.ExpiresAt);
+
+        // It reads as the principal a plane resolves as, and it is not the deployment one.
+        var principal = verified.ToPrincipal();
+
+        Assert.Equal("tyler@example.com", principal.Uid);
+        Assert.Equal(3, principal.Level);
+        Assert.False(principal.AllCompartments);
+    }
+
+    /// <summary>What cannot be issued is refused by naming the rule, which is the difference between fixing and guessing.</summary>
+    /// <param name="subject">The subject asked for.</param>
+    /// <param name="scopes">The scopes asked for, or empty.</param>
+    [Theory]
+    [InlineData("", "query")]
+    [InlineData("tyler@example.com", "")]
+    [InlineData("tyler@example.com", "admin")]
+    public async Task ACapabilityThatCannotBeIssuedIsRefused(string subject, string scopes)
+    {
+        using var post = await _client.PostAsJsonAsync(
+            "/v1/access-tokens",
+            new WireAccessTokenRequest(
+                subject,
+                1,
+                [],
+                string.IsNullOrEmpty(scopes) ? [] : [scopes]),
+            WireJson.Default.WireAccessTokenRequest);
+
+        Assert.Equal(HttpStatusCode.BadRequest, post.StatusCode);
+
+        var problem = (await post.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
+
+        Assert.Equal(MunariumOperations.InvalidRequestProblem, problem.Type);
+    }
     public async Task ADocumentWithNoExtractorIsRefusedAndNothingIsStored()
     {
         using var put = await _client.PutAsJsonAsync(

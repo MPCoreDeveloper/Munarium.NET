@@ -420,6 +420,39 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
     }
 
     /// <inheritdoc />
+    /// <inheritdoc />
+    public override Task<IssueAccessTokenResponse> IssueAccessTokenAsync(
+        IssueAccessTokenRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var result = _operations.IssueAccessToken(
+            new WireAccessTokenRequest(
+                request.Body?.Subject ?? string.Empty,
+                request.Body?.Level ?? 0,
+                [.. request.Body?.Compartments ?? []],
+                [.. request.Body?.Scopes ?? []],
+                request.Body?.Runbooks is { Count: > 0 } runbooks ? [.. runbooks] : null,
+                request.Body?.LifetimeSeconds ?? 0),
+            MunariumKernel.AccessSecret,
+            DateTimeOffset.UtcNow);
+
+        return result switch
+        {
+            WireAccessToken issued => Task.FromResult(new IssueAccessTokenResponse
+            {
+                Data = new AccessToken
+                {
+                    Token = issued.Token,
+                    TokenId = issued.TokenId,
+                    ExpiresAt = issued.ExpiresAt,
+                },
+            }),
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
     public override async Task<BuildIndexVersionResponse> BuildIndexVersionAsync(
         BuildIndexVersionRequest request,
         ServerCallContext context)
