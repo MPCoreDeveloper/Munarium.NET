@@ -15,6 +15,9 @@
          about "now" - and about when something was written - without reading a clock, which is what
          keeps a verdict reproducible from the snapshot alone. See LedgerIds and MeshSnapshot.WrittenAt. -->
     <PackageReference Include="Posseth.UlidFactory" />
+    <!-- Reading a document's text: DOCX out of its own XML, and a PDF's text layer through PdfPig.
+         Pure managed, so a NativeAOT publish stays possible - see PdfTextExtractor and the AOT smoke tool. -->
+    <PackageReference Include="PdfPig" />
   </ItemGroup>
 
 </Project>

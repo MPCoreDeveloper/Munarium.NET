@@ -1,6 +1,7 @@
 namespace Munarium.Core.Tests.Text;
 
 using System.IO.Compression;
+using System.Text;
 using Munarium.Text;
 
 /// <summary>
@@ -53,10 +54,71 @@ public class TextExtractorTests
 
         Assert.StartsWith("extract@1[", version, StringComparison.Ordinal);
         Assert.Contains("docx@1", version, StringComparison.Ordinal);
+        Assert.Contains("pdf-text@1", version, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A PDF's text layer is read, and the media type is one this port answers for.
+    /// </summary>
+    /// <remarks>
+    /// The layer is read through PdfPig, which is pure managed. This proves the seam answers; the AOT smoke tool proves
+    /// the same read happens inside a NativeAOT binary on every platform CI publishes, which is where the risk was.
+    /// </remarks>
+    [Fact]
+    public void ThePdfMediaTypeIsRead()
+    {
+        Assert.True(TextExtractor.CanExtract(PdfTextExtractor.Media));
+
+        var text = TextExtractor.Extract(
+            PdfTextExtractor.Media,
+            Pdf("BT /F1 12 Tf 72 720 Td (The quarterly settlement was approved on 14 March) Tj ET"));
+
+        Assert.Equal("The quarterly settlement was approved on 14 March", text);
+    }
+
+    /// <summary>
+    /// A text layer breaks lines at the column width, so the lines of a sentence are not paragraphs.
+    /// </summary>
+    /// <remarks>
+    /// This is the original's rule, carried over: single newlines inside a block become spaces so a sentence survives the
+    /// wrap, while blank lines are kept because those are the boundaries the chunker splits on.
+    /// </remarks>
+    [Fact]
+    public void HardWrapsAreRejoined()
+    {
+        var text = TextExtractor.Extract(
+            PdfTextExtractor.Media,
+            Pdf("BT /F1 12 Tf 72 720 Td (The quarterly settlement was) Tj 0 -14 Td (approved on 14 March) Tj ET"));
+
+        Assert.Equal("The quarterly settlement was approved on 14 March", text);
+    }
+
+    /// <summary>
+    /// A PDF with no text layer reads as nothing: a scan is what the OCR path is for, and this port does not have one.
+    /// </summary>
+    [Fact]
+    public void APdfWithoutATextLayerReadsAsNothing()
+    {
+        Assert.Equal(string.Empty, TextExtractor.Extract(PdfTextExtractor.Media, Pdf(string.Empty)));
+
+        // Page furniture is not content either: a stamped page number produces no chunk worth citing.
+        Assert.Equal(
+            string.Empty,
+            TextExtractor.Extract(PdfTextExtractor.Media, Pdf("BT /F1 12 Tf 72 720 Td (12) Tj ET")));
+    }
+
+    /// <summary>A PDF that cannot be parsed is refused by name rather than throwing something a caller cannot read.</summary>
+    [Fact]
+    public void APdfThatCannotBeParsedIsRefused()
+    {
+        var refusal = Assert.Throws<ArgumentException>(
+            () => TextExtractor.Extract(PdfTextExtractor.Media, "%PDF-1.7 not really a pdf"u8.ToArray()));
+
+        Assert.Contains(PdfTextExtractor.Id, refusal.Message, StringComparison.Ordinal);
+        Assert.Equal("bytes", refusal.ParamName);
     }
 
     [Theory]
-    [InlineData("application/pdf")]
     [InlineData("image/png")]
     public void AMediaTypeWithNoExtractorIsRefusedByName(string mediaType)
     {
@@ -185,6 +247,46 @@ public class TextExtractorTests
             "docx@1 could not read it",
             Assert.Throws<ArgumentException>(() => DocxExtractor.Read("not a zip at all"u8.ToArray())).Message,
             StringComparison.Ordinal);
+
+    /// <summary>
+    /// Builds a one-page PDF around a content stream, written by hand so the fixture is deterministic and needs no
+    /// generator - the same shape the original's own PDF test uses.
+    /// </summary>
+    /// <param name="contentStream">The page's content stream operators.</param>
+    /// <returns>The bytes.</returns>
+    private static byte[] Pdf(string contentStream)
+    {
+        string[] objects =
+        [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> "
+                + "/Contents 4 0 R >>",
+            $"<< /Length {contentStream.Length} >>\nstream\n{contentStream}\nendstream",
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        ];
+
+        var pdf = new StringBuilder("%PDF-1.4\n");
+        var offsets = new List<int>();
+
+        for (var index = 0; index < objects.Length; index++)
+        {
+            offsets.Add(pdf.Length);
+            pdf.Append($"{index + 1} 0 obj\n{objects[index]}\nendobj\n");
+        }
+
+        var xrefAt = pdf.Length;
+        pdf.Append($"xref\n0 {objects.Length + 1}\n0000000000 65535 f \n");
+
+        foreach (var offset in offsets)
+        {
+            pdf.Append($"{offset:0000000000} 00000 n \n");
+        }
+
+        pdf.Append($"trailer\n<< /Size {objects.Length + 1} /Root 1 0 R >>\nstartxref\n{xrefAt}\n%%EOF\n");
+
+        return Encoding.ASCII.GetBytes(pdf.ToString());
+    }
 
     /// <summary>Builds a DOCX around one document part, which is all the extractor reads.</summary>
     /// <param name="documentXml">The document XML.</param>

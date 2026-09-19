@@ -1008,7 +1008,7 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     {
         using var put = await _client.PutAsJsonAsync(
             "/v1/sources",
-            new WireSourceIngest("docs/scan.pdf", "application/pdf", "%PDF-1.7", string.Empty),
+            new WireSourceIngest("docs/plate.tiff", "image/tiff", "II*\u0004", string.Empty),
             WireJson.Default.WireSourceIngest);
 
         Assert.Equal(HttpStatusCode.UnsupportedMediaType, put.StatusCode);
@@ -1016,10 +1016,10 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         var problem = (await put.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
 
         Assert.Equal(MunariumOperations.UnsupportedMediaTypeProblem, problem.Type);
-        Assert.Contains("application/pdf", problem.Detail, StringComparison.Ordinal);
+        Assert.Contains("image/tiff", problem.Detail, StringComparison.Ordinal);
 
         using var missing = await _client.GetAsync(
-            new Uri($"/v1/sources/{SourceKey.Id(MunariumKernel.Tenant, "docs/scan.pdf")}", UriKind.Relative));
+            new Uri($"/v1/sources/{SourceKey.Id(MunariumKernel.Tenant, "docs/plate.tiff")}", UriKind.Relative));
 
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
     }

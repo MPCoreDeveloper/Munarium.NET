@@ -156,9 +156,9 @@ public class IngestRunnerTests
 
         var refused = Refused(
             await fixture.Runner
-                .IngestAsync("acme", "docs/scan.pdf", "application/pdf", new byte[] { 0x25, 0x50, 0x44, 0x46 }));
+                .IngestAsync("acme", "docs/plate.tiff", "image/tiff", new byte[] { 0x49, 0x49, 0x2A, 0x00 }));
 
-        Assert.Contains("application/pdf", refused.Reason, StringComparison.Ordinal);
+        Assert.Contains("image/tiff", refused.Reason, StringComparison.Ordinal);
         Assert.Equal(0, fixture.Store.Count);
         Assert.Equal(0, fixture.Registry.Count);
         Assert.Equal(0, fixture.Index.Count);

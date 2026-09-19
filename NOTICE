@@ -30,3 +30,8 @@ Third-party software
 The MPCoreDeveloper .NET 11 stack this port builds on - SharpCoreDB, SharpDispatch,
 SharpPortico and Posseth.UlidFactory - is licensed under the MIT License. Each is
 governed by its own license, which takes precedence for that component.
+
+PdfPig - Copyright (c) Eliot Jones and contributors, licensed under the Apache
+License, Version 2.0 (https://github.com/UglyToad/PdfPig) - is used to read a
+PDF's text layer. It is pure managed, which is what keeps a NativeAOT publish
+possible; the AOT smoke tool proves the read works in a native binary.

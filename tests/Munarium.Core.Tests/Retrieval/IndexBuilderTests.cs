@@ -104,12 +104,12 @@ public class IndexBuilderTests
     {
         var fixture = Fixture();
         await BindAsync(fixture, "docs/a.txt", Document, "text/plain");
-        await BindAsync(fixture, "docs/scan.pdf", "%PDF-1.7", "application/pdf");
+        await BindAsync(fixture, "docs/plate.tiff", "II*\u0004", "image/tiff");
 
         var refused = Refused(await fixture.Builder.BuildAsync(Plan(prefix: "docs/", activate: true)));
 
-        Assert.Contains("docs/scan.pdf", refused.Reason, StringComparison.Ordinal);
-        Assert.Contains("application/pdf", refused.Reason, StringComparison.Ordinal);
+        Assert.Contains("docs/plate.tiff", refused.Reason, StringComparison.Ordinal);
+        Assert.Contains("image/tiff", refused.Reason, StringComparison.Ordinal);
         Assert.Empty(fixture.Host.Built);
         Assert.Equal("munarium@1", fixture.Host.ServingVersion);
         Assert.Equal(0, fixture.Versions.Count);

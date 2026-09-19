@@ -202,14 +202,14 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
                 {
                     Body = new SourceIngest
                     {
-                        Path = "grpc/scan.pdf",
-                        MediaType = "application/pdf",
-                        Content = "%PDF-1.7",
+                        Path = "grpc/plate.tiff",
+                        MediaType = "image/tiff",
+                        Content = "II*",
                     },
                 }));
 
             Assert.Equal(StatusCode.InvalidArgument, refusal.StatusCode);
-            Assert.Contains("application/pdf", refusal.Status.Detail, StringComparison.Ordinal);
+            Assert.Contains("image/tiff", refusal.Status.Detail, StringComparison.Ordinal);
         });
 
     [Fact]

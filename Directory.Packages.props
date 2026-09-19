@@ -31,6 +31,13 @@
       reflection and the mapping stays readable against the original's.
     -->
     <PackageVersion Include="YamlDotNet" Version="16.3.0" />
+    <!--
+      The original reads a PDF's text layer through `pdf-extract` (over `lopdf`); this port reads the
+      same layer through PdfPig, which is the pure-managed Apache-2.0 equivalent and needs no native
+      library, no rasterizer and no model. AOT compatibility is not taken on trust: tools/Munarium.AotSmoke
+      extracts text from a hand-written PDF in the NativeAOT binary CI publishes for all three platforms.
+    -->
+    <PackageVersion Include="PdfPig" Version="0.1.16" />
   </ItemGroup>
 
   <!--

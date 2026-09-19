@@ -4,15 +4,18 @@ namespace Munarium.Text;
 /// Turns a document's bytes into the text an index can hold, for the media types this port can read.
 /// </summary>
 /// <remarks>
-/// Upstream extracts PDFs and DOCX; this port reads DOCX as well, because a <c>.docx</c> is a zip of XML the base class
-/// library reads and no model is involved in that at all. What it cannot read it refuses rather than guessing: indexing
-/// the bytes of a binary as though they were text would put a document into the index that no query can find and no
-/// citation can justify. The refusal names the media type, and a caller that wants a richer set of formats brings an
-/// extractor of its own - the seam is a media type in and text out.
+/// Upstream extracts PDFs and DOCX; this port reads both. A <c>.docx</c> is a zip of XML the base class library reads, and
+/// a PDF's text layer is read through PdfPig, which is pure managed - so neither needs a model, a native library or a
+/// rasterizer. What this cannot read it refuses rather than guessing: indexing the bytes of a binary as though they were
+/// text would put a document into the index that no query can find and no citation can justify. The refusal names the
+/// media type, and a caller that wants a richer set of formats brings an extractor of its own - the seam is a media type
+/// in and text out.
 /// <para>
-/// A PDF is the case that is genuinely out of reach here, and both halves of it are stated rather than implied: its text
-/// layer needs a PDF parser this port does not have, and a scan needs the OCR path, which upstream runs on a local
-/// inference runtime with model files this port cannot load.
+/// Two cases are genuinely out of reach here, and they are different from each other. OCR is not ported at all: upstream
+/// runs it on a local inference runtime whose model files this port cannot load, so a scan - which is what a PDF with no
+/// text layer is - comes back empty rather than as words. And a page whose embedded font carries no Unicode mapping yields
+/// that font's own codes: no text-layer reader can recover the words from it, and that is a limit this port shares with the
+/// original and with every other extractor that does not look at the pixels.
 /// </para>
 /// <para>
 /// Media types arrive with parameters, so the type is read up to the first <c>;</c> and compared without case: a
@@ -36,7 +39,7 @@ public static class TextExtractor
     /// original's, naming every extractor it covers.
     /// </remarks>
     /// <returns>The versioned reference an index manifest records.</returns>
-    public static string Version() => $"extract@1[{DocxExtractor.Id}]";
+    public static string Version() => $"extract@1[{DocxExtractor.Id},{PdfTextExtractor.Id}]";
 
     /// <summary>
     /// Reports whether a media type can be read as text.
@@ -52,7 +55,8 @@ public static class TextExtractor
         return type.StartsWith("text/", StringComparison.Ordinal)
             || TextualApplications.Contains(type, StringComparer.Ordinal)
             || TextualSuffixes.Any(suffix => type.EndsWith(suffix, StringComparison.Ordinal))
-            || string.Equals(type, DocxExtractor.Media, StringComparison.Ordinal);
+            || string.Equals(type, DocxExtractor.Media, StringComparison.Ordinal)
+            || string.Equals(type, PdfTextExtractor.Media, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -73,12 +77,17 @@ public static class TextExtractor
             return DocxExtractor.Read(bytes);
         }
 
+        if (string.Equals(type, PdfTextExtractor.Media, StringComparison.Ordinal))
+        {
+            return PdfTextExtractor.Read(bytes);
+        }
+
         if (!CanExtract(type))
         {
             throw new ArgumentException(
                 $"no extractor for media type '{type}' is ported; this port reads text/{'*'}, application/json, "
-                    + "application/xml and the DOCX word-processing type. A PDF is not read here: its text layer needs "
-                    + "a PDF parser this port does not have, and a scan needs the OCR path it cannot run",
+                    + "application/xml, the DOCX word-processing type and application/pdf. What it does not read is a "
+                    + "scan: OCR runs upstream on a local inference runtime, so a PDF with no text layer comes back empty",
                 nameof(mediaType));
         }
 

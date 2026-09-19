@@ -11,6 +11,7 @@ using Munarium.Providers;
 using Munarium.Retrieval;
 using Munarium.Shapes;
 using Munarium.Store.SharpCoreDb;
+using Munarium.Text;
 using SharpCoreDB.EventSourcing;
 
 var backend = new SharpCoreDbStorageBackend(new InMemoryEventStore());
@@ -86,10 +87,46 @@ if (asserted != "asserted" || refused != "disputed:shape")
     return 1;
 }
 
+// The document path too: a PDF's text layer is read through PdfPig, which is pure managed but is still
+// a parser with fonts, filters and encodings inside it - exactly the kind of dependency that can need
+// runtime codegen. If it does, this publish or this read fails.
+const string PdfWithTextLayer = """
+    %PDF-1.4
+    1 0 obj
+    << /Type /Catalog /Pages 2 0 R >>
+    endobj
+    2 0 obj
+    << /Type /Pages /Kids [3 0 R] /Count 1 >>
+    endobj
+    3 0 obj
+    << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>
+    endobj
+    4 0 obj
+    << /Length 80 >>
+    stream
+    BT /F1 12 Tf 72 720 Td (The quarterly settlement was approved on 14 March) Tj ET
+    endstream
+    endobj
+    5 0 obj
+    << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+    endobj
+    trailer
+    << /Size 6 /Root 1 0 R >>
+    %%EOF
+    """;
+
+var pdfText = TextExtractor.Extract("application/pdf", System.Text.Encoding.ASCII.GetBytes(PdfWithTextLayer));
+
+if (!pdfText.Contains("quarterly settlement", StringComparison.Ordinal))
+{
+    await Console.Error.WriteLineAsync($"FAIL: pdf extraction returned '{pdfText}'");
+    return 1;
+}
+
 await Console.Out.WriteLineAsync(
     $"Munarium NativeAOT smoke OK ({System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}) "
     + $"- head={head}, retrieval={retrieval.Envelope.Sources[0].SourcePath} @ {retrieval.Envelope.IndexVersion}, "
-    + $"shapes={shapes.Count} ({asserted}, {refused})");
+    + $"shapes={shapes.Count} ({asserted}, {refused}), pdf={pdfText.Length} chars");
 return 0;
 
 static RecordClaimCommand Claim(string vendorId) => new()

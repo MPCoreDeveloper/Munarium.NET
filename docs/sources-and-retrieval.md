@@ -22,6 +22,23 @@ a BM25 score and a cosine distance do not share a scale. Fusion is the port's ow
 envelope are produced together: the ranking that decided the answer is the ranking the envelope records, and
 opaque chunk ids stay opaque where the engine's fusion parses them back to numbers.
 
+## How a document becomes text
+
+The wire carries a document's **text**, and the seam that turns bytes into it is `TextExtractor`. A DOCX is read out
+of its own XML — a `.docx` is a zip the base class library opens, so no model, no native library and no rasterizer are
+involved — and a PDF's text layer is read through PdfPig, which is pure managed and therefore survives a NativeAOT
+publish. That last part is not taken on trust: the AOT smoke tool extracts text from a hand-written PDF inside the
+native binary CI publishes for every platform, so a codegen hazard in the parser fails the build rather than production.
+
+What the seam will not do is invent text. A media type no extractor reads is refused and the document is not stored,
+because a source that can never be retrieved is worse than a refusal. A PDF with no text layer is a scan: it reads as
+**empty**, which is the honest answer and the signal the OCR path keys on — and OCR is the one capability this port has
+not ported, since upstream runs it on a local inference runtime whose model files this port cannot load. A page whose
+embedded font carries no Unicode mapping yields that font's own codes instead of words, which no text-layer reader can
+fix; that is a limit this port shares with the original. The extractor set is versioned — `extract@1[docx@1,pdf-text@1]`
+— and joins an index version's identity, so improving how a document becomes text produces a new version rather than
+silently different chunks under the same name.
+
 ## Index versions
 
 An index version is an immutable snapshot of one collection's corpus as one shape sees it, and its identity is
