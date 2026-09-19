@@ -240,18 +240,24 @@ in the order it is planned:
   answer, because two answers to one request is the situation the whole seam exists to prevent. A command that has a body
   carries the key in it; the release and fulfilment routes carry no body, so the key is a query parameter there - the one
   place the contract puts it outside the body, and for that reason.
-- **Pagination** (`PageRequest`/`PageResponse`), **authentication and tenancy**, **sessions and runbooks**,
-  and the separate **`matrix/v1` semantic query** surface. The original carries roughly 49 RPCs across 8
-  services; the kernel's core is what is served here.
+- **Pagination** (`PageRequest`/`PageResponse`), and the management plane. This port threads a principal through
+  every route and derives access from it, so the identity and tenancy *model* is in; what is not is issuing tokens,
+  which is the management plane's rather than the data plane's. The separate **`matrix/v1` semantic query** surface
+  belongs to another repository: this port is a client of it, with the parser held against the contract's own
+  examples. The original's RPC count is not the goal here - what is missing is named, item by item, in this list
+  rather than left to be inferred from a number.
 - **Clients for other languages.** The gRPC contract is language-neutral, but this port is .NET-first: the
   .NET surface is what is built and tested against the contract, and clients for other languages are a
   later consideration rather than a commitment.
 
 ## Status
 
-Early days: this repository is the C# port in progress, and the kernel (`src/Munarium.Core`) is the
-first piece of it. The design it follows — and the executable specification it will be held to —
-is described and proven in the [original project](https://github.com/iokaio/munarium).
+The port is deep rather than wide. The kernel (`src/Munarium.Core`), the SharpCoreDB adapter, the ingest, index and
+session planes, and both transports - JSON/HTTP and gRPC, generated from one contract - are in and tested: 760 tests
+across five suites, with `docs/` carrying the design behind each piece. What is not ported is listed above, item by
+item, and the one thing in flight is the per-collection probe. The design it follows - and the executable
+specification it is held to - is described and proven in the
+[original project](https://github.com/iokaio/munarium).
 
 ## License
 
