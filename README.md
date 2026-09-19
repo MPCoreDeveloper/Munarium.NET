@@ -197,7 +197,11 @@ in the order it is planned:
   instance: the whole deployment answers from one version, so there is no per-collection pool to probe. The store is
   already per collection - `IIndexVersionStore` reads a collection's live version and a cutover moves exactly one
   collection - so what is missing is the host: a reader for each collection's live version, an ingest that lands in the
-  right one, and then the fan-out that reports a `probe` event as each collection answers. The other retrieval step a
+  right one, and then the fan-out that reports a `probe` event as each collection answers. The first of those three is
+  in: `IIndexHost.ReaderFor` hands back the reader of a version the deployment did not cut over to - serving is a
+  cutover and reading is not - and `CollectionIndexes` resolves a collection's *name* to that reader through the live
+  version, found by the name its manifest records. Nothing calls it yet: the turn still searches the one serving index,
+  and the fan-out that replaces that search is the next step rather than a promise. The other retrieval step a
   runbook may declare *is* executed: `modelQueryExpansion` widens the question through the task level the runbook pins for
   it - one paid call at temperature zero, the prompt's constraints enforced by a parser that refuses a capitalised term
   rather than folding it down, the variants appended to the text the lexical leg reads while the embedding stays the

@@ -102,6 +102,17 @@ public sealed class SharpCoreDbIndexHost : IIndexHost, IDisposable
     }
 
     /// <inheritdoc />
+    public IRetrievalBackend? ReaderFor(string indexVersion)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(indexVersion);
+
+        lock (_gate)
+        {
+            return _built.TryGetValue(indexVersion, out var built) ? built : null;
+        }
+    }
+
+    /// <inheritdoc />
     public IndexInstance Build(string indexVersion, SequenceNumber watermark)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(indexVersion);

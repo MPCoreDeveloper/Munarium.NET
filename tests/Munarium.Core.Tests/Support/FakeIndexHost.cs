@@ -38,6 +38,10 @@ internal sealed class FakeIndexHost(string engine = "exact@1") : IIndexHost
     public IReadOnlyDictionary<string, IndexInstance> Instances => _instances;
 
     /// <inheritdoc />
+    public IRetrievalBackend? ReaderFor(string indexVersion) =>
+        _instances.TryGetValue(indexVersion, out var instance) ? instance.Reader : null;
+
+    /// <inheritdoc />
     public IndexInstance Build(string indexVersion, SequenceNumber watermark)
     {
         var instance = new IndexInstance(

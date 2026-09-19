@@ -48,6 +48,19 @@ public interface IIndexHost
     IRetrievalBackend ServingReader { get; }
 
     /// <summary>
+    /// Gets the reader a version built here answers from, without making it the one that serves.
+    /// </summary>
+    /// <remarks>
+    /// Serving is a cutover, and a deployment has one of those; reading is not. A turn searches each collection's own
+    /// live version - which is what makes a collection a corpus rather than a label on one - so it needs a reader for a
+    /// version the deployment did not cut over to. A version this process never built has no reader to hand back, which
+    /// is the same answer a cutover to it gets, and for the same reason: its chunks are not here.
+    /// </remarks>
+    /// <param name="indexVersion">The version to read.</param>
+    /// <returns>The reader, or <see langword="null"/> when its chunks are not in this process.</returns>
+    IRetrievalBackend? ReaderFor(string indexVersion);
+
+    /// <summary>
     /// Creates an empty instance for a version, and keeps it so it can be served later.
     /// </summary>
     /// <param name="indexVersion">The version to build into.</param>

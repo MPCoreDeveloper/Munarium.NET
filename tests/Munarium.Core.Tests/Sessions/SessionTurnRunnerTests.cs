@@ -393,6 +393,9 @@ public class SessionTurnRunnerTests
 
         public IRetrievalBackend ServingReader => new StubReader(Queries);
 
+        public IRetrievalBackend? ReaderFor(string indexVersion) =>
+            string.Equals(indexVersion, ServingVersion, StringComparison.Ordinal) ? new StubReader(Queries) : null;
+
         public IndexInstance Build(string indexVersion, SequenceNumber watermark) =>
             throw new NotSupportedException("A turn builds no index.");
 
