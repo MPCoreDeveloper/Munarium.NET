@@ -744,11 +744,30 @@ public static class MunariumEndpoints
             "/v1/evidence",
             async (
                 WireSealEvidenceRequest request,
+                HttpContext context,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
+                var access = MunariumKernel.Gate.Resolve(
+                    context.Request.Headers.Authorization.ToString(),
+                    AccessScope.Evidence,
+                    DateTimeOffset.UtcNow);
+
+                if (access is not EvidencePrincipal principal)
+                {
+                    return TypedResults.Json(
+                        new WireProblem(
+                            MunariumOperations.UnauthorizedProblem,
+                            access is AccessRefused refused ? refused.Reason : AccessGate.MissingReason,
+                            Status: 401,
+                            ExpectedHead: 0,
+                            ActualHead: 0),
+                        WireJson.Default.WireProblem,
+                        statusCode: 401);
+                }
+
                 var result = await operations
-                    .SealEvidenceAsync(request, MunariumKernel.Principal, cancellationToken)
+                    .SealEvidenceAsync(request, principal, cancellationToken)
                     .ConfigureAwait(false);
 
                 IResult answer = result switch
