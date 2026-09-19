@@ -53,7 +53,7 @@ public class AccessTokenTests
         using var document = JsonDocument.Parse(Convert.FromBase64String(padded));
 
         // The original's names, verbatim: a shorter claim set is not compatible with a client that reads these.
-        foreach (var name in new[] { "sub", "ten", "lvl", "cmp", "scopes", "iat", "exp" })
+        foreach (var name in new[] { "sub", "ten", "jti", "lvl", "cmp", "scopes", "iat", "exp" })
         {
             Assert.True(document.RootElement.TryGetProperty(name, out _), $"a capability must carry '{name}'");
         }
@@ -169,6 +169,7 @@ public class AccessTokenTests
     private static AccessClaims Claims() => new()
     {
         Subject = "tyler@example.com",
+        TokenId = "01J000000000000000000000AA",
         Tenant = "acme",
         Level = 3,
         Compartments = ["north"],

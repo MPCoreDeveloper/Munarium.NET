@@ -51,6 +51,13 @@ public sealed record AccessClaims
     /// <summary>Gets the runbook names permitted, or <see langword="null"/> for any the level permits.</summary>
     public IReadOnlyList<string>? Runbooks { get; init; }
 
+    /// <summary>Gets the capability's own identifier, which is what a revocation names.</summary>
+    /// <remarks>
+    /// A token is a bearer credential and cannot be recalled once it is out, so the only way to withdraw one is to record
+    /// its identity and refuse it at verification. That is why the identifier is a claim and not a database key.
+    /// </remarks>
+    public required string TokenId { get; init; }
+
     /// <summary>Gets when the capability was issued, in seconds since the epoch.</summary>
     public required long IssuedAt { get; init; }
 

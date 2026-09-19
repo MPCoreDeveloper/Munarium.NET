@@ -26,15 +26,40 @@ public static class AccessTokens
     /// <summary>The clock-skew allowance applied to expiry.</summary>
     public static readonly TimeSpan Leeway = TimeSpan.FromSeconds(30);
 
-    /// <summary>Issues a capability, clamping the lifetime to the ceiling.</summary>
+    /// <summary>Issues a capability, clamping the lifetime to the ceiling and refusing what cannot be issued.</summary>
+    /// <remarks>
+    /// The refusals are the original's and each of them is a rule rather than a formality: an unnamed subject cannot be
+    /// audited, a capability with no scope can do nothing and would be issued only by mistake, and a scope nobody defined
+    /// is a typo that would otherwise sit in a token looking like authority.
+    /// </remarks>
     /// <param name="claims">The claims to carry.</param>
     /// <param name="issuedAt">When it is issued.</param>
     /// <param name="lifetime">How long it should live, or <see langword="null"/> for the default.</param>
     /// <returns>The claims as they will be signed.</returns>
-    /// <exception cref="ArgumentOutOfRangeException">Thrown when the lifetime is not positive.</exception>
+    /// <exception cref="ArgumentException">Thrown when the subject, the scopes or a scope name is not issuable.</exception>
     public static AccessClaims Issue(AccessClaims claims, DateTimeOffset issuedAt, TimeSpan? lifetime = null)
     {
         ArgumentNullException.ThrowIfNull(claims);
+
+        if (string.IsNullOrWhiteSpace(claims.Subject))
+        {
+            throw new ArgumentException("A capability names its subject: an unnamed one cannot be audited.", nameof(claims));
+        }
+
+        if (claims.Scopes.Count == 0)
+        {
+            throw new ArgumentException(
+                "A capability carries at least one scope (query|ingest|findings|evidence).",
+                nameof(claims));
+        }
+
+        if (claims.Scopes.Any(scope => scope is not (AccessScope.Query or AccessScope.Ingest
+            or AccessScope.Findings or AccessScope.Evidence)))
+        {
+            throw new ArgumentException(
+                $"A scope is one of query|ingest|findings|evidence: '{string.Join(", ", claims.Scopes)}' is not.",
+                nameof(claims));
+        }
 
         var ttl = lifetime ?? DefaultLifetime;
 
@@ -130,6 +155,7 @@ public static class AccessTokens
             writer.WriteStartObject();
             writer.WriteString("sub", claims.Subject);
             writer.WriteString("ten", claims.Tenant);
+            writer.WriteString("jti", claims.TokenId);
             writer.WriteNumber("lvl", claims.Level);
             Strings(writer, "cmp", claims.Compartments);
             Strings(writer, "scopes", claims.Scopes);
@@ -159,6 +185,7 @@ public static class AccessTokens
         {
             Subject = root.GetProperty("sub").GetString() ?? string.Empty,
             Tenant = root.GetProperty("ten").GetString() ?? string.Empty,
+            TokenId = root.GetProperty("jti").GetString() ?? string.Empty,
             Level = root.GetProperty("lvl").GetInt32(),
             Compartments = Texts(root, "cmp"),
             Scopes = Texts(root, "scopes"),
