@@ -1,6 +1,7 @@
 namespace Munarium.Server.Tests;
 
 using System.IO.Compression;
+using System.Net.Http.Headers;
 using System.Text;
 using Munarium.Access;
 using Munarium.Context;
@@ -1077,6 +1078,55 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         var problem = (await post.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
 
         Assert.Equal(MunariumOperations.InvalidRequestProblem, problem.Type);
+    }
+    /// <summary>Ingestion asks for the ingest scope, and a capability without it is refused before anything is stored.</summary>
+    [Fact]
+    public async Task IngestionAsksForTheIngestScope()
+    {
+        var queryOnly = await Minted([AccessScope.Query]);
+
+        using var refused = await PutWith(queryOnly, "docs/denied.txt");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+
+        var mayUpload = await Minted([AccessScope.Ingest]);
+
+        using var accepted = await PutWith(mayUpload, "docs/allowed.txt");
+
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+    }
+
+    /// <summary>Mints a capability for a test.</summary>
+    /// <param name="scopes">The scopes it carries.</param>
+    /// <returns>The token itself.</returns>
+    private async Task<string> Minted(IReadOnlyList<string> scopes)
+    {
+        using var minted = await _client.PostAsJsonAsync(
+            "/v1/access-tokens",
+            new WireAccessTokenRequest("tyler@example.com", 9, [], scopes),
+            WireJson.Default.WireAccessTokenRequest);
+
+        var issued = (await minted.Content.ReadFromJsonAsync(WireJson.Default.WireAccessToken))!;
+
+        return issued.Token;
+    }
+
+    /// <summary>Offers a document with a capability presented.</summary>
+    /// <param name="token">The capability.</param>
+    /// <param name="path">The path to ingest.</param>
+    /// <returns>The answer.</returns>
+    private async Task<HttpResponseMessage> PutWith(string token, string path)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/v1/sources")
+        {
+            Content = JsonContent.Create(
+                new WireSourceIngest(path, "text/plain", "The Bell rang twice.", string.Empty),
+                WireJson.Default.WireSourceIngest),
+        };
+
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        return await _client.SendAsync(request);
     }
     public async Task ADocumentWithNoExtractorIsRefusedAndNothingIsStored()
     {

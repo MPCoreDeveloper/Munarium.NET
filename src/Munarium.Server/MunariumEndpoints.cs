@@ -170,18 +170,45 @@ public static class MunariumEndpoints
                 [FromQuery(Name = "rule_id")] string? ruleId,
                 [FromQuery(Name = "rule_prefix")] string? rulePrefix,
                 [FromQuery(Name = "limit")] int? limit,
+                HttpContext context,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
-                await operations
-                    .ListFindingsAsync(
-                        versionId,
-                        asOf ?? 0,
-                        severity,
-                        ruleId,
-                        rulePrefix,
-                        limit ?? 0,
-                        cancellationToken)
-                    .ConfigureAwait(false));
+            {
+                // The findings read is governance: what the gates decided is part of the policy, so reaching it takes
+                // the findings scope, which is deliberately not the ingest scope.
+                var access = MunariumKernel.Gate.Resolve(
+                    context.Request.Headers.Authorization.ToString(),
+                    AccessScope.Findings,
+                    DateTimeOffset.UtcNow);
+
+                if (access is not EvidencePrincipal)
+                {
+                    return TypedResults.Json(
+                        new WireProblem(
+                            MunariumOperations.UnauthorizedProblem,
+                            access is AccessRefused refused ? refused.Reason : AccessGate.MissingReason,
+                            Status: 401,
+                            ExpectedHead: 0,
+                            ActualHead: 0),
+                        WireJson.Default.WireProblem,
+                        statusCode: 401);
+                }
+
+                IResult answer = TypedResults.Json(
+                    await operations
+                        .ListFindingsAsync(
+                            versionId,
+                            asOf ?? 0,
+                            severity,
+                            ruleId,
+                            rulePrefix,
+                            limit ?? 0,
+                            cancellationToken)
+                        .ConfigureAwait(false),
+                    WireJson.Default.WireFindingList);
+
+                return answer;
+            });
 
         app.MapPost(
             "/v1/versions/{version_id}/anchors",
@@ -381,9 +408,30 @@ public static class MunariumEndpoints
             "/v1/sources",
             async (
                 WireSourceIngest request,
+                HttpContext context,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
+                // The ingestion plane carries the ingest scope, and the refusal comes before anything is stored: a caller
+                // that may not upload must not be able to fill a deployment store or a bill.
+                var access = MunariumKernel.Gate.Resolve(
+                    context.Request.Headers.Authorization.ToString(),
+                    AccessScope.Ingest,
+                    DateTimeOffset.UtcNow);
+
+                if (access is not EvidencePrincipal)
+                {
+                    return TypedResults.Json(
+                        new WireProblem(
+                            MunariumOperations.UnauthorizedProblem,
+                            access is AccessRefused refused ? refused.Reason : AccessGate.MissingReason,
+                            Status: 401,
+                            ExpectedHead: 0,
+                            ActualHead: 0),
+                        WireJson.Default.WireProblem,
+                        statusCode: 401);
+                }
+
                 var result = await operations.IngestSourceAsync(request, cancellationToken).ConfigureAwait(false);
 
                 // A document this port cannot read is 415 and one that is not the document declared is 422: a caller
