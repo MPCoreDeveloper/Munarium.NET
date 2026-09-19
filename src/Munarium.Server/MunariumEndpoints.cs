@@ -179,7 +179,8 @@ public static class MunariumEndpoints
                 var access = await MunariumKernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Findings,
-                    DateTimeOffset.UtcNow);
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
 
                 if (access is not EvidencePrincipal)
                 {
@@ -417,7 +418,8 @@ public static class MunariumEndpoints
                 var access = await MunariumKernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Ingest,
-                    DateTimeOffset.UtcNow);
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
 
                 if (access is not EvidencePrincipal)
                 {
@@ -636,7 +638,8 @@ public static class MunariumEndpoints
                 var access = await MunariumKernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Query,
-                    DateTimeOffset.UtcNow);
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
 
                 if (access is not EvidencePrincipal principal)
                 {
@@ -799,7 +802,8 @@ public static class MunariumEndpoints
                 var access = await MunariumKernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Evidence,
-                    DateTimeOffset.UtcNow);
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
 
                 if (access is not EvidencePrincipal principal)
                 {
@@ -851,7 +855,8 @@ public static class MunariumEndpoints
                 var access = await MunariumKernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Evidence,
-                    DateTimeOffset.UtcNow);
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
 
                 if (access is not EvidencePrincipal principal)
                 {
@@ -888,7 +893,8 @@ public static class MunariumEndpoints
                 var access = await MunariumKernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Evidence,
-                    DateTimeOffset.UtcNow);
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
 
                 if (access is not EvidencePrincipal principal)
                 {
@@ -929,7 +935,8 @@ public static class MunariumEndpoints
                 var access = await MunariumKernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Evidence,
-                    DateTimeOffset.UtcNow);
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
 
                 if (access is not EvidencePrincipal principal)
                 {
@@ -971,7 +978,8 @@ public static class MunariumEndpoints
                 var access = await MunariumKernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Evidence,
-                    DateTimeOffset.UtcNow);
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
 
                 if (access is not EvidencePrincipal principal)
                 {
