@@ -115,7 +115,7 @@ const string PdfWithTextLayer = """
     %%EOF
     """;
 
-var pdfText = TextExtractor.Extract("application/pdf", System.Text.Encoding.ASCII.GetBytes(PdfWithTextLayer));
+var pdfText = TextExtractor.Extract("application/pdf", System.Text.Encoding.ASCII.GetBytes(PdfWithTextLayer)).Text;
 
 if (!pdfText.Contains("quarterly settlement", StringComparison.Ordinal))
 {

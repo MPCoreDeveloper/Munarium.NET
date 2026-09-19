@@ -935,6 +935,11 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Equal(ingested.ContentHash, info.ContentHash);
         Assert.Equal(ingested.Bytes, info.Bytes);
 
+        // How extraction went is served beside the hash: a document that contributed nothing says so, rather than looking
+        // like one nobody ingested.
+        Assert.Equal("ok", info.ExtractionStatus);
+        Assert.Equal("text", info.ExtractionMethod);
+
         // And retrieval finds it, citing the source and the bytes it held when indexed.
         using var search = await _client.PostAsJsonAsync(
             "/v1/search",

@@ -23,7 +23,7 @@ public class TextExtractorTests
     public void ATextualMediaTypeIsRead(string mediaType)
     {
         Assert.True(TextExtractor.CanExtract(mediaType));
-        Assert.Equal("The Bell rang twice.", TextExtractor.Extract(mediaType, "The Bell rang twice."u8.ToArray()));
+        Assert.Equal("The Bell rang twice.", Text(mediaType, "The Bell rang twice."u8.ToArray()));
     }
 
     /// <summary>
@@ -39,7 +39,7 @@ public class TextExtractorTests
     {
         Assert.True(TextExtractor.CanExtract(DocxExtractor.Media));
 
-        var text = TextExtractor.Extract(
+        var text = Text(
             DocxExtractor.Media,
             Docx("""<w:document xmlns:w="x"><w:body><w:p><w:r><w:t>Read me</w:t></w:r></w:p></w:body></w:document>"""));
 
@@ -69,7 +69,7 @@ public class TextExtractorTests
     {
         Assert.True(TextExtractor.CanExtract(PdfTextExtractor.Media));
 
-        var text = TextExtractor.Extract(
+        var text = Text(
             PdfTextExtractor.Media,
             Pdf("BT /F1 12 Tf 72 720 Td (The quarterly settlement was approved on 14 March) Tj ET"));
 
@@ -86,7 +86,7 @@ public class TextExtractorTests
     [Fact]
     public void HardWrapsAreRejoined()
     {
-        var text = TextExtractor.Extract(
+        var text = Text(
             PdfTextExtractor.Media,
             Pdf("BT /F1 12 Tf 72 720 Td (The quarterly settlement was) Tj 0 -14 Td (approved on 14 March) Tj ET"));
 
@@ -99,23 +99,23 @@ public class TextExtractorTests
     [Fact]
     public void APdfWithoutATextLayerReadsAsNothing()
     {
-        Assert.Equal(string.Empty, TextExtractor.Extract(PdfTextExtractor.Media, Pdf(string.Empty)));
+        Assert.Equal(string.Empty, Text(PdfTextExtractor.Media, Pdf(string.Empty)));
 
         // Page furniture is not content either: a stamped page number produces no chunk worth citing.
         Assert.Equal(
             string.Empty,
-            TextExtractor.Extract(PdfTextExtractor.Media, Pdf("BT /F1 12 Tf 72 720 Td (12) Tj ET")));
+            Text(PdfTextExtractor.Media, Pdf("BT /F1 12 Tf 72 720 Td (12) Tj ET")));
     }
 
-    /// <summary>A PDF that cannot be parsed is refused by name rather than throwing something a caller cannot read.</summary>
+    /// <summary>A PDF that cannot be parsed is a failed extraction, which is what the row records.</summary>
     [Fact]
-    public void APdfThatCannotBeParsedIsRefused()
+    public void APdfThatCannotBeParsedIsAFailedExtraction()
     {
-        var refusal = Assert.Throws<ArgumentException>(
-            () => TextExtractor.Extract(PdfTextExtractor.Media, "%PDF-1.7 not really a pdf"u8.ToArray()));
+        var failed = TextExtractor.Extract(PdfTextExtractor.Media, "%PDF-1.7 not really a pdf"u8.ToArray());
 
-        Assert.Contains(PdfTextExtractor.Id, refusal.Message, StringComparison.Ordinal);
-        Assert.Equal("bytes", refusal.ParamName);
+        Assert.Equal(string.Empty, failed.Text);
+        Assert.Equal(ExtractionStatus.Failed, failed.Status);
+        Assert.Equal(ExtractionMethod.PdfTextLayer, failed.Method);
     }
 
     [Theory]
@@ -125,7 +125,7 @@ public class TextExtractorTests
         Assert.False(TextExtractor.CanExtract(mediaType));
 
         var refusal = Assert.Throws<ArgumentException>(
-            () => TextExtractor.Extract(mediaType, new byte[] { 0x25, 0x50, 0x44, 0x46 }));
+            () => Text(mediaType, new byte[] { 0x25, 0x50, 0x44, 0x46 }));
 
         // The refusal has to name the type it could not read, or an operator cannot tell which of several documents
         // was refused and why.
@@ -143,7 +143,7 @@ public class TextExtractorTests
     {
         var withMark = System.Text.Encoding.UTF8.GetPreamble().Concat("The Bell rang twice."u8.ToArray()).ToArray();
 
-        var text = TextExtractor.Extract("text/plain", withMark);
+        var text = Text("text/plain", withMark);
 
         Assert.Equal("The Bell rang twice.", text);
         Assert.DoesNotContain('\uFEFF', text);
@@ -154,7 +154,7 @@ public class TextExtractorTests
     {
         var bytes = System.Text.Encoding.UTF8.GetBytes("Het luiden van de bel — een observatie.");
 
-        Assert.Equal("Het luiden van de bel — een observatie.", TextExtractor.Extract("text/plain", bytes));
+        Assert.Equal("Het luiden van de bel — een observatie.", Text("text/plain", bytes));
     }
 
     [Fact]
@@ -171,7 +171,7 @@ public class TextExtractorTests
     [Fact]
     public void ADocxExtractsParagraphsAndJoinsSplitRuns()
     {
-        var text = DocxExtractor.Read(Docx(
+        var text = Read(Docx(
             """
             <?xml version="1.0"?>
             <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -196,7 +196,7 @@ public class TextExtractorTests
     public void FieldInstructionsAreNotProse() =>
         Assert.Equal(
             "Real text",
-            DocxExtractor.Read(Docx(
+            Read(Docx(
                 """
                 <w:document xmlns:w="x"><w:body>
                   <w:p><w:r><w:instrText>TOC \o "1-3"</w:instrText></w:r><w:r><w:t>Real text</w:t></w:r></w:p>
@@ -208,7 +208,7 @@ public class TextExtractorTests
     public void NamespacePrefixesStillParse() =>
         Assert.Equal(
             "Prefixed",
-            DocxExtractor.Read(Docx(
+            Read(Docx(
                 """
                 <ns0:document xmlns:ns0="x"><ns0:body>
                   <ns0:p><ns0:r><ns0:t>Prefixed</ns0:t></ns0:r></ns0:p>
@@ -220,7 +220,7 @@ public class TextExtractorTests
     public void AnEmptyDocumentReadsAsNothing() =>
         Assert.Equal(
             string.Empty,
-            DocxExtractor.Read(Docx("""<w:document xmlns:w="x"><w:body></w:body></w:document>""")));
+            Read(Docx("""<w:document xmlns:w="x"><w:body></w:body></w:document>""")));
 
     /// <summary>A zip without the document part is refused: it claims to be a document and is not one.</summary>
     [Fact]
@@ -235,18 +235,30 @@ public class TextExtractorTests
             entry.Write("hi"u8);
         }
 
-        var refusal = Assert.Throws<ArgumentException>(() => DocxExtractor.Read(buffer.ToArray()));
+        var failed = DocxExtractor.Read(buffer.ToArray());
 
-        Assert.Contains("word/document.xml", refusal.Message, StringComparison.Ordinal);
+        Assert.Equal(ExtractionStatus.Failed, failed.Status);
+        Assert.Equal(ExtractionMethod.Docx, failed.Method);
     }
 
-    /// <summary>A file that is not a zip at all is refused rather than thrown as something unexpected.</summary>
+    /// <summary>A DOCX with nothing in it is an empty extraction, and the row can say which extractor found nothing.</summary>
     [Fact]
-    public void ANonZipIsRefused() =>
-        Assert.Contains(
-            "docx@1 could not read it",
-            Assert.Throws<ArgumentException>(() => DocxExtractor.Read("not a zip at all"u8.ToArray())).Message,
-            StringComparison.Ordinal);
+    public void ADocxWithNothingInItIsAnEmptyExtraction()
+    {
+        var empty = DocxExtractor.Read(Docx("""<w:document xmlns:w="x"><w:body></w:body></w:document>"""));
+
+        Assert.Equal(Extracted.Empty(ExtractionMethod.Docx), empty);
+    }
+
+    /// <summary>A file that is not a zip at all is a failed extraction rather than something unexpected.</summary>
+    [Fact]
+    public void ANonZipIsAFailedExtraction()
+    {
+        var failed = DocxExtractor.Read("not a zip at all"u8.ToArray());
+
+        Assert.Equal(ExtractionStatus.Failed, failed.Status);
+        Assert.Equal(ExtractionMethod.Docx, failed.Method);
+    }
 
     /// <summary>
     /// Builds a one-page PDF around a content stream, written by hand so the fixture is deterministic and needs no
@@ -287,6 +299,18 @@ public class TextExtractorTests
 
         return Encoding.ASCII.GetBytes(pdf.ToString());
     }
+
+    /// <summary>Reads a document's text, for the cases that only care about the words.</summary>
+    /// <param name="mediaType">The media type.</param>
+    /// <param name="bytes">The bytes.</param>
+    /// <returns>The text.</returns>
+    private static string Text(string mediaType, ReadOnlyMemory<byte> bytes) =>
+        TextExtractor.Extract(mediaType, bytes).Text;
+
+    /// <summary>Reads a DOCX's text, for the same reason.</summary>
+    /// <param name="bytes">The bytes.</param>
+    /// <returns>The text.</returns>
+    private static string Read(byte[] bytes) => DocxExtractor.Read(bytes).Text;
 
     /// <summary>Builds a DOCX around one document part, which is all the extractor reads.</summary>
     /// <param name="documentXml">The document XML.</param>

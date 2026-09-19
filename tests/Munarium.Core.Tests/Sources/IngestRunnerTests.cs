@@ -129,7 +129,51 @@ public class IngestRunnerTests
         Assert.Single(fixture.Provider.Requests);
     }
 
+    /// <summary>
+    /// The row records how extraction went, which is what makes a document that contributed nothing visible.
+    /// </summary>
+    /// <remarks>
+    /// The original calls these two fields the invisible-document signal and writes them at index time. This port
+    /// indexes as it ingests, so that is where they are written - and the answer carries the row as it now stands, so
+    /// a caller sees what a later read would.
+    /// </remarks>
     [Fact]
+    public async Task TheRowRecordsHowExtractionWent()
+    {
+        var fixture = Fixture();
+
+        var ingested = Ingested(await fixture.Runner.IngestAsync("acme", "docs/note.txt", "text/plain", Bytes(Document)));
+
+        Assert.Equal("ok", ingested.Record.ExtractionStatus);
+        Assert.Equal("text", ingested.Record.ExtractionMethod);
+
+        var stored = await fixture.Registry.FindAsync("acme", "docs/note.txt");
+
+        Assert.Equal("ok", stored?.ExtractionStatus);
+        Assert.Equal("text", stored?.ExtractionMethod);
+    }
+
+    /// <summary>
+    /// A document that is not what it claims is recorded as a failed extraction, and the ingest still answers: the
+    /// bytes are real, and refusing them would lose a document an operator may want to look at.
+    /// </summary>
+    [Fact]
+    public async Task ADocumentThatIsNotWhatItClaimsIsRecordedAsFailed()
+    {
+        var fixture = Fixture();
+
+        var ingested = Ingested(
+            await fixture.Runner.IngestAsync(
+                "acme",
+                "docs/scan.pdf",
+                "application/pdf",
+                System.Text.Encoding.ASCII.GetBytes("%PDF-1.7 not really a pdf")));
+
+        Assert.Equal(0, ingested.ChunksIndexed);
+        Assert.Equal("failed", ingested.Record.ExtractionStatus);
+        Assert.Equal("pdf-text", ingested.Record.ExtractionMethod);
+    }
+
     public async Task AChangedDocumentAtTheSamePathReplacesTheSourceAndIsIndexed()
     {
         var fixture = Fixture();
@@ -212,13 +256,14 @@ public class IngestRunnerTests
     [Fact]
     public void AnIngestWithoutAModelOrACeilingIsRefused()
     {
-        var ingest = new SourceIngest(new InMemorySourceStore(), new InMemorySourceRegistry());
+        var registry = new InMemorySourceRegistry();
+        var ingest = new SourceIngest(new InMemorySourceStore(), registry);
         var provider = new RecordingEmbeddingProvider();
         var host = new FakeIndexHost();
 
-        Assert.Throws<ArgumentException>(() => new IngestRunner(ingest, provider, host, model: " "));
+        Assert.Throws<ArgumentException>(() => new IngestRunner(ingest, provider, host, model: " ", registry: registry));
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => new IngestRunner(ingest, provider, host, model: "m", maxChunkChars: 0));
+            () => new IngestRunner(ingest, provider, host, model: "m", registry: registry, maxChunkChars: 0));
     }
 
     private static (IngestRunner Runner,
@@ -239,7 +284,7 @@ public class IngestRunnerTests
         host.Serve(Version);
 
         return (
-            new IngestRunner(new SourceIngest(store, registry), provider, host, "test-model", maxChunkChars),
+            new IngestRunner(new SourceIngest(store, registry), provider, host, "test-model", registry, maxChunkChars),
             store,
             registry,
             provider,

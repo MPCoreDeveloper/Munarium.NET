@@ -2821,6 +2821,16 @@ components:
           type: string
         backend_id:
           type: string
+        extraction_status:
+          type: string
+          description: |
+            NULL until first indexed, then ok | empty | failed. A document that yielded nothing is visible here rather
+            than looking like one nobody ingested, which is the original's reason for the field.
+        extraction_method:
+          type: string
+          description: |
+            text | docx | pdf-text | ocr - OCR'd text is not equivalent evidence, and a scan and a document whose
+            extractor found nothing are different facts.
         ingested_at:
           type: string
 

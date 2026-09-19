@@ -64,9 +64,9 @@ public static class TextExtractor
     /// </summary>
     /// <param name="mediaType">The media type, with or without parameters.</param>
     /// <param name="bytes">The document's bytes.</param>
-    /// <returns>The text, with a byte-order mark dropped.</returns>
+    /// <returns>The text with a byte-order mark dropped, or the outcome that says why there is none.</returns>
     /// <exception cref="ArgumentException">Thrown when no extractor reads that media type.</exception>
-    public static string Extract(string mediaType, ReadOnlyMemory<byte> bytes)
+    public static Extracted Extract(string mediaType, ReadOnlyMemory<byte> bytes)
     {
         ArgumentNullException.ThrowIfNull(mediaType);
 
@@ -95,7 +95,7 @@ public static class TextExtractor
         // zero-width character that the analyzer would then treat as part of the first term.
         var text = System.Text.Encoding.UTF8.GetString(bytes.Span);
 
-        return text.StartsWith('\uFEFF') ? text[1..] : text;
+        return Extracted.Ok(text.StartsWith('\uFEFF') ? text[1..] : text, ExtractionMethod.Text);
     }
 
     private static string Normalize(string mediaType)

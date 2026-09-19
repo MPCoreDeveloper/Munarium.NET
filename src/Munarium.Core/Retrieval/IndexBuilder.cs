@@ -177,22 +177,31 @@ public sealed class IndexBuilder(
                     + "document the collection binds");
         }
 
-        string text;
+        var extraction = TextExtractor.Extract(row.MediaType, bytes);
 
-        try
+        // The row records how extraction went, which is the original's "invisible-document signal": a document that yields
+        // nothing has to be visible in the data rather than look like one nobody ingested. The build is the original's
+        // writer of these two fields; the ingest records the same outcome when it indexes a document as it arrives.
+        await _registry
+            .RecordExtractionAsync(
+                tenant,
+                row.SourceId,
+                extraction.Status.ToWireName(),
+                extraction.Method.ToWireName(),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (extraction.Status is ExtractionStatus.Failed)
         {
-            text = TextExtractor.Extract(row.MediaType, bytes);
-        }
-        catch (ArgumentException refused)
-        {
-            // A format this port reads, over bytes that are not it - a DOCX that is not a zip, a truncated one - is a
-            // refusal like any other rather than a crash: the build stops and names the document and the reason, which is
-            // the same stance as the check above. Indexing the rest and saying nothing would leave a corpus that is
-            // quietly missing something the collection binds.
-            return new IndexBuildRefused($"'{row.Path}' could not be read: {refused.Message}");
+            // The row records the failure, and the source contributes nothing rather than stopping the build. That
+            // is the original's stance for an extraction that failed: its errors are data, and a corpus quietly
+            // missing one document is visible in the rows, which is what these two fields exist for. A declaration
+            // is different and still refuses a build: a media type no extractor reads cannot be recorded as
+            // anything but a gap nobody can explain.
+            return null;
         }
 
-        var chunks = TextChunker.Chunk(text, _maxChunkChars);
+        var chunks = TextChunker.Chunk(extraction.Text, _maxChunkChars);
 
         if (chunks.Count == 0)
         {

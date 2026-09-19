@@ -159,7 +159,8 @@ public sealed class MunariumKernel : IAsyncDisposable
             new SourceIngest(sourceStore, sourceRegistry),
             embedder,
             host,
-            DeterministicEmbeddingProvider.ModelName);
+            DeterministicEmbeddingProvider.ModelName,
+            sourceRegistry);
 
         // The index-version table and the rule layer over it, and the builder that fills a version from the rows. The
         // engine reference comes from the host, so a manifest cannot claim an engine that did not build the vectors.

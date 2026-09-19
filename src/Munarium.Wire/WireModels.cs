@@ -703,6 +703,8 @@ public sealed record WireIngestedSource(
 /// <param name="BlobUri">Where the bytes went.</param>
 /// <param name="BackendId">The backend that holds them.</param>
 /// <param name="IngestedAt">When the row was last written.</param>
+/// <param name="ExtractionStatus">How the extraction went - ok, empty or failed - when it has run.</param>
+/// <param name="ExtractionMethod">How the text was obtained, when it has been.</param>
 public sealed record WireSourceInfo(
     string SourceId,
     string Path,
@@ -711,7 +713,9 @@ public sealed record WireSourceInfo(
     long Bytes,
     string BlobUri,
     string BackendId,
-    string? IngestedAt);
+    string? IngestedAt,
+    string? ExtractionStatus = null,
+    string? ExtractionMethod = null);
 
 /// <summary>The result of ingesting a document: what was stored and indexed, or why nothing was.</summary>
 public readonly union WireIngestResult(WireIngestedSource, WireProblem);

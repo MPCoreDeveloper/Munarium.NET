@@ -47,4 +47,26 @@ public sealed record SourceRecord
     /// index identity that depended on a clock read could not be rebuilt later.
     /// </remarks>
     public string? IngestedAt { get; init; }
+
+    /// <summary>
+    /// Gets how the row's extraction went — <c>ok</c>, <c>empty</c> or <c>failed</c> — or <see langword="null"/> when the
+    /// document has not been extracted yet.
+    /// </summary>
+    /// <remarks>
+    /// The original's "invisible-document signal": a document that yields nothing has to be visible in the data rather
+    /// than look like one nobody ingested. A re-upload clears both fields, because the new bytes have not been read yet,
+    /// and they are stored as names rather than ordinals so a row is readable in the table.
+    /// </remarks>
+    public string? ExtractionStatus { get; init; }
+
+    /// <summary>
+    /// Gets how the text was obtained — <c>text</c>, <c>docx</c>, <c>pdf-text</c> or <c>ocr</c> — or
+    /// <see langword="null"/> when the document has not been extracted yet.
+    /// </summary>
+    /// <remarks>
+    /// Recorded because an OCR'd document and a text-layer one are not equivalent evidence, and because a scan and a
+    /// text document whose extractor yielded nothing are different facts: the status says nothing came out, this says
+    /// which extractor found nothing.
+    /// </remarks>
+    public string? ExtractionMethod { get; init; }
 }

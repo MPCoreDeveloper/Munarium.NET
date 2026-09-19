@@ -35,7 +35,8 @@ public sealed class SharpCoreDbSourceRegistry(
 
     private const string Schema =
         "tenant TEXT, source_id TEXT, path TEXT, content_hash TEXT, media_type TEXT, "
-        + "bytes_length LONG, blob_uri TEXT, backend_id TEXT, ingested_at TEXT";
+        + "bytes_length LONG, blob_uri TEXT, backend_id TEXT, ingested_at TEXT, "
+        + "extraction_status TEXT, extraction_method TEXT";
 
     private readonly Lock _gate = new();
     private readonly IDatabase _database = database ?? throw new ArgumentNullException(nameof(database));
@@ -58,21 +59,7 @@ public sealed class SharpCoreDbSourceRegistry(
         {
             var table = Table();
 
-            // A path is a source's identity, so this is an upsert rather than an append: re-ingesting a path is a new
-            // version of one source, and a row left behind would be a source that exists twice.
-            table.Delete(TableValues.Identity("source_id", stamped.SourceId));
-            table.Insert(new Dictionary<string, object>
-            {
-                ["tenant"] = stamped.Tenant,
-                ["source_id"] = stamped.SourceId,
-                ["path"] = stamped.Path,
-                ["content_hash"] = stamped.ContentHash,
-                ["media_type"] = stamped.MediaType,
-                ["bytes_length"] = stamped.BytesLength,
-                ["blob_uri"] = stamped.BlobUri,
-                ["backend_id"] = stamped.BackendId,
-                ["ingested_at"] = stamped.IngestedAt ?? string.Empty,
-            });
+            Write(table, stamped);
 
             Persist();
         }
@@ -164,6 +151,69 @@ public sealed class SharpCoreDbSourceRegistry(
         }
     }
 
+    /// <inheritdoc />
+    public ValueTask<SourceRecord?> RecordExtractionAsync(
+        string tenant,
+        string sourceId,
+        string? status,
+        string? method,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenant);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceId);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_gate)
+        {
+            var rows = Table().Select(TableValues.Identity("source_id", sourceId));
+
+            if (rows.Count == 0)
+            {
+                return ValueTask.FromResult<SourceRecord?>(null);
+            }
+
+            var existing = Map(rows[0]);
+
+            if (!string.Equals(existing.Tenant, tenant, StringComparison.Ordinal))
+            {
+                return ValueTask.FromResult<SourceRecord?>(null);
+            }
+
+            // Read, stamp the two fields and write the row back inside one lock. The original does this with a single
+            // UPDATE at index time, and the reason it is not read-modify-write across an await is that an ingest landing
+            // in between must not be undone by a write-back built from an older copy of the row.
+            var stamped = existing with { ExtractionStatus = status, ExtractionMethod = method };
+
+            Write(Table(), stamped);
+            Persist();
+
+            return ValueTask.FromResult<SourceRecord?>(stamped);
+        }
+    }
+
+    /// <summary>Writes a row, replacing the one with the same identity.</summary>
+    /// <param name="table">The table to write into.</param>
+    /// <param name="record">The row to write.</param>
+    private static void Write(ITable table, SourceRecord record)
+    {
+        // A path is a source's identity, so this is an upsert rather than an append: re-ingesting a path is a new version
+        // of one source, and a row left behind would be a source that exists twice.
+        table.Delete(TableValues.Identity("source_id", record.SourceId));
+        table.Insert(new Dictionary<string, object>
+        {
+            ["tenant"] = record.Tenant,
+            ["source_id"] = record.SourceId,
+            ["path"] = record.Path,
+            ["content_hash"] = record.ContentHash,
+            ["media_type"] = record.MediaType,
+            ["bytes_length"] = record.BytesLength,
+            ["blob_uri"] = record.BlobUri,
+            ["backend_id"] = record.BackendId,
+            ["ingested_at"] = record.IngestedAt ?? string.Empty,
+            ["extraction_status"] = record.ExtractionStatus ?? string.Empty,
+            ["extraction_method"] = record.ExtractionMethod ?? string.Empty,
+        });
+    }
     private static SourceRecord Map(Dictionary<string, object> row) => new()
     {
         Tenant = TableValues.StringValue(row, "tenant"),
@@ -175,6 +225,8 @@ public sealed class SharpCoreDbSourceRegistry(
         BlobUri = TableValues.StringValue(row, "blob_uri"),
         BackendId = TableValues.StringValue(row, "backend_id"),
         IngestedAt = TableValues.StringValue(row, "ingested_at") is { Length: > 0 } stamp ? stamp : null,
+        ExtractionStatus = TableValues.StringValue(row, "extraction_status") is { Length: > 0 } status ? status : null,
+        ExtractionMethod = TableValues.StringValue(row, "extraction_method") is { Length: > 0 } method ? method : null,
     };
 
     private ITable Table()

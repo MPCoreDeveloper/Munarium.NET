@@ -2807,7 +2807,9 @@ public sealed class MunariumOperations(
         record.BytesLength,
         record.BlobUri,
         record.BackendId,
-        record.IngestedAt);
+        record.IngestedAt,
+        record.ExtractionStatus,
+        record.ExtractionMethod);
 
     private static WireFact ToWire(SlicedFact sliced) => new(
         sliced.Fact.VersionId,

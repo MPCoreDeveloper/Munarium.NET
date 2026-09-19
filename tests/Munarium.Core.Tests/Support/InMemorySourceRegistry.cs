@@ -67,5 +67,33 @@ internal sealed class InMemorySourceRegistry : ISourceRegistry
         return ValueTask.FromResult(rows);
     }
 
+    /// <inheritdoc />
+    public ValueTask<SourceRecord?> RecordExtractionAsync(
+        string tenant,
+        string sourceId,
+        string? status,
+        string? method,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenant);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceId);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var existing = _rows.Values.FirstOrDefault(
+            row => string.Equals(row.Tenant, tenant, StringComparison.Ordinal)
+                && string.Equals(row.SourceId, sourceId, StringComparison.Ordinal));
+
+        if (existing is null)
+        {
+            return ValueTask.FromResult<SourceRecord?>(null);
+        }
+
+        var stamped = existing with { ExtractionStatus = status, ExtractionMethod = method };
+
+        _rows[Key(existing.Tenant, existing.Path)] = stamped;
+
+        return ValueTask.FromResult<SourceRecord?>(stamped);
+    }
+
     private static string Key(string tenant, string path) => string.Concat(tenant, "/", path);
 }

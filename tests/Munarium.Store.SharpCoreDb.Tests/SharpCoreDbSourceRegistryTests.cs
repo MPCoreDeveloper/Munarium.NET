@@ -112,6 +112,45 @@ public class SharpCoreDbSourceRegistryTests
         Assert.Null(await fixture.Registry.GetAsync("acme", "src-0000000000000000"));
     }
 
+    /// <summary>
+    /// The two extraction fields round-trip, and a write-back changes them and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// This is the original's UPDATE at index time, and the reason it is an operation of its own: a row is written when a
+    /// document is uploaded and its extraction is known later, so the write-back must not rewrite what it was not asked to
+    /// change.
+    /// </remarks>
+    [Fact]
+    public async Task AnExtractionOutcomeIsWrittenBackWithoutRewritingTheRow()
+    {
+        await using var fixture = SourceStoreFixture.Create();
+        var record = Row("docs/note.txt", "sha256:abc");
+
+        await fixture.Registry.RecordAsync(record);
+
+        var recorded = await fixture.Registry.RecordExtractionAsync("acme", record.SourceId, "empty", "pdf-text");
+
+        Assert.Equal("empty", recorded?.ExtractionStatus);
+        Assert.Equal("pdf-text", recorded?.ExtractionMethod);
+
+        // The rest of the row is untouched, hash included: the write-back is about two fields.
+        Assert.Equal("sha256:abc", recorded?.ContentHash);
+        Assert.Equal(record.BlobUri, recorded?.BlobUri);
+
+        var read = await fixture.Registry.FindAsync("acme", "docs/note.txt");
+
+        Assert.Equal("empty", read?.ExtractionStatus);
+
+        // A write-back does not create a source that does not exist.
+        Assert.Null(await fixture.Registry.RecordExtractionAsync("acme", "src-nothing", "ok", "text"));
+
+        // And both fields can be cleared, which is what a re-upload owes: the new bytes have not been read yet.
+        var cleared = await fixture.Registry.RecordExtractionAsync("acme", record.SourceId, null, null);
+
+        Assert.Null(cleared?.ExtractionStatus);
+        Assert.Null(cleared?.ExtractionMethod);
+    }
+
     private static SourceRecord Row(string path, string hash) => new()
     {
         Tenant = "acme",

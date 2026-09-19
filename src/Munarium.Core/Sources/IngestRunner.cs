@@ -25,12 +25,14 @@ using Munarium.Text;
 /// <param name="provider">The model seam, which the embeddings come from.</param>
 /// <param name="host">The index instances, whose serving writer is where the chunks land.</param>
 /// <param name="model">The embedding model to call.</param>
+/// <param name="registry">Where the row's extraction outcome is recorded, which is what makes a scan visible.</param>
 /// <param name="maxChunkChars">The largest a chunk may be, which is index identity material.</param>
 public sealed class IngestRunner(
     SourceIngest ingest,
     IModelProvider provider,
     IIndexHost host,
     string model,
+    ISourceRegistry registry,
     int maxChunkChars = IngestRunner.DefaultChunkChars)
 {
     /// <summary>The chunk ceiling a deployment gets when it does not choose one.</summary>
@@ -43,6 +45,7 @@ public sealed class IngestRunner(
     private readonly SourceIngest _ingest = ingest ?? throw new ArgumentNullException(nameof(ingest));
     private readonly IModelProvider _provider = provider ?? throw new ArgumentNullException(nameof(provider));
     private readonly IIndexHost _host = host ?? throw new ArgumentNullException(nameof(host));
+    private readonly ISourceRegistry _registry = registry ?? throw new ArgumentNullException(nameof(registry));
     private readonly string _model = string.IsNullOrWhiteSpace(model)
         ? throw new ArgumentException("The embedding model must be named.", nameof(model))
         : model;
@@ -105,13 +108,27 @@ public sealed class IngestRunner(
         // one version and the rest into another, and the answer names the writer's own version, so what it says is
         // where the chunks actually went.
         var writer = _host.ServingWriter;
-        var chunks = TextChunker.Chunk(TextExtractor.Extract(mediaType, bytes), _maxChunkChars);
+        var extraction = TextExtractor.Extract(mediaType, bytes);
+
+        // The row records how extraction went, here and in the build: the original calls this field the invisible-document
+        // signal, and its point is that a deployment can read that a scan contributed nothing rather than see a document
+        // that looks like it was never ingested.
+        var recorded = await _registry
+            .RecordExtractionAsync(
+                ingested.Record.Tenant,
+                ingested.Record.SourceId,
+                extraction.Status.ToWireName(),
+                extraction.Method.ToWireName(),
+                cancellationToken)
+            .ConfigureAwait(false) ?? ingested.Record;
+
+        var chunks = TextChunker.Chunk(extraction.Text, _maxChunkChars);
 
         if (chunks.Count == 0)
         {
             // A document of nothing but whitespace is a stored source with nothing to retrieve. Recorded rather than
             // refused: the bytes are real, and a caller asking for that path deserves an answer.
-            return new IngestedDocument(ingested.Record, ingested.Kind, 0, writer.IndexVersion);
+            return new IngestedDocument(recorded, ingested.Kind, 0, writer.IndexVersion);
         }
 
         var response = await _provider
@@ -137,7 +154,7 @@ public sealed class IngestRunner(
                 response.Vectors[ordinal].Span);
         }
 
-        return new IngestedDocument(ingested.Record, ingested.Kind, chunks.Count, writer.IndexVersion);
+        return new IngestedDocument(recorded, ingested.Kind, chunks.Count, writer.IndexVersion);
     }
 
     private static SourceReference Reference(SourceRecord record, TextChunk chunk) =>

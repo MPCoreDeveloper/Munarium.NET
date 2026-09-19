@@ -27,9 +27,10 @@ public static class DocxExtractor
 
     /// <summary>Reads a DOCX's text.</summary>
     /// <param name="bytes">The document's bytes.</param>
-    /// <returns>The text, with paragraphs blank-line separated.</returns>
-    /// <exception cref="ArgumentException">The bytes are not a readable DOCX.</exception>
-    public static string Read(ReadOnlyMemory<byte> bytes)
+    /// <returns>The text with paragraphs blank-line separated, or the outcome that says why there is none.</returns>
+    /// <remarks>A file that claims to be a DOCX and is not comes back <see cref="ExtractionStatus.Failed"/> rather than as
+    /// an exception: whose fault it is belongs to the document, and the row has to be able to say so.</remarks>
+    public static Extracted Read(ReadOnlyMemory<byte> bytes)
     {
         try
         {
@@ -49,11 +50,11 @@ public static class DocxExtractor
 
             using var document = entry.Open();
 
-            return Body(ReadBounded(document));
+            return Extracted.Ok(Body(ReadBounded(document)), ExtractionMethod.Docx);
         }
         catch (Exception failure) when (failure is InvalidDataException or IOException or XmlException)
         {
-            throw new ArgumentException($"{Id} could not read it: {failure.Message}", nameof(bytes));
+            return Extracted.Failed(ExtractionMethod.Docx);
         }
     }
 

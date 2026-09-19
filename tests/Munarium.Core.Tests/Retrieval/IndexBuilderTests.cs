@@ -116,23 +116,37 @@ public class IndexBuilderTests
     }
 
     /// <summary>
-    /// A document in a format this port reads, over bytes that are not that format, refuses the build as well - rather
-    /// than throwing out of it. A caller can declare the DOCX type over anything, so the build stops and names the
-    /// document and the extractor's reason, and no half-built corpus is left behind.
+    /// A document in a format this port reads, over bytes that are not that format, is recorded as a failed
+    /// extraction and contributes nothing: the build does not stop, because the row says what happened.
     /// </summary>
+    /// <remarks>
+    /// This is the original's stance, and the reason its rows carry these two fields at all: an extraction that
+    /// failed is data, and a corpus quietly missing one document is visible in the rows rather than only in a log.
+    /// </remarks>
     [Fact]
-    public async Task ADocumentThatIsNotTheFormatItDeclaresRefusesTheBuild()
+    public async Task ADocumentThatIsNotTheFormatItDeclaresIsRecordedAsFailed()
     {
         var fixture = Fixture();
         await BindAsync(fixture, "docs/notes.docx", "definitely not a zip", DocxExtractor.Media);
+        await BindAsync(fixture, "docs/a.txt", Document, "text/plain");
 
-        var refused = Refused(await fixture.Builder.BuildAsync(Plan(prefix: "docs/", activate: true)));
+        var version = Recorded(await fixture.Builder.BuildAsync(Plan(prefix: "docs/", activate: true)));
 
-        Assert.Contains("docs/notes.docx", refused.Reason, StringComparison.Ordinal);
-        Assert.Contains(DocxExtractor.Id, refused.Reason, StringComparison.Ordinal);
-        Assert.Empty(fixture.Host.Built);
-        Assert.Equal("munarium@1", fixture.Host.ServingVersion);
-        Assert.Equal(0, fixture.Versions.Count);
+        // Both rows are accounted for in the manifest, and every chunk that was written came from the good one.
+        Assert.Equal(2, version.Manifest.SourceContentHashes.Count);
+        Assert.All(
+            ((RecordingIndexWriter)fixture.Host.Instances[version.Id].Writer).Chunks,
+            chunk => Assert.Equal("docs/a.txt", chunk.Source.SourcePath));
+
+        var failed = await fixture.Registry.FindAsync("acme", "docs/notes.docx");
+
+        Assert.Equal("failed", failed?.ExtractionStatus);
+        Assert.Equal("docx", failed?.ExtractionMethod);
+
+        var good = await fixture.Registry.FindAsync("acme", "docs/a.txt");
+
+        Assert.Equal("ok", good?.ExtractionStatus);
+        Assert.Equal("text", good?.ExtractionMethod);
     }
 
     /// <summary>

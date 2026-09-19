@@ -31,9 +31,11 @@ public static class PdfTextExtractor
 
     /// <summary>Reads a PDF's text layer.</summary>
     /// <param name="bytes">The document's bytes.</param>
-    /// <returns>The text, empty when the document carries no usable text layer.</returns>
-    /// <exception cref="ArgumentException">The bytes are not a readable PDF.</exception>
-    public static string Read(ReadOnlyMemory<byte> bytes)
+    /// <returns>The text, or the outcome that says why there is none.</returns>
+    /// <remarks>The original's rule decides the shape here: a PDF with no usable text layer is a scan, which is a real and
+    /// expected document, so it comes back <see cref="ExtractionStatus.Empty"/> with the method that failed to find a
+    /// layer - and a PDF that cannot be parsed at all is <see cref="ExtractionStatus.Failed"/>, not an exception.</remarks>
+    public static Extracted Read(ReadOnlyMemory<byte> bytes)
     {
         string raw;
 
@@ -64,17 +66,21 @@ public static class PdfTextExtractor
 
             raw = pages.ToString();
         }
-        catch (Exception failure)
+        catch (Exception)
         {
-            // A caller-uploaded PDF must never take the indexer down. PdfPig is a parser over whatever bytes a caller
-            // sends, and the original contains the same hazard by catching panics around its own parser; here a document
-            // that cannot be read is a refusal naming why, which is what the build reports and stops on.
-            throw new ArgumentException($"{Id} could not read it: {failure.Message}", nameof(bytes));
+            // A caller-uploaded PDF must never take the indexer down, and the outcome says which it was: PdfPig is a
+            // parser over whatever bytes a caller sends, and the original contains the same hazard by catching panics
+            // around its own parser. Failed is what the row records and what a build refuses on.
+            return Extracted.Failed(ExtractionMethod.PdfTextLayer);
         }
 
         var body = Normalize(raw);
 
-        return CountMeaningful(body) < MinimumMeaningfulChars ? string.Empty : body;
+        // Below the threshold is empty and not failed, which is the original's distinction: a scan is a real document
+        // with no text layer, and OCR - the path for it - is the capability this port does not have.
+        return CountMeaningful(body) < MinimumMeaningfulChars
+            ? Extracted.Empty(ExtractionMethod.PdfTextLayer)
+            : Extracted.Ok(body, ExtractionMethod.PdfTextLayer);
     }
 
     /// <summary>Counts the characters that are not whitespace, which is what "usable text" means here.</summary>

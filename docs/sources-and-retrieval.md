@@ -40,6 +40,14 @@ fix; that is a limit this port shares with the original. The extractor set is ve
 — and joins an index version's identity, so improving how a document becomes text produces a new version rather than
 silently different chunks under the same name.
 
+The row records how the extraction went, which is the original's answer to a document that contributes nothing:
+`extraction_status` is `ok`, `empty` or `failed` and `extraction_method` is `text`, `docx`, `pdf-text` or `ocr`, both
+served on the source info and both written where the document is extracted — at ingest here, at index time there, which
+is the same moment in this port because its ingest indexes. A re-upload clears them, because the new bytes have not been
+read yet. A build whose extraction failed records that and indexes nothing for that source rather than stopping, which is
+what the original does with an extraction error: the failure is data, and a corpus quietly missing one document is visible
+in the rows instead of only in a log.
+
 ## Index versions
 
 An index version is an immutable snapshot of one collection's corpus as one shape sees it, and its identity is

@@ -67,4 +67,26 @@ public interface ISourceRegistry
         string tenant,
         string? pathPrefix = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Records how a source's extraction went, leaving the rest of the row alone.
+    /// </summary>
+    /// <remarks>
+    /// The original writes these two fields with a single UPDATE at index time, and it is a separate operation from an
+    /// ingest for a reason: the row may have been written days earlier, so rewriting it from a stale copy would undo an
+    /// ingest that happened in between. Passing <see langword="null"/> for both clears them, which is what a re-upload
+    /// owes - the new bytes have not been read yet.
+    /// </remarks>
+    /// <param name="tenant">The tenant.</param>
+    /// <param name="sourceId">The source identity, as <c>src-…</c>.</param>
+    /// <param name="status">The status name, or <see langword="null"/> to clear it.</param>
+    /// <param name="method">The method name, or <see langword="null"/> to clear it.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The row as it stands, or <see langword="null"/> when no source has that identity.</returns>
+    ValueTask<SourceRecord?> RecordExtractionAsync(
+        string tenant,
+        string sourceId,
+        string? status,
+        string? method,
+        CancellationToken cancellationToken = default);
 }

@@ -1396,6 +1396,8 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         BlobUri = info.BlobUri,
         BackendId = info.BackendId,
         IngestedAt = info.IngestedAt ?? string.Empty,
+        ExtractionStatus = info.ExtractionStatus ?? string.Empty,
+        ExtractionMethod = info.ExtractionMethod ?? string.Empty,
     };
 
     private static IndexManifest ToMessage(WireIndexManifest manifest) => new()
