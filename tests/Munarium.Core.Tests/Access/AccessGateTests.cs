@@ -12,11 +12,11 @@ public class AccessGateTests
 
     /// <summary>A deployment without authorization maps every caller to its own principal.</summary>
     [Fact]
-    public void ADeploymentWithoutAuthorizationFallsBackToItsPrincipal()
+    public async Task ADeploymentWithoutAuthorizationFallsBackToItsPrincipal()
     {
         var gate = new AccessGate(Secret, authorized: false, EvidencePrincipal.ForDeployment("acme"));
 
-        var granted = Granted(gate.Resolve(null, AccessScope.Query, Now));
+        var granted = Granted(await gate.ResolveAsync(null, AccessScope.Query, Now));
 
         Assert.Equal("acme", granted.Tenant);
         Assert.True(granted.AllCompartments);
@@ -24,22 +24,22 @@ public class AccessGateTests
 
     /// <summary>A deployment with authorization refuses a request that presents nothing.</summary>
     [Fact]
-    public void ADeploymentWithAuthorizationRefusesACallWithoutACapability()
+    public async Task ADeploymentWithAuthorizationRefusesACallWithoutACapability()
     {
         var gate = new AccessGate(Secret, authorized: true, EvidencePrincipal.ForDeployment("acme"));
 
-        var refused = Refused(gate.Resolve(null, AccessScope.Query, Now));
+        var refused = Refused(await gate.ResolveAsync(null, AccessScope.Query, Now));
 
         Assert.Equal(AccessGate.MissingReason, refused.Reason);
     }
 
     /// <summary>A capability carrying the plane's scope becomes that caller's principal.</summary>
     [Fact]
-    public void ACapabilityWithTheScopeBecomesThePrincipal()
+    public async Task ACapabilityWithTheScopeBecomesThePrincipal()
     {
         var gate = new AccessGate(Secret, authorized: true, EvidencePrincipal.ForDeployment("acme"));
 
-        var granted = Granted(gate.Resolve(
+        var granted = Granted(await gate.ResolveAsync(
             "Bearer " + Token("tyler@example.com", 3, ["north"], [AccessScope.Query]),
             AccessScope.Query,
             Now));
@@ -54,13 +54,13 @@ public class AccessGateTests
 
     /// <summary>A capability that verifies but belongs to another plane is refused, which is what a scope is for.</summary>
     [Fact]
-    public void ACapabilityWithoutTheScopeIsRefused()
+    public async Task ACapabilityWithoutTheScopeIsRefused()
     {
         var gate = new AccessGate(Secret, authorized: true, EvidencePrincipal.ForDeployment("acme"));
         var ingestOnly = "Bearer " + Token("uploader", 9, [], [AccessScope.Ingest]);
 
-        Refused(gate.Resolve(ingestOnly, AccessScope.Query, Now));
-        Granted(gate.Resolve(ingestOnly, AccessScope.Ingest, Now));
+        Refused(await gate.ResolveAsync(ingestOnly, AccessScope.Query, Now));
+        Granted(await gate.ResolveAsync(ingestOnly, AccessScope.Ingest, Now));
     }
 
     /// <summary>What does not verify is refused, whatever it claims - and the header itself is read strictly.</summary>
@@ -70,16 +70,16 @@ public class AccessGateTests
     [InlineData("Bearer a.b.c")]
     [InlineData("Basic dHlsZXI6c2VjcmV0")]
     [InlineData("Bearer ")]
-    public void WhatDoesNotPresentACapabilityIsRefused(string header)
+    public async Task WhatDoesNotPresentACapabilityIsRefused(string header)
     {
         var gate = new AccessGate(Secret, authorized: true, EvidencePrincipal.ForDeployment("acme"));
 
-        Refused(gate.Resolve(header, AccessScope.Query, Now));
+        Refused(await gate.ResolveAsync(header, AccessScope.Query, Now));
     }
 
     /// <summary>An expired capability is refused at the gate, and the leeway is the original's.</summary>
     [Fact]
-    public void AnExpiredCapabilityIsRefused()
+    public async Task AnExpiredCapabilityIsRefused()
     {
         var gate = new AccessGate(Secret, authorized: true, EvidencePrincipal.ForDeployment("acme"));
         var claims = AccessTokens.Issue(
@@ -98,8 +98,8 @@ public class AccessGateTests
 
         var token = AccessTokens.Mint(Secret, claims);
 
-        Granted(gate.Resolve("Bearer " + token, AccessScope.Query, Now.AddSeconds(89)));
-        Refused(gate.Resolve("Bearer " + token, AccessScope.Query, Now.AddSeconds(91)));
+        Granted(await gate.ResolveAsync("Bearer " + token, AccessScope.Query, Now.AddSeconds(89)));
+        Refused(await gate.ResolveAsync("Bearer " + token, AccessScope.Query, Now.AddSeconds(91)));
     }
 
     /// <summary>Mints a capability for a test.</summary>

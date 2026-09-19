@@ -6,6 +6,7 @@ using Munarium.Evidence;
 public readonly union AccessResolution(EvidencePrincipal, AccessRefused);
 
 /// <summary>Reads a capability into a principal, enforcing the scope a plane requires.</summary>
+/// <param name="audit">Where a withdrawal is recorded, or <see langword="null"/> when none is kept.</param>
 /// <remarks>
 /// This is the one place a presented capability becomes an identity, so the rules are here rather than in each route:
 /// <list type="bullet">
@@ -31,7 +32,8 @@ public readonly union AccessResolution(EvidencePrincipal, AccessRefused);
 public sealed class AccessGate(
     ReadOnlyMemory<byte> secret,
     bool authorized,
-    EvidencePrincipal fallback)
+    EvidencePrincipal fallback,
+    IAccessTokenAudit? audit = null)
 {
     /// <summary>The refusal a plane answers with when a capability is required and none was presented.</summary>
     public const string MissingReason =
@@ -46,12 +48,20 @@ public sealed class AccessGate(
     /// <summary>Gets the principal a deployment without authorization maps every caller to.</summary>
     public EvidencePrincipal Fallback { get; } = fallback;
 
+    /// <summary>Gets where a withdrawal is recorded, which is what makes one enforceable.</summary>
+    public IAccessTokenAudit? Audit { get; } = audit;
+
     /// <summary>Resolves a request's principal, requiring one scope.</summary>
     /// <param name="authorization">The request's Authorization header, or <see langword="null"/>.</param>
     /// <param name="scope">The scope the plane requires.</param>
     /// <param name="now">The instant to judge expiry at.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The principal, or why the request has none.</returns>
-    public AccessResolution Resolve(string? authorization, string scope, DateTimeOffset now)
+    public async ValueTask<AccessResolution> ResolveAsync(
+        string? authorization,
+        string scope,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(scope);
 
@@ -65,6 +75,20 @@ public sealed class AccessGate(
         }
 
         var verified = AccessTokens.Verify(Secret.Span, token, now);
+
+        // A capability that was withdrawn is refused here rather than at the next expiry: the row is the only lever there
+        // is, because nothing stores token material and a bearer credential cannot be recalled once it is out.
+        if (verified is AccessClaims issued && Audit is not null)
+        {
+            var row = await Audit
+                .GetAsync(issued.Tenant, issued.TokenId, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (row is { Revoked: true })
+            {
+                return new AccessRefused("this capability has been withdrawn");
+            }
+        }
 
         return verified switch
         {
