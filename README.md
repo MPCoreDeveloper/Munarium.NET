@@ -63,6 +63,9 @@ Munarium.NET is dogfooded end to end on the author's own .NET 11 libraries:
   shipping code, and code style is enforced during the build.
 - Package versions live in one place (Central Package Management), and the whole stack is dogfooded
   rather than merely described.
+- **The original is the specification, and a claim about it gets read before it gets written** — four
+  "capabilities this port lacks" turned out to be unmeasured assumptions, and each is on record with
+  what the source actually says: [docs/method.md](docs/method.md).
 
 ## What is in the kernel so far
 
