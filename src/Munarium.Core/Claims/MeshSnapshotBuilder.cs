@@ -11,9 +11,11 @@ using Munarium.Ledger;
 /// This is the seam the "no backend builds a snapshot" gap closes through: a gate that assembled its own
 /// view would be a second definition of what the ledger holds at a pin, and the two would drift.
 /// <para>
-/// The fact, anchor and promise planes are read here; counters and entities are in the kernel as types and
-/// as logic but have no plane to read yet, so a snapshot carries empty ones until they do. The digests are
-/// not read at all - they are rebuilt from the pinned facts, because a stored rung has no history.
+/// The fact, anchor and promise planes come from the read model; anchors, promises, counters and entities are folded
+/// out of the version's one stream, keyed by what identifies each one, with the fold's pin semantics applied to all
+/// of them at once. What this port has no writer for is entities, which is exactly the state the original is in - it
+/// declares the plane and constructs no entity at all - so the plane is served and stays empty until something writes
+/// one. The digests are not read at all: they are rebuilt from the pinned facts, because a stored rung has no history.
 /// </para>
 /// </remarks>
 /// <param name="storage">The ledger's storage seam, which every plane is read from.</param>

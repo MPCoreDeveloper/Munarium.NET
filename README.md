@@ -222,7 +222,7 @@ in the order it is planned:
   no Unicode mapping yields those fonts' own codes, which no text-layer reader can turn into words. A further limit is
   that the ingest writes into whichever version is
   serving, which is read at the moment of use so a cutover cannot split one document between two versions.
-- **Three of the four keyed planes are authorable; entities and ingest are not.** Every plane a snapshot carries is
+- **Three of the four keyed planes are authorable, and the fourth is not authorable anywhere.** Every plane a snapshot carries is
   served: `GET /v1/snapshots` answers with one pin across all of them - facts resolved-current, the digest ladder
   rebuilt from them, the scope filter and fact limit applied after resolution, and the keyed planes as they stood at
   that position, plus the instant derived from the snapshot's own identities rather than from a clock. Anchors,
@@ -230,9 +230,12 @@ in the order it is planned:
   `POST .../anchors/{detail_key}/release`, `POST/GET /v1/versions/{id}/promises` - the promise check's overdue
   findings computed over the full pinned slice before any filter narrows it - with
   `POST .../promises/{key}/fulfill`, and `POST/GET /v1/versions/{id}/counters`, where the read answers with the
-  directives a writer would be given rather than only the totals. What is missing: nothing on the wire records an
-  entity (upstream resolves entities through a model capability this port has not ported, so writing them would be
-  raw plumbing). One thing that looked missing is settled by how the build is written: it reads the rows a deployment
+  directives a writer would be given rather than only the totals. What is missing is a writer for entities, and the
+  honest version of that is not a gap: upstream declares `entities` on its snapshot and hard-codes it empty - its whole
+  tree constructs no `Entity` at all, with no resolution step and no route - so there is nothing there to port. This port
+  folds an `entity.resolved` event into the plane like every other one, which is tested.
+  Nothing here writes one either: the writer this port lacks is one that would have to fill a plane the original never
+  filled. One thing that looked missing is settled by how the build is written: it reads the rows a deployment
   already holds - the prefix's rows from the registry, then each one's bytes out of the store - rather than taking a
   window of freshly ingested documents, so `POST /v1/indexes` over a prefix somebody ingested last week *is* a rebuild,
   and it derives the same version, because a version's identity is a hash of everything the build would do.

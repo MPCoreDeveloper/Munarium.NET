@@ -32,6 +32,39 @@ public class MeshSnapshotBuilderTests
         Assert.NotEqual(headRung.ContentHash, pinnedRung.ContentHash);
     }
 
+    /// <summary>
+    /// The entity plane is folded out of the version's stream like every other plane, not hard-coded empty.
+    /// </summary>
+    /// <remarks>
+    /// This is why "entities are not authorable" is not a gap in this port: the original declares the plane and hard-codes
+    /// it empty - across its whole tree <c>Entity</c> appears twice, as the struct and as the field, with no resolution
+    /// step, no writer and no route - so there is nothing upstream to port. This port has gone further than that, and the
+    /// fold is the same one the anchors, promises and counters use; what is missing is a writer, and writing one would be
+    /// filling a plane the original never filled.
+    /// </remarks>
+    [Fact]
+    public async Task AnEntityEventReachesTheEntityPlane()
+    {
+        var (_, storage, _) = CandidateFixture.Ledger();
+
+        await storage.AppendAsync(
+            StreamId.From("release-1"),
+            SequenceNumber.Zero,
+            [
+                LedgerEvent.FromText(
+                    EntityCodec.ResolvedEventType,
+                    """{"entity_id":"entity-7","version_id":"release-1","canonical_name":"Northern Supplies Ltd","entity_type":"vendor"}"""),
+            ]);
+
+        var snapshot = await new MeshSnapshotBuilder(storage).BuildAsync("release-1");
+
+        var entity = Assert.Single(snapshot.Entities);
+
+        Assert.Equal("entity-7", entity.Id);
+        Assert.Equal("Northern Supplies Ltd", entity.CanonicalName);
+        Assert.Equal("vendor", entity.EntityType);
+    }
+
     [Fact]
     public async Task TheLadderRungIsPresentEvenWithNoFacts()
     {
