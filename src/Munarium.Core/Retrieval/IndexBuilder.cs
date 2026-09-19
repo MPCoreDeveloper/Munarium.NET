@@ -177,7 +177,22 @@ public sealed class IndexBuilder(
                     + "document the collection binds");
         }
 
-        var chunks = TextChunker.Chunk(TextExtractor.Extract(row.MediaType, bytes), _maxChunkChars);
+        string text;
+
+        try
+        {
+            text = TextExtractor.Extract(row.MediaType, bytes);
+        }
+        catch (ArgumentException refused)
+        {
+            // A format this port reads, over bytes that are not it - a DOCX that is not a zip, a truncated one - is a
+            // refusal like any other rather than a crash: the build stops and names the document and the reason, which is
+            // the same stance as the check above. Indexing the rest and saying nothing would leave a corpus that is
+            // quietly missing something the collection binds.
+            return new IndexBuildRefused($"'{row.Path}' could not be read: {refused.Message}");
+        }
+
+        var chunks = TextChunker.Chunk(text, _maxChunkChars);
 
         if (chunks.Count == 0)
         {

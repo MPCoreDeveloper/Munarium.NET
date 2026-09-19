@@ -6,6 +6,7 @@ using Munarium.Evidence;
 using Munarium.Ledger;
 using Munarium.Retrieval;
 using Munarium.Sources;
+using Munarium.Text;
 
 /// <summary>
 /// Tests for building an index version: what reaches the index, what is recorded, and what happens to serving while it
@@ -41,7 +42,7 @@ public class IndexBuilderTests
         Assert.All(chunks, chunk => Assert.StartsWith(chunk.Source.SourceId, chunk.Source.ChunkId, StringComparison.Ordinal));
         Assert.Equal(2, version.Manifest.SourceContentHashes.Count);
         Assert.Equal("chunk@1", version.Manifest.Chunker);
-        Assert.Equal("extract@1[docx@1]", version.Manifest.Extractors);
+        Assert.Equal(TextExtractor.Version(), version.Manifest.Extractors);
         Assert.Equal("exact@1", version.Manifest.Engine);
         Assert.Equal("test-model", version.Manifest.Embedder.Model);
     }
@@ -109,6 +110,26 @@ public class IndexBuilderTests
 
         Assert.Contains("docs/scan.pdf", refused.Reason, StringComparison.Ordinal);
         Assert.Contains("application/pdf", refused.Reason, StringComparison.Ordinal);
+        Assert.Empty(fixture.Host.Built);
+        Assert.Equal("munarium@1", fixture.Host.ServingVersion);
+        Assert.Equal(0, fixture.Versions.Count);
+    }
+
+    /// <summary>
+    /// A document in a format this port reads, over bytes that are not that format, refuses the build as well - rather
+    /// than throwing out of it. A caller can declare the DOCX type over anything, so the build stops and names the
+    /// document and the extractor's reason, and no half-built corpus is left behind.
+    /// </summary>
+    [Fact]
+    public async Task ADocumentThatIsNotTheFormatItDeclaresRefusesTheBuild()
+    {
+        var fixture = Fixture();
+        await BindAsync(fixture, "docs/notes.docx", "definitely not a zip", DocxExtractor.Media);
+
+        var refused = Refused(await fixture.Builder.BuildAsync(Plan(prefix: "docs/", activate: true)));
+
+        Assert.Contains("docs/notes.docx", refused.Reason, StringComparison.Ordinal);
+        Assert.Contains(DocxExtractor.Id, refused.Reason, StringComparison.Ordinal);
         Assert.Empty(fixture.Host.Built);
         Assert.Equal("munarium@1", fixture.Host.ServingVersion);
         Assert.Equal(0, fixture.Versions.Count);
