@@ -170,7 +170,7 @@ in the order it is planned:
   session and turn operations (`create`, `turn`, `get`, `close`), and the turn's progress stream as SSE are all served -
   the stream is JSON-only, and `StreamTurn` refuses by name over gRPC exactly as the row read does, because the
   original's protobuf carries no streaming method for sessions and a unary answer would look like a turn that never
-  reported a stage. What is still missing: sealed artifacts as a source.
+  reported a stage.
 - **Index versions are built, served and listed; the index itself lives in the process that built it.** The catalogue,
   the derived identity, the cutover rules and the envelope resolution are in the kernel and tested, the manifests are stored in a
   table of their own (retrieval bookkeeping is deliberately not ledger data), and `IndexBuilder` reads the sources a
