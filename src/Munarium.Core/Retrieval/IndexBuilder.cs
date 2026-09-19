@@ -32,6 +32,7 @@ using Munarium.Text;
 /// <param name="catalogue">Where the version is recorded, and activated when the plan asks for it.</param>
 /// <param name="embedder">The embedder a manifest records, which is identity material.</param>
 /// <param name="maxChunkChars">The largest a chunk may be, which is identity material too.</param>
+/// <param name="extraction">Local extraction first, and the document-intelligence provider only if it found nothing.</param>
 public sealed class IndexBuilder(
     ISourceStore sources,
     ISourceRegistry registry,
@@ -39,6 +40,7 @@ public sealed class IndexBuilder(
     IIndexHost host,
     IndexCatalog catalogue,
     EmbedderRef embedder,
+    SourceExtraction? extraction = null,
     int maxChunkChars = IngestRunner.DefaultChunkChars)
 {
     /// <summary>
@@ -52,6 +54,7 @@ public sealed class IndexBuilder(
 
     private readonly ISourceStore _sources = sources ?? throw new ArgumentNullException(nameof(sources));
     private readonly ISourceRegistry _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+    private readonly SourceExtraction _extraction = extraction ?? new SourceExtraction();
     private readonly IModelProvider _provider = provider ?? throw new ArgumentNullException(nameof(provider));
     private readonly IIndexHost _host = host ?? throw new ArgumentNullException(nameof(host));
     private readonly IndexCatalog _catalogue = catalogue ?? throw new ArgumentNullException(nameof(catalogue));
@@ -177,7 +180,7 @@ public sealed class IndexBuilder(
                     + "document the collection binds");
         }
 
-        var extraction = TextExtractor.Extract(row.MediaType, bytes);
+        var extracted = await _extraction.ExtractAsync(row.MediaType, bytes, cancellationToken).ConfigureAwait(false);
 
         // The row records how extraction went, which is the original's "invisible-document signal": a document that yields
         // nothing has to be visible in the data rather than look like one nobody ingested. The build is the original's
@@ -186,12 +189,12 @@ public sealed class IndexBuilder(
             .RecordExtractionAsync(
                 tenant,
                 row.SourceId,
-                extraction.Status.ToWireName(),
-                extraction.Method.ToWireName(),
+                extracted.Status.ToWireName(),
+                extracted.Method.ToWireName(),
                 cancellationToken)
             .ConfigureAwait(false);
 
-        if (extraction.Status is ExtractionStatus.Failed)
+        if (extracted.Status is ExtractionStatus.Failed)
         {
             // The row records the failure, and the source contributes nothing rather than stopping the build. That
             // is the original's stance for an extraction that failed: its errors are data, and a corpus quietly
@@ -201,7 +204,7 @@ public sealed class IndexBuilder(
             return null;
         }
 
-        var chunks = TextChunker.Chunk(extraction.Text, _maxChunkChars);
+        var chunks = TextChunker.Chunk(extracted.Text, _maxChunkChars);
 
         if (chunks.Count == 0)
         {

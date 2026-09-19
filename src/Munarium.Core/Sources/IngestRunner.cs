@@ -26,6 +26,7 @@ using Munarium.Text;
 /// <param name="host">The index instances, whose serving writer is where the chunks land.</param>
 /// <param name="model">The embedding model to call.</param>
 /// <param name="registry">Where the row's extraction outcome is recorded, which is what makes a scan visible.</param>
+/// <param name="extraction">Local extraction first, and the document-intelligence provider only if it found nothing.</param>
 /// <param name="maxChunkChars">The largest a chunk may be, which is index identity material.</param>
 public sealed class IngestRunner(
     SourceIngest ingest,
@@ -33,6 +34,7 @@ public sealed class IngestRunner(
     IIndexHost host,
     string model,
     ISourceRegistry registry,
+    SourceExtraction? extraction = null,
     int maxChunkChars = IngestRunner.DefaultChunkChars)
 {
     /// <summary>The chunk ceiling a deployment gets when it does not choose one.</summary>
@@ -46,6 +48,7 @@ public sealed class IngestRunner(
     private readonly IModelProvider _provider = provider ?? throw new ArgumentNullException(nameof(provider));
     private readonly IIndexHost _host = host ?? throw new ArgumentNullException(nameof(host));
     private readonly ISourceRegistry _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+    private readonly SourceExtraction _extraction = extraction ?? new SourceExtraction();
     private readonly string _model = string.IsNullOrWhiteSpace(model)
         ? throw new ArgumentException("The embedding model must be named.", nameof(model))
         : model;
@@ -108,7 +111,7 @@ public sealed class IngestRunner(
         // one version and the rest into another, and the answer names the writer's own version, so what it says is
         // where the chunks actually went.
         var writer = _host.ServingWriter;
-        var extraction = TextExtractor.Extract(mediaType, bytes);
+        var extracted = await _extraction.ExtractAsync(mediaType, bytes, cancellationToken).ConfigureAwait(false);
 
         // The row records how extraction went, here and in the build: the original calls this field the invisible-document
         // signal, and its point is that a deployment can read that a scan contributed nothing rather than see a document
@@ -117,12 +120,12 @@ public sealed class IngestRunner(
             .RecordExtractionAsync(
                 ingested.Record.Tenant,
                 ingested.Record.SourceId,
-                extraction.Status.ToWireName(),
-                extraction.Method.ToWireName(),
+                extracted.Status.ToWireName(),
+                extracted.Method.ToWireName(),
                 cancellationToken)
             .ConfigureAwait(false) ?? ingested.Record;
 
-        var chunks = TextChunker.Chunk(extraction.Text, _maxChunkChars);
+        var chunks = TextChunker.Chunk(extracted.Text, _maxChunkChars);
 
         if (chunks.Count == 0)
         {

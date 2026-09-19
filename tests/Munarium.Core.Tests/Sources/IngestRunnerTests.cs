@@ -284,7 +284,7 @@ public class IngestRunnerTests
         host.Serve(Version);
 
         return (
-            new IngestRunner(new SourceIngest(store, registry), provider, host, "test-model", registry, maxChunkChars),
+            new IngestRunner(new SourceIngest(store, registry), provider, host, "test-model", registry, maxChunkChars: maxChunkChars),
             store,
             registry,
             provider,
