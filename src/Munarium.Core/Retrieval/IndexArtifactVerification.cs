@@ -8,7 +8,7 @@ public sealed record IndexArtifactFinding(string Code, string Message);
 /// <summary>What verifying a persisted artifact found.</summary>
 /// <param name="Verified">Whether every check passed.</param>
 /// <param name="Findings">Everything that did not, in a deterministic order.</param>
-public sealed record ArtifactVerification(bool Verified, IReadOnlyList<IndexArtifactFinding> Findings);
+public sealed record IndexArtifactVerdict(bool Verified, IReadOnlyList<IndexArtifactFinding> Findings);
 
 /// <summary>Checks a version's persisted chunks against the manifest that names them.</summary>
 /// <remarks>
@@ -32,7 +32,7 @@ public static class IndexArtifactVerification
     /// <param name="version">The version as the catalogue records it, whose manifest is the claim.</param>
     /// <param name="chunks">The chunks a store read back for it.</param>
     /// <returns>What the checks found.</returns>
-    public static ArtifactVerification Verify(IndexVersion version, IReadOnlyList<PersistedChunk> chunks)
+    public static IndexArtifactVerdict Verify(IndexVersion version, IReadOnlyList<PersistedChunk> chunks)
     {
         ArgumentNullException.ThrowIfNull(version);
         ArgumentNullException.ThrowIfNull(chunks);
@@ -45,7 +45,7 @@ public static class IndexArtifactVerification
                 "artifact.empty",
                 $"no chunk is persisted for '{version.Id}', so there are no bytes to verify"));
 
-            return new ArtifactVerification(false, findings);
+            return new IndexArtifactVerdict(false, findings);
         }
 
         var manifest = version.Manifest;
@@ -107,6 +107,6 @@ public static class IndexArtifactVerification
             }
         }
 
-        return new ArtifactVerification(findings.Count == 0, findings);
+        return new IndexArtifactVerdict(findings.Count == 0, findings);
     }
 }
