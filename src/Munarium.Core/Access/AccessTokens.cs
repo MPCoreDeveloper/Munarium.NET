@@ -49,15 +49,15 @@ public static class AccessTokens
         if (claims.Scopes.Count == 0)
         {
             throw new ArgumentException(
-                "A capability carries at least one scope (query|ingest|findings|evidence).",
+                "A capability carries at least one scope (query|ingest|findings|evidence|access).",
                 nameof(claims));
         }
 
         if (claims.Scopes.Any(scope => scope is not (AccessScope.Query or AccessScope.Ingest
-            or AccessScope.Findings or AccessScope.Evidence)))
+            or AccessScope.Findings or AccessScope.Evidence or AccessScope.Access)))
         {
             throw new ArgumentException(
-                $"A scope is one of query|ingest|findings|evidence: '{string.Join(", ", claims.Scopes)}' is not.",
+                $"A scope is one of query|ingest|findings|evidence|access: '{string.Join(", ", claims.Scopes)}' is not.",
                 nameof(claims));
         }
 

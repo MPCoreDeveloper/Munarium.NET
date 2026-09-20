@@ -65,6 +65,8 @@ using Munarium.Evidence;
 [JsonSerializable(typeof(WireSourceIngest))]
 [JsonSerializable(typeof(WireAccessTokenRequest))]
 [JsonSerializable(typeof(WireAccessToken))]
+[JsonSerializable(typeof(WireAccessTokenAudit))]
+[JsonSerializable(typeof(WireAccessTokenAuditList))]
 [JsonSerializable(typeof(WireIngestedSource))]
 [JsonSerializable(typeof(WireSourceInfo))]
 [JsonSerializable(typeof(WireSourceList))]

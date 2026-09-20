@@ -741,6 +741,28 @@ public sealed record WireAccessToken(string Token, string TokenId, long ExpiresA
 /// <summary>The result of issuing a capability: the capability, or why it could not be issued.</summary>
 public readonly union WireAccessTokenResult(WireAccessToken, WireProblem);
 
+/// <summary>One issued capability as the audit holds it - its identity and its claims, never the capability itself.</summary>
+public sealed record WireAccessTokenAudit(
+    string TokenId,
+    string Subject,
+    string Tenant,
+    int Level,
+    IReadOnlyList<string> Compartments,
+    IReadOnlyList<string> Scopes,
+    IReadOnlyList<string>? Runbooks,
+    long IssuedAt,
+    long ExpiresAt,
+    long? RevokedAt);
+
+/// <summary>A tenant's issued capabilities: who was given what, and which of those still stand.</summary>
+public sealed record WireAccessTokenAuditList(IReadOnlyList<WireAccessTokenAudit> Capabilities);
+
+/// <summary>The audit, or why it could not be read.</summary>
+public readonly union WireAccessTokenAuditResult(WireAccessTokenAuditList, WireProblem);
+
+/// <summary>A capability as withdrawn, or why it could not be.</summary>
+public readonly union WireAccessTokenRevocationResult(WireAccessTokenAudit, WireProblem);
+
 /// <summary>The result of ingesting a document: what was stored and indexed, or why nothing was.</summary>
 public readonly union WireIngestResult(WireIngestedSource, WireProblem);
 

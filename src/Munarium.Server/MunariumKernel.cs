@@ -256,7 +256,9 @@ public sealed class MunariumKernel : IAsyncDisposable
             sourceStore,
             runbooks,
             sessions,
+            audit,
             Tenant);
+
 
         return new MunariumKernel(provider, database, host, builder, catalogue, facts, operations, shapes, audit);
     }

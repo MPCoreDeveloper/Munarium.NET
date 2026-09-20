@@ -35,17 +35,18 @@ public static class MunariumEndpoints
         // the contract asks for, or refuses by naming the rule that refused.
         app.MapPost(
             "/v1/access-tokens",
-            (
+            async (
                 WireAccessTokenRequest request,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var result = operations.IssueAccessToken(
+                var result = await operations.IssueAccessTokenAsync(
                     request,
                     MunariumKernel.AccessSecret,
-                    DateTimeOffset.UtcNow);
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
 
                 IResult answer = result switch
                 {

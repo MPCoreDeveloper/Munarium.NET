@@ -60,6 +60,7 @@ public sealed class MunariumOperations(
     ISourceStore evidenceBytes,
     IRunbookStore runbooks,
     ISessionStore sessions,
+    IAccessTokenAudit accessAudit,
     string tenant,
     IModelProvider? model = null,
     string modelId = "")
@@ -81,6 +82,9 @@ public sealed class MunariumOperations(
 
     /// <summary>The problem identifier a request without a usable capability answers with.</summary>
     public const string UnauthorizedProblem = "https://munarium.dev/problems/unauthorized";
+
+    /// <summary>The problem identifier a withdrawal naming something never issued answers with.</summary>
+    public const string UnknownAccessTokenProblem = "https://munarium.dev/problems/unknown-access-token";
     /// <summary>The problem identifier a document that is not the one declared answers with.</summary>
     public const string ContentHashMismatchProblem = "https://munarium.dev/problems/content-hash-mismatch";
 
@@ -205,6 +209,7 @@ public sealed class MunariumOperations(
     private readonly IndexCatalog _catalogue = catalogue ?? throw new ArgumentNullException(nameof(catalogue));
     private readonly IEvidenceStore _evidence = evidence ?? throw new ArgumentNullException(nameof(evidence));
     private readonly ISourceStore _evidenceBytes = evidenceBytes ?? throw new ArgumentNullException(nameof(evidenceBytes));
+    private readonly IAccessTokenAudit _accessAudit = accessAudit ?? throw new ArgumentNullException(nameof(accessAudit));
     private readonly string _tenant = string.IsNullOrWhiteSpace(tenant)
         ? throw new ArgumentException("The deployment's tenant must be named.", nameof(tenant))
         : tenant;
@@ -1559,11 +1564,13 @@ public sealed class MunariumOperations(
     /// <param name="request">What is asked for.</param>
     /// <param name="secret">The deployment secret to sign with.</param>
     /// <param name="now">The instant to issue at.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The capability, or why it could not be issued.</returns>
-    public WireAccessTokenResult IssueAccessToken(
+    public async ValueTask<WireAccessTokenResult> IssueAccessTokenAsync(
         WireAccessTokenRequest request,
-        ReadOnlySpan<byte> secret,
-        DateTimeOffset now)
+        ReadOnlyMemory<byte> secret,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -1588,8 +1595,14 @@ public sealed class MunariumOperations(
                 now,
                 request.LifetimeSeconds > 0 ? TimeSpan.FromSeconds(request.LifetimeSeconds) : null);
 
+            // Recorded before it is handed out, and deliberately not best-effort: a capability the audit does not know
+            // about cannot be withdrawn, so an issuance that cannot be recorded is an issuance that failed.
+            await _accessAudit
+                .RecordAsync(IssuedCapability.FromClaims(capability), cancellationToken)
+                .ConfigureAwait(false);
+
             return new WireAccessToken(
-                AccessTokens.Mint(secret, capability),
+                AccessTokens.Mint(secret.Span, capability),
                 capability.TokenId,
                 capability.ExpiresAt);
         }
@@ -1604,6 +1617,63 @@ public sealed class MunariumOperations(
         }
     }
 
+    /// <summary>Lists the capabilities this deployment issued, newest first.</summary>
+    /// <remarks>
+    /// Never a token: what is held is an identity and the claims it carried. A deployment reading this is asking who was
+    /// given what, which is a question about its own records and not about governance's.
+    /// </remarks>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The audit.</returns>
+    public async ValueTask<WireAccessTokenAuditList> ListAccessTokensAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var rows = await _accessAudit.ListAsync(_tenant, cancellationToken).ConfigureAwait(false);
+
+        return new WireAccessTokenAuditList([.. rows.Select(Audited)]);
+    }
+
+    /// <summary>Withdraws a capability, so that verification refuses it from here on.</summary>
+    /// <remarks>
+    /// Idempotent by the store's own rule: withdrawing one that is already withdrawn answers with the instant it first
+    /// happened, because an operator acting on a stale list has done nothing new.
+    /// </remarks>
+    /// <param name="tokenId">The capability's identity.</param>
+    /// <param name="now">The instant to withdraw at.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The row as it now stands, or a problem when no such capability was issued.</returns>
+    public async ValueTask<WireAccessTokenRevocationResult> RevokeAccessTokenAsync(
+        string tokenId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default)
+    {
+        var withdrawn = await _accessAudit
+            .RevokeAsync(_tenant, tokenId ?? string.Empty, now.ToUnixTimeSeconds(), cancellationToken)
+            .ConfigureAwait(false);
+
+        return withdrawn is null
+            ? new WireProblem(
+                UnknownAccessTokenProblem,
+                "No capability with that identity was issued by this deployment.",
+                Status: 404,
+                ExpectedHead: 0,
+                ActualHead: 0)
+            : Audited(withdrawn);
+    }
+
+    /// <summary>Reads a stored row as the shape the contract carries.</summary>
+    /// <param name="row">The row.</param>
+    /// <returns>The wire shape.</returns>
+    private static WireAccessTokenAudit Audited(IssuedCapability row) => new(
+        row.TokenId,
+        row.Subject,
+        row.Tenant,
+        row.Level,
+        row.Compartments,
+        row.Scopes,
+        row.Runbooks,
+        row.IssuedAt,
+        row.ExpiresAt,
+        row.RevokedAt);
     /// <summary>
     /// Ingests a document: the bytes are stored, the row is recorded, and the text is indexed.
     /// </summary>

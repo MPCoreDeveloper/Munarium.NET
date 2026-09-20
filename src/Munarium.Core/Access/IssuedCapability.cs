@@ -41,6 +41,31 @@ public sealed record IssuedCapability
     /// <summary>Gets a value indicating whether it has been withdrawn.</summary>
     public bool Revoked => RevokedAt is not null;
 
+    /// <summary>Reads issued claims as the row the audit keeps.</summary>
+    /// <remarks>
+    /// The mirror of <see cref="ToClaims"/>, and the reason both exist: what is recorded and what is signed have to be
+    /// the same claims, or a withdrawal would name a capability that differs from the one in the token.
+    /// </remarks>
+    /// <param name="claims">The claims as issued.</param>
+    /// <returns>The row.</returns>
+    public static IssuedCapability FromClaims(AccessClaims claims)
+    {
+        ArgumentNullException.ThrowIfNull(claims);
+
+        return new IssuedCapability
+        {
+            TokenId = claims.TokenId,
+            Tenant = claims.Tenant,
+            Subject = claims.Subject,
+            Level = claims.Level,
+            Compartments = claims.Compartments,
+            Scopes = claims.Scopes,
+            Runbooks = claims.Runbooks,
+            IssuedAt = claims.IssuedAt,
+            ExpiresAt = claims.ExpiresAt,
+        };
+    }
+
     /// <summary>Reads an issued row back as claims, so a stored row and a signed token describe the same thing.</summary>
     /// <returns>The claims.</returns>
     public AccessClaims ToClaims() => new()

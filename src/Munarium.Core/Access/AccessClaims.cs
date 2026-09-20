@@ -4,7 +4,7 @@ using Munarium.Evidence;
 
 /// <summary>The scopes a capability can carry.</summary>
 /// <remarks>
-/// The original names four, and the distinctions are the point rather than the names: a reconciliation service must not be
+/// The original names four and this port one more, and the distinctions are the point rather than the names: a reconciliation service must not be
 /// able to upload documents, and an uploader must not be able to write governance findings. A scope says which plane a
 /// capability participates in; level and compartments still say how far it reaches within it.
 /// </remarks>
@@ -26,6 +26,15 @@ public static class AccessScope
     /// under-cleared for an artifact is refused exactly as any other principal is.
     /// </remarks>
     public const string Evidence = "evidence";
+
+    /// <summary>Reading the issuance audit and withdrawing a capability.</summary>
+    /// <remarks>
+    /// This port's own, and the one scope the original has no name for: it names four, and the surfaces that read the audit
+    /// and end a capability are additions here. It is a scope of its own rather than a corner of a wider one, because
+    /// seeing which credentials exist and withdrawing one is administrative work - not reading governance's findings, and
+    /// above all not uploading documents.
+    /// </remarks>
+    public const string Access = "access";
 }
 
 /// <summary>The claim set a capability token carries.</summary>
