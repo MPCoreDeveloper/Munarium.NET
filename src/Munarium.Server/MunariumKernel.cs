@@ -64,15 +64,13 @@ public sealed class MunariumKernel : IAsyncDisposable
     /// <summary>Gets the gate a request is resolved through.</summary>
     /// <remarks>
     /// Authorization is off unless a deployment turns it on, which is the original default and the reason every test
-    /// passes with no capability presented.
+    /// passes with no capability presented. The gate belongs to a kernel rather than to the process, because it consults
+    /// this deployment's audit: a withdrawal recorded in one store must not decide anything about another's requests.
     /// </remarks>
-    public static AccessGate Gate { get; } = new(
-        AccessSecret,
-        string.Equals(
-            Environment.GetEnvironmentVariable("MUNARIUM_REQUIRE_AUTHORIZATION"),
-            "true",
-            StringComparison.OrdinalIgnoreCase),
-        Principal);
+    public AccessGate Gate { get; }
+
+    /// <summary>Gets where issued capabilities and their withdrawals are recorded.</summary>
+    public IAccessTokenAudit AccessAudit { get; }
 
     /// <summary>
     /// The index version a deployment starts by serving.
@@ -102,7 +100,8 @@ public sealed class MunariumKernel : IAsyncDisposable
         IndexCatalog catalogue,
         FactLedger facts,
         MunariumOperations operations,
-        ShapeRegistry shapes)
+        ShapeRegistry shapes,
+        IAccessTokenAudit audit)
     {
         _provider = provider;
         _database = database;
@@ -112,6 +111,17 @@ public sealed class MunariumKernel : IAsyncDisposable
         _facts = facts;
         Operations = operations;
         Shapes = shapes;
+        AccessAudit = audit;
+
+        // Authorization is a deployment property: read once here rather than per request, so no request can turn it on.
+        Gate = new AccessGate(
+            AccessSecret,
+            string.Equals(
+                Environment.GetEnvironmentVariable("MUNARIUM_REQUIRE_AUTHORIZATION"),
+                "true",
+                StringComparison.OrdinalIgnoreCase),
+            Principal,
+            audit);
     }
 
     /// <summary>Gets the one implementation behind both transports.</summary>
@@ -193,6 +203,10 @@ public sealed class MunariumKernel : IAsyncDisposable
         // write that was recorded is remembered.
         var idempotency = new SharpCoreDbIdempotencyStore(database);
 
+        // Where an issuance is recorded and a withdrawal is kept. A table, because a deny-list a restart forgets is not a
+        // deny-list - and a deployment would never say that it had forgotten one.
+        var audit = new SharpCoreDbAccessTokenAudit(database);
+
         // The sealed evidence plane: the artifacts, their single-use grants and their audit, in tables of their own. Its
         // bytes share the source store the documents live in and go under the reserved `evidence/` keyspace, which
         // document ingress refuses - so a document can never collide with an artifact.
@@ -244,7 +258,7 @@ public sealed class MunariumKernel : IAsyncDisposable
             sessions,
             Tenant);
 
-        return new MunariumKernel(provider, database, host, builder, catalogue, facts, operations, shapes);
+        return new MunariumKernel(provider, database, host, builder, catalogue, facts, operations, shapes, audit);
     }
 
     /// <summary>

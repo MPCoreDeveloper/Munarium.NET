@@ -22,8 +22,9 @@ public static class MunariumEndpoints
 {
     /// <summary>Maps the contract's operations.</summary>
     /// <param name="app">The application to map onto.</param>
+    /// <param name="kernel">The deployment whose gate and audit the planes resolve through.</param>
     /// <returns>The endpoint route builder, for chaining.</returns>
-    public static IEndpointRouteBuilder MapMunarium(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapMunarium(this IEndpointRouteBuilder app, MunariumKernel kernel)
     {
         ArgumentNullException.ThrowIfNull(app);
 
@@ -176,7 +177,7 @@ public static class MunariumEndpoints
             {
                 // The findings read is governance: what the gates decided is part of the policy, so reaching it takes
                 // the findings scope, which is deliberately not the ingest scope.
-                var access = await MunariumKernel.Gate.ResolveAsync(
+                var access = await kernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Findings,
                     DateTimeOffset.UtcNow,
@@ -415,7 +416,7 @@ public static class MunariumEndpoints
             {
                 // The ingestion plane carries the ingest scope, and the refusal comes before anything is stored: a caller
                 // that may not upload must not be able to fill a deployment store or a bill.
-                var access = await MunariumKernel.Gate.ResolveAsync(
+                var access = await kernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Ingest,
                     DateTimeOffset.UtcNow,
@@ -635,7 +636,7 @@ public static class MunariumEndpoints
             {
                 // The session plane carries the query scope, and the capability decides who the session belongs to: a
                 // caller cannot open a conversation as somebody else by forgetting to say who it is.
-                var access = await MunariumKernel.Gate.ResolveAsync(
+                var access = await kernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Query,
                     DateTimeOffset.UtcNow,
@@ -799,7 +800,7 @@ public static class MunariumEndpoints
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
-                var access = await MunariumKernel.Gate.ResolveAsync(
+                var access = await kernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Evidence,
                     DateTimeOffset.UtcNow,
@@ -852,7 +853,7 @@ public static class MunariumEndpoints
                         statusCode: 400);
                 }
 
-                var access = await MunariumKernel.Gate.ResolveAsync(
+                var access = await kernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Evidence,
                     DateTimeOffset.UtcNow,
@@ -890,7 +891,7 @@ public static class MunariumEndpoints
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
-                var access = await MunariumKernel.Gate.ResolveAsync(
+                var access = await kernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Evidence,
                     DateTimeOffset.UtcNow,
@@ -932,7 +933,7 @@ public static class MunariumEndpoints
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
-                var access = await MunariumKernel.Gate.ResolveAsync(
+                var access = await kernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Evidence,
                     DateTimeOffset.UtcNow,
@@ -975,7 +976,7 @@ public static class MunariumEndpoints
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
             {
-                var access = await MunariumKernel.Gate.ResolveAsync(
+                var access = await kernel.Gate.ResolveAsync(
                     context.Request.Headers.Authorization.ToString(),
                     AccessScope.Evidence,
                     DateTimeOffset.UtcNow,

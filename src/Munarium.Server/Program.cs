@@ -45,7 +45,7 @@ foreach (var recovery in (await kernel.RecoverAsync()).Where(recovery => recover
 
 var app = builder.Build();
 
-app.MapMunarium();
+app.MapMunarium(kernel);
 app.MapGrpcService<MunariumGrpcService>();
 
 await app.RunAsync();
