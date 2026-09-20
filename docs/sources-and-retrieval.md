@@ -91,3 +91,26 @@ One thing stays in the process: the lexical leg. `FullTextIndex` is an in-proces
 was found anywhere in the engine (measured, by searching the checkout). The chunk text is in the table, so the lexical
 index is rebuilt from it at startup - no extraction and no embedding, which is where the cost was. If the engine ever grows
 a persisted full-text index, this is the one place that would use it.
+### What the engine split means for this port
+
+Reading the checkout rather than the package documentation sharpened three things.
+
+A vector column is real and a table accepts it: `Table.cs` resolves a type whose name starts with `VECTOR`, the DDL parser
+does the same, and a value parses through `ParseVectorValue`, so chunk text and its embedding can sit in one row.
+
+The query path is split on purpose. The core DML leaves vector optimization to the extension module - its own
+`TryExecuteVectorOptimized` returns null - and `SharpCoreDB.VectorSearch` is where the work happens: `VectorSearchExtensions`
+registers it, `VectorIndexManager` owns the indexes, `VectorQueryOptimizer` is the hook the core calls, and
+`VectorTypeProvider`, `VectorFunctionProvider` and `VectorSerializer` carry the type, the functions and the bytes. That is
+not a gap; it is where an optional feature belongs.
+
+So there are two routes and neither needs the engine changed. The first is the one this port takes next: chunks and
+embeddings as rows, loaded into the in-process index at startup, which removes extraction and embedding from a restart -
+the two costs that actually matter - while a flat index rebuild is linear and cheap. The second is to let the module own
+the index through `CREATE VECTOR INDEX` and load the persisted one, which also removes the index build. It can be adopted
+without giving up this port fusion, because the module supplies the vector leg candidates and the envelope still records
+the ranking this port computed.
+
+The module also carries `Fusion/ReciprocalRankFusion.cs` and `Fusion/PoolMerge.cs`. This port fuses by rank itself, for a
+reason that still holds - the envelope records the ranking that decided the answer - so that stays as it is. It is noted
+here as a capability that exists rather than as a change to make.
