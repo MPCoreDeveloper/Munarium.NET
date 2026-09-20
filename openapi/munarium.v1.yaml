@@ -970,6 +970,35 @@ paths:
                 $ref: "#/components/schemas/AuthoringDraftList"
 
   /v1/authoring/drafts/{draft_id}:
+    delete:
+      operationId: DeleteAuthoringDraft
+      tags: [authoring]
+      summary: Remove a draft.
+      description: |
+        What an author does once the runbook is applied: the document is the authority and the conversation is spent. A
+        name that is not kept here is refused rather than answered as though it had been removed, because a caller that
+        believes it removed something that never existed has a wrong idea about what this deployment holds.
+      parameters:
+        - name: draft_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The draft name.
+      responses:
+        "200":
+          description: The draft that was removed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthoringDraftRemoved"
+        "404":
+          description: No draft by that name is kept here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
     get:
       operationId: GetAuthoringDraft
       tags: [authoring]
@@ -990,6 +1019,42 @@ paths:
                 $ref: "#/components/schemas/AuthoringDraft"
         "404":
           description: No draft by that name is kept here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/authoring/drafts/{draft_id}/validate:
+    post:
+      operationId: ValidateAuthoringDraft
+      tags: [authoring]
+      summary: Validate what a draft would apply, without applying it.
+      description: |
+        The findings a deployment would refuse to apply on, read before anything is applied. Findings rather than
+        refusals: an author editing a runbook wants the whole list, and a document with one questionable number in it is
+        still a document they may be about to fix.
+      parameters:
+        - name: draft_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The draft name.
+      responses:
+        "200":
+          description: The findings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthoringDraftValidation"
+        "404":
+          description: No draft by that name is kept here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The draft could not be built at all.
           content:
             application/json:
               schema:
@@ -3283,6 +3348,44 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AuthoringDraft"
+
+    ValidationFinding:
+      type: object
+      required: [severity, code, message, path]
+      properties:
+        severity:
+          type: string
+          description: error, warn or info. An error is what a deployment refuses to apply on.
+        code:
+          type: string
+        message:
+          type: string
+        path:
+          type: string
+
+    AuthoringDraftValidation:
+      type: object
+      required: [valid, findings, todos]
+      properties:
+        valid:
+          type: boolean
+          description: Whether nothing found is an error.
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationFinding"
+        todos:
+          type: array
+          description: What the draft still owes, from the same rules that would materialize it.
+          items:
+            type: string
+
+    AuthoringDraftRemoved:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
 
     AuthoringPattern:
       type: object

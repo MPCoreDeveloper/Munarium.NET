@@ -1,4 +1,4 @@
-# The operations the original declares, one per line: METHOD path.
+﻿# The operations the original declares, one per line: METHOD path.
 #
 # Source: D:\repos\MPCoreDeveloper\munarium\server\docs\api\openapi.json
 # Regenerate with: pwsh tools/spec-coverage.ps1

@@ -671,6 +671,46 @@ public static class MunariumEndpoints
                     .ListIndexVersionsAsync(collectionId, cancellationToken)
                     .ConfigureAwait(false));
 
+        app.MapPost(
+            "/v1/authoring/drafts/{draft_id}/validate",
+            async (
+                [FromRoute(Name = "draft_id")] string draftId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.ValidateDraftAsync(draftId, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireDraftValidation validation => TypedResults.Json(
+                        validation, WireJson.Default.WireDraftValidation),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapDelete(
+            "/v1/authoring/drafts/{draft_id}",
+            async (
+                [FromRoute(Name = "draft_id")] string draftId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.DeleteDraftAsync(draftId, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireAuthoringDraftRemoved removed => TypedResults.Json(
+                        removed, WireJson.Default.WireAuthoringDraftRemoved),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
         // The authoring drafts: what an author is in the middle of, with the questions its pattern asks and what is still
         // open. Read and write, and no decisions of its own - every rule it applies is the kernel own.
         app.MapPost(

@@ -60,6 +60,63 @@ public class AuthoringDraftTests
         Assert.Equal("vendor-security", listed.Drafts[0].Name);
     }
 
+    /// <summary>Validation reports what a draft would apply, and removal happens once.</summary>
+    [Fact]
+    public async Task AValidationReportsAndARemovalHappensOnce()
+    {
+        await using var kernel = MunariumKernel.Create(
+            Path.Combine(Path.GetTempPath(), $"Munarium_{Guid.NewGuid():N}"),
+            "munarium-drafts",
+            new ShapeRegistry([]));
+
+        // A draft with a pattern but no answers still has a document - a runbook full of placeholders - which is exactly
+        // what an author wants to read before they have answered anything.
+        Draft(await kernel.Operations.OpenDraftAsync(
+            new WireAuthoringDraftRequest("vendor-security", "ask-the-corpus")));
+
+        var validation = Validated(await kernel.Operations.ValidateDraftAsync("vendor-security"));
+
+        // Validity is what the findings say and nothing else: a deployment that refused on a finding it never reported, or
+        // reported one it did not refuse on, would leave an author guessing at what it wanted.
+        Assert.Equal(!validation.Findings.Any(finding => finding.Severity == "error"), validation.Valid);
+
+        Assert.All(
+            validation.Findings,
+            finding => Assert.True(
+                finding.Severity is "error" or "warn" or "info",
+                $"a finding of severity '{finding.Severity}' is not one this contract carries"));
+
+        // What it still owes comes from the same rules that would materialize it, so an unanswered draft owes something.
+        Assert.NotEmpty(validation.Todos);
+
+        // A draft with no pattern is still a document: a runbook with nothing in it beyond its name, which validates
+        // because there is nothing in it to be wrong. Refusing it would refuse the state every draft starts in.
+        Draft(await kernel.Operations.OpenDraftAsync(new WireAuthoringDraftRequest("no-pattern")));
+
+        // The helper enforces the type: a union boxes as itself, so IsType against a member does not work, and a pattern
+        // match is what reads one.
+        Assert.NotNull(Validated(await kernel.Operations.ValidateDraftAsync("no-pattern")));
+
+        // A draft that is not kept here is not validated as though it were empty: it is refused.
+        Assert.True(await kernel.Operations.ValidateDraftAsync("nothing") is WireProblem { Status: 404 });
+
+        // Removal happens once: a second removal is not a second removal, it is a caller with a wrong idea about what
+        // this deployment holds.
+        Assert.True(
+            await kernel.Operations.DeleteDraftAsync("vendor-security") is WireAuthoringDraftRemoved removed
+            && removed.Name == "vendor-security");
+        Assert.True(await kernel.Operations.ReadDraftAsync("vendor-security") is WireProblem { Status: 404 });
+        Assert.True(await kernel.Operations.DeleteDraftAsync("vendor-security") is WireProblem { Status: 404 });
+    }
+
+    /// <summary>Reads a validation result, insisting it is one.</summary>
+    /// <param name="result">The result.</param>
+    /// <returns>The validation.</returns>
+    private static WireDraftValidation Validated(WireDraftValidationResult result) =>
+        result is WireDraftValidation validation
+            ? validation
+            : throw new InvalidOperationException($"the validation was refused: {result}");
+
     /// <summary>Reads a draft result, insisting it is one.</summary>
     /// <param name="result">The result.</param>
     /// <returns>The draft.</returns>
@@ -68,3 +125,4 @@ public class AuthoringDraftTests
             ? draft
             : throw new InvalidOperationException($"the draft was refused: {result}");
 }
+

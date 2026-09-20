@@ -360,6 +360,122 @@ public sealed class MunariumOperations(
             ? null
             : await _authoring.FindAsync(name.Trim(), cancellationToken).ConfigureAwait(false);
 
+    /// <summary>Validates the documents a draft would apply, without applying anything.</summary>
+    /// <remarks>
+    /// The findings a deployment would refuse to apply on, read before anything is applied. An author who had to apply a
+    /// document to find out what is wrong with it would be applying documents to find out, and the first thing they would
+    /// find out is that their turn failed in front of a user.
+    /// </remarks>
+    /// <param name="name">The draft name.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The findings, or why the draft could not be built at all.</returns>
+    public async ValueTask<WireDraftValidationResult> ValidateDraftAsync(
+        string name,
+        CancellationToken cancellationToken = default)
+    {
+        if (await StoredAsync(name, cancellationToken).ConfigureAwait(false) is not { } draft)
+        {
+            return UnknownDraft(name);
+        }
+
+        var (set, refused) = AuthoringMaterializer.Build(
+            draft.Name,
+            AuthoringCatalog.Pattern(draft.PatternId),
+            draft.Answers);
+
+        if (set is null)
+        {
+            return InvalidDraft(draft.Name, refused);
+        }
+
+        if (Runbook(set) is not { } yaml)
+        {
+            return InvalidDraft(draft.Name, "the materialized set carries no runbook");
+        }
+
+        var (document, unreadable) = RunbookReader.Read(yaml);
+
+        if (document is null)
+        {
+            return InvalidDraft(draft.Name, unreadable);
+        }
+
+        var reported = RunbookValidation.Validate(document);
+
+        return new WireDraftValidation(
+            RunbookValidation.IsValid(reported),
+            [.. reported.Select(Finding)],
+            set.Todos);
+    }
+
+    /// <summary>Removes a draft.</summary>
+    /// <remarks>
+    /// What an author does once the runbook is applied: a draft was a conversation, and when the document is applied the
+    /// document is the authority and the conversation is spent. Nothing else refers to a draft, which is why removing one
+    /// needs no confirmation - unlike a runbook version, which sessions pin by name and which therefore takes two passes.
+    /// </remarks>
+    /// <param name="name">The draft name.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What was removed, or why nothing was.</returns>
+    public async ValueTask<WireDraftRemovalResult> DeleteDraftAsync(
+        string name,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+
+        var wanted = name.Trim();
+
+        return wanted.Length > 0
+            && await _authoring.RemoveAsync(wanted, cancellationToken).ConfigureAwait(false)
+            ? new WireAuthoringDraftRemoved(wanted)
+            : UnknownDraft(wanted);
+    }
+
+    /// <summary>The problem identifier a draft that cannot be built answers with.</summary>
+    public const string InvalidAuthoringDraftProblem = "https://munarium.dev/problems/authoring-draft-invalid";
+
+    /// <summary>The problem a draft that cannot be built answers with.</summary>
+    /// <remarks>
+    /// A conflict rather than a bad request: what the caller sent was a name that exists, and what refuses it is the state
+    /// the document would be in - which is why the same request may succeed once the interview is answered.
+    /// </remarks>
+    /// <param name="name">The draft name.</param>
+    /// <param name="why">Why it could not be built.</param>
+    /// <returns>The problem.</returns>
+    private static WireProblem InvalidDraft(string name, string? why) => new(
+        InvalidAuthoringDraftProblem,
+        $"The draft '{name}' could not be built: {why ?? "it names nothing that can be built"}",
+        Status: 409,
+        ExpectedHead: 0,
+        ActualHead: 0);
+
+    /// <summary>Finds the one runbook a materialized set would apply.</summary>
+    /// <remarks>
+    /// The YAML and not the shape half: a runbook is what a deployment reads, and it is the runbook document that carries
+    /// what the interview was answered. A set that carries no runbook is refused by the caller rather than validated as
+    /// though nothing were wrong with it.
+    /// </remarks>
+    /// <param name="set">The materialized set.</param>
+    /// <returns>The runbook's YAML, or <see langword="null"/> when the set carries none.</returns>
+    private static string? Runbook(Materialized set) => set.Documents
+        .Where(entry => entry.Key.EndsWith(".yaml", StringComparison.Ordinal))
+        .Select(entry => entry.Value)
+        .FirstOrDefault();
+
+    /// <summary>Reads one finding as the contract carries it.</summary>
+    /// <param name="finding">The finding.</param>
+    /// <returns>The wire shape.</returns>
+    private static WireValidationFinding Finding(ValidationFinding finding) => new(
+        finding.Severity switch
+        {
+            Munarium.Runbooks.Severity.Error => "error",
+            Munarium.Runbooks.Severity.Warn => "warn",
+            _ => "info",
+        },
+        finding.Code,
+        finding.Message,
+        finding.Path);
+
     /// <summary>The problem a draft that is not kept here answers with.</summary>
     /// <param name="name">The name asked for.</param>
     /// <returns>The problem.</returns>

@@ -138,6 +138,43 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         };
     }
 
+    /// <inheritdoc />
+    public override async Task<ValidateAuthoringDraftResponse> ValidateAuthoringDraftAsync(
+        ValidateAuthoringDraftRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        return await _operations
+            .ValidateDraftAsync(request.DraftId, context.CancellationToken)
+            .ConfigureAwait(false) switch
+        {
+            WireDraftValidation validation => new ValidateAuthoringDraftResponse { Data = Validation(validation) },
+            WireProblem problem => throw Problem(problem),
+            var other => throw new InvalidOperationException($"unexpected validation result: {other}"),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<DeleteAuthoringDraftResponse> DeleteAuthoringDraftAsync(
+        DeleteAuthoringDraftRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        return await _operations
+            .DeleteDraftAsync(request.DraftId, context.CancellationToken)
+            .ConfigureAwait(false) switch
+        {
+            WireAuthoringDraftRemoved removed => new DeleteAuthoringDraftResponse
+            {
+                Data = new AuthoringDraftRemoved { Name = removed.Name },
+            },
+            WireProblem problem => throw Problem(problem),
+            var other => throw new InvalidOperationException($"unexpected removal result: {other}"),
+        };
+    }
+
     /// <summary>Carries a draft as the contract carries it.</summary>
     /// <param name="draft">The draft.</param>
     /// <returns>The message.</returns>
@@ -176,6 +213,27 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         Default = question.Default ?? string.Empty,
         Choices = { question.Choices },
         MapsTo = question.MapsTo,
+    };
+
+    /// <summary>Carries a validation as the contract carries it.</summary>
+    /// <param name="validation">The validation.</param>
+    /// <returns>The message.</returns>
+    private static AuthoringDraftValidation Validation(WireDraftValidation validation) => new()
+    {
+        Valid = validation.Valid,
+        Findings = { validation.Findings.Select(Finding) },
+        Todos = { validation.Todos },
+    };
+
+    /// <summary>Carries one finding as the contract carries it.</summary>
+    /// <param name="finding">The finding.</param>
+    /// <returns>The message.</returns>
+    private static ValidationFinding Finding(WireValidationFinding finding) => new()
+    {
+        Severity = finding.Severity,
+        Code = finding.Code,
+        Message = finding.Message,
+        Path = finding.Path,
     };
 
     /// <summary>Carries one answer as the contract carries it.</summary>

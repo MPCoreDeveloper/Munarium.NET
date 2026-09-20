@@ -249,6 +249,32 @@ public sealed record WireAuthoringDraftList(IReadOnlyList<WireAuthoringDraft> Dr
 /// <summary>A draft, or why it could not be opened, read or answered.</summary>
 public readonly union WireAuthoringDraftResult(WireAuthoringDraft, WireProblem);
 
+/// <summary>One thing a materialized runbook got wrong, or should think about.</summary>
+/// <param name="Severity">How much it matters: <c>error</c>, <c>warn</c> or <c>info</c>.</param>
+/// <param name="Code">The stable dotted code, such as <c>steps.cutover-before-build</c>.</param>
+/// <param name="Message">What a person reads.</param>
+/// <param name="Path">Where it is, as a YAML-ish path such as <c>spec.collections[1].name</c>.</param>
+public sealed record WireValidationFinding(string Severity, string Code, string Message, string Path);
+
+/// <summary>What a deployment found in the documents a draft would apply.</summary>
+/// <param name="Valid">Whether nothing found is an error, which is what a deployment refuses to apply on.</param>
+/// <param name="Findings">The findings, in the order the checks ran.</param>
+/// <param name="Todos">What the draft still owes, from the same rules that would materialize it.</param>
+public sealed record WireDraftValidation(
+    bool Valid,
+    IReadOnlyList<WireValidationFinding> Findings,
+    IReadOnlyList<string> Todos);
+
+/// <summary>The answer to a validation: the findings, or why the draft could not be built at all.</summary>
+public readonly union WireDraftValidationResult(WireDraftValidation, WireProblem);
+
+/// <summary>What removing a draft answered.</summary>
+/// <param name="Name">The draft that was removed.</param>
+public sealed record WireAuthoringDraftRemoved(string Name);
+
+/// <summary>The answer to a removal: what was removed, or why nothing was.</summary>
+public readonly union WireDraftRemovalResult(WireAuthoringDraftRemoved, WireProblem);
+
 /// <summary>A memory version: the identity claims are written under, and the node it occupies.</summary>
 /// <param name="VersionId">The version's identity, which is also the stream its claims go to.</param>
 /// <param name="ParentVersionId">The version it descends from, empty when it starts a lineage.</param>
