@@ -1,5 +1,7 @@
 namespace Munarium.Server;
 
+using Munarium.Access;
+
 using Grpc.Core;
 using Munarium.Wire;
 using Munarium.Wire.Generated;
@@ -24,9 +26,49 @@ using Evidence = Munarium.Evidence;
 /// only about encoding.
 /// </remarks>
 /// <param name="operations">The one implementation behind every transport.</param>
-internal sealed class MunariumGrpcService(MunariumOperations operations) : MunariumServiceBase
+/// <param name="kernel">The deployment whose gate every plane resolves through.</param>
+internal sealed class MunariumGrpcService(MunariumOperations operations, MunariumKernel kernel) : MunariumServiceBase
 {
     private readonly MunariumOperations _operations = operations ?? throw new ArgumentNullException(nameof(operations));
+    private readonly MunariumKernel _kernel = kernel ?? throw new ArgumentNullException(nameof(kernel));
+
+    /// <summary>Resolves the caller's principal through the gate, exactly as the JSON surface does.</summary>
+    /// <remarks>
+    /// Both transports resolve here rather than each deciding for itself: a gRPC call carries the same bearer metadata,
+    /// and a plane that served the deployment principal while the JSON one demanded a capability would be one deployment
+    /// answering two ways. That asymmetry was here - the evidence and session calls resolved the fallback directly - and
+    /// the reason is recorded rather than explained away.
+    /// </remarks>
+    /// <param name="context">The call, whose metadata carries the capability.</param>
+    /// <param name="scope">The scope the plane requires.</param>
+    /// <returns>The principal.</returns>
+    private async ValueTask<Munarium.Evidence.EvidencePrincipal> PrincipalAsync(ServerCallContext context, string scope)
+    {
+        var access = await _kernel
+            .Gate.ResolveAsync(Authorization(context), scope, DateTimeOffset.UtcNow, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        if (access is Munarium.Evidence.EvidencePrincipal principal)
+        {
+            return principal;
+        }
+
+        var reason = access is AccessRefused refused ? refused.Reason : AccessGate.MissingReason;
+
+        throw Problem(new WireProblem(
+            MunariumOperations.UnauthorizedProblem,
+            reason,
+            Status: 401,
+            ExpectedHead: 0,
+            ActualHead: 0));
+    }
+
+    /// <summary>Reads the bearer capability out of a call's metadata.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The header's value, or <see langword="null"/> when none was sent.</returns>
+    private static string? Authorization(ServerCallContext context) =>
+        context.RequestHeaders.FirstOrDefault(entry =>
+            string.Equals(entry.Key, "authorization", StringComparison.OrdinalIgnoreCase))?.Value;
 
     /// <inheritdoc />
     public override Task<GetHealthResponse> GetHealthAsync(GetHealthRequest request, ServerCallContext context) =>
@@ -645,6 +687,7 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
 
     private static StatusCode CodeOf(int status) => status switch
     {
+        401 => StatusCode.Unauthenticated,
         400 => StatusCode.InvalidArgument,
         404 => StatusCode.NotFound,
         409 => StatusCode.Aborted,
@@ -663,7 +706,7 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         ServerCallContext context)
     {
         var result = await _operations
-            .CreateSessionAsync(request.Name, MunariumKernel.Principal, context.CancellationToken)
+            .CreateSessionAsync(request.Name, await PrincipalAsync(context, AccessScope.Query), context.CancellationToken)
             .ConfigureAwait(false);
 
         return result switch
@@ -1000,7 +1043,7 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         var result = await _operations
             .SealEvidenceAsync(
                 new WireSealEvidenceRequest(EvidenceGrpcMapping.ToEvidence(declared), request.Body.BytesBase64),
-                MunariumKernel.Principal,
+                await PrincipalAsync(context, AccessScope.Evidence),
                 context.CancellationToken)
             .ConfigureAwait(false);
 
@@ -1028,7 +1071,7 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
 
         var refusal = await _operations
             .PutEvidenceBytesAsync(
-                MunariumKernel.Principal,
+                await PrincipalAsync(context, AccessScope.Evidence),
                 request.EvidenceId,
                 request.Grant,
                 bytes,
@@ -1044,7 +1087,7 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         ServerCallContext context)
     {
         var result = await _operations
-            .CommitEvidenceAsync(MunariumKernel.Principal, request.EvidenceId, context.CancellationToken)
+            .CommitEvidenceAsync(await PrincipalAsync(context, AccessScope.Evidence), request.EvidenceId, context.CancellationToken)
             .ConfigureAwait(false);
 
         return result switch
@@ -1060,7 +1103,7 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         ServerCallContext context)
     {
         var result = await _operations
-            .ReadEvidenceManifestAsync(MunariumKernel.Principal, request.EvidenceId, context.CancellationToken)
+            .ReadEvidenceManifestAsync(await PrincipalAsync(context, AccessScope.Evidence), request.EvidenceId, context.CancellationToken)
             .ConfigureAwait(false);
 
         return result switch

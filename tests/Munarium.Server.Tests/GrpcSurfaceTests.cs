@@ -36,6 +36,25 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
             Assert.Equal(MunariumOperations.Contract, response.Data.Contract);
         });
 
+    /// <summary>A gRPC call is resolved through the same gate the JSON surface uses.</summary>
+    /// <remarks>
+    /// The measurement behind a claim both transports make: the evidence and session calls here used to resolve the
+    /// deployment's fallback principal directly, so a deployment that required a capability enforced it on one transport
+    /// and not the other. A call presenting something that is not a capability is refused before the operation runs, which
+    /// is why the runbook named here never has to exist.
+    /// </remarks>
+    [Fact]
+    public async Task TheGrpcSurfaceResolvesTheAbilityItIsPresented() =>
+        await WithClient(async client =>
+        {
+            var headers = new Metadata { { "authorization", "Bearer not-a-capability" } };
+
+            var refused = await Assert.ThrowsAsync<RpcException>(async () =>
+                await client.CreateSessionAsync(new CreateSessionRequest { Name = "any" }, headers));
+
+            Assert.Equal(StatusCode.Unauthenticated, refused.StatusCode);
+        });
+
     [Fact]
     public async Task AClaimAndTheFactsItProducedTravelOverGrpc() =>
         await WithClient(async client =>

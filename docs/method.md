@@ -30,3 +30,20 @@ Reading the original is not only for refuting claims. It is also where the shape
 than invented: the two-forms-one-route idiom (a route told apart by which form is present), the escalation-only
 document-intelligence contract, a source row that records how extraction went, and an extractor set that joins an index
 version's identity. When a port-side shape is still uncertain, the original is where it gets settled.
+
+## What the gate actually checks
+
+This port's own checking had a hole in it, and it was found the way the table above describes: by measuring instead of
+believing.
+
+A commit went out whose `Munarium.Server` build failed locally with four `CA2016` errors - a cancellation token a plane
+never forwarded - and CI reported success on that exact commit. Explaining it took three measurements: the CI log for
+that job carries the same diagnostic **sixteen times, as a warning**; the job's log never mentions the property that
+turns warnings into errors; and the local run on the same tree, the same pinned SDK and the same solution fails. The
+conclusion is that the Sonar-wrapped build step reports analyzer findings without failing on them, while
+`Directory.Build.props` sets `TreatWarningsAsErrors` only when nothing has set it already.
+
+What that changes here: **a green CI is evidence that the solution compiles and that the tests pass - it is not evidence
+of a warning-free build.** `dotnet test -c Release` on a developer's machine is the stricter gate, and it is the result
+to quote. The lesson is the one the five corrections above taught, one layer up: the pipeline had been treated as the
+measurement, and what it measures had not been read.
