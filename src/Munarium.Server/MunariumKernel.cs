@@ -89,6 +89,7 @@ public sealed class MunariumKernel : IAsyncDisposable
     private readonly IndexBuilder _builder;
     private readonly IndexCatalog _catalogue;
     private readonly FactLedger _facts;
+    private readonly IIndexChunkStore _chunks;
 
     // Internal rather than public: a kernel is composed through Create, so a caller cannot build one
     // without the ledger, the shapes and the index host that make it work.
@@ -101,7 +102,8 @@ public sealed class MunariumKernel : IAsyncDisposable
         FactLedger facts,
         MunariumOperations operations,
         ShapeRegistry shapes,
-        IAccessTokenAudit audit)
+        IAccessTokenAudit audit,
+        IIndexChunkStore chunks)
     {
         _provider = provider;
         _database = database;
@@ -109,6 +111,7 @@ public sealed class MunariumKernel : IAsyncDisposable
         _builder = builder;
         _catalogue = catalogue;
         _facts = facts;
+        _chunks = chunks;
         Operations = operations;
         Shapes = shapes;
         AccessAudit = audit;
@@ -205,6 +208,10 @@ public sealed class MunariumKernel : IAsyncDisposable
 
         // Where an issuance is recorded and a withdrawal is kept. A table, because a deny-list a restart forgets is not a
         // deny-list - and a deployment would never say that it had forgotten one.
+        // Where an index version chunks are kept, so a deployment that comes back loads them instead of reading the
+        // corpus again. One table per version, named from a digest of it.
+        var chunkStore = new SharpCoreDbIndexChunkStore(database);
+
         var audit = new SharpCoreDbAccessTokenAudit(database);
 
         // The sealed evidence plane: the artifacts, their single-use grants and their audit, in tables of their own. Its
@@ -229,7 +236,8 @@ public sealed class MunariumKernel : IAsyncDisposable
             new EmbedderRef(
                 ProviderId.Local.Value,
                 DeterministicEmbeddingProvider.ModelName,
-                EmbeddingDimensions));
+                EmbeddingDimensions),
+            chunkStore: chunkStore);
 
         var operations = new MunariumOperations(
             storage,
@@ -260,7 +268,7 @@ public sealed class MunariumKernel : IAsyncDisposable
             Tenant);
 
 
-        return new MunariumKernel(provider, database, host, builder, catalogue, facts, operations, shapes, audit);
+        return new MunariumKernel(provider, database, host, builder, catalogue, facts, operations, shapes, audit, chunkStore);
     }
 
     /// <summary>
@@ -287,6 +295,19 @@ public sealed class MunariumKernel : IAsyncDisposable
 
         foreach (var version in live)
         {
+            // A version whose chunks were persisted comes back as a read: no extraction, no embedding, no second pass
+            // over the corpus. Only one with nothing persisted is built again, which is what a deployment does once.
+            var persisted = await _chunks
+                .ReadAsync(version.Id, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (await _builder.LoadAsync(version, persisted, cancellationToken).ConfigureAwait(false) is { } loaded)
+            {
+                recovered.Add(new IndexRecovery(version.CollectionId, loaded.Version, Refusal: null, Loaded: true));
+
+                continue;
+            }
+
             var outcome = await _builder
                 .BuildAsync(
                     new IndexBuildPlan
@@ -327,4 +348,5 @@ public sealed class MunariumKernel : IAsyncDisposable
 /// <param name="CollectionId">The collection whose version was rebuilt.</param>
 /// <param name="IndexVersionId">The version that serves now: the same one, or the new one the corpus rebuilt into.</param>
 /// <param name="Refusal">Why nothing serves, or <see langword="null"/> when the rebuild landed.</param>
-public sealed record IndexRecovery(string CollectionId, string IndexVersionId, string? Refusal);
+/// <param name="Loaded">Whether it came back from persisted chunks rather than being built again.</param>
+public sealed record IndexRecovery(string CollectionId, string IndexVersionId, string? Refusal, bool Loaded = false);

@@ -222,18 +222,71 @@ public class IndexBuilderTests
         await Task.CompletedTask;
     }
 
+    /// <summary>A build persists the chunks it indexed, in the order it indexed them.</summary>
+    [Fact]
+    public async Task ABuildPersistsTheChunksItIndexed()
+    {
+        var fixture = Fixture();
+        await BindAsync(fixture, "docs/a.txt", Document);
+
+        var version = Recorded(await fixture.Builder.BuildAsync(Plan(prefix: "docs/")));
+        var indexed = ((RecordingIndexWriter)fixture.Host.Instances[version.Id].Writer).Chunks;
+        var persisted = await fixture.Chunks.ReadAsync(version.Id);
+
+        Assert.Equal(1, fixture.Chunks.Writes);
+        Assert.Equal(indexed.Count, persisted.Count);
+        Assert.Equal(indexed.Select(chunk => chunk.Text), persisted.Select(chunk => chunk.Text));
+        Assert.Equal(indexed.Select(chunk => chunk.Source.ChunkId), persisted.Select(chunk => chunk.Source.ChunkId));
+    }
+
+    /// <summary>Loading a version asks no embedder, because the vectors travel with the chunks.</summary>
+    [Fact]
+    public async Task LoadingAVersionAsksNoEmbedder()
+    {
+        var fixture = Fixture();
+        await BindAsync(fixture, "docs/a.txt", Document);
+
+        var version = Recorded(await fixture.Builder.BuildAsync(Plan(prefix: "docs/")));
+        var persisted = await fixture.Chunks.ReadAsync(version.Id);
+        var asked = fixture.Provider.Requests.Count;
+
+        var loaded = await fixture.Builder.LoadAsync(version, persisted);
+
+        // The instance the load built holds exactly what was persisted, in the order it was persisted - and the
+        // embedder was not asked once, which is the whole point of having stored the vectors.
+        Assert.NotNull(loaded);
+        Assert.Equal(asked, fixture.Provider.Requests.Count);
+        Assert.Equal(
+            persisted.Select(chunk => chunk.Text),
+            ((RecordingIndexWriter)loaded.Writer).Chunks.Select(chunk => chunk.Text));
+    }
+
+    /// <summary>Nothing persisted means nothing to load, which leaves the rebuild as the fallback.</summary>
+    [Fact]
+    public async Task AVersionWithNothingPersistedLoadsNothing()
+    {
+        var fixture = Fixture();
+        await BindAsync(fixture, "docs/a.txt", Document);
+
+        var version = Recorded(await fixture.Builder.BuildAsync(Plan(prefix: "docs/")));
+
+        Assert.Null(await fixture.Builder.LoadAsync(version, []));
+    }
+
     private static (IndexBuilder Builder,
         FakeIndexHost Host,
         InMemorySourceStore Store,
         InMemorySourceRegistry Registry,
         InMemoryIndexVersionStore Versions,
-        RecordingEmbeddingProvider Provider) Fixture()
+        RecordingEmbeddingProvider Provider,
+        InMemoryIndexChunkStore Chunks) Fixture()
     {
         var store = new InMemorySourceStore();
         var registry = new InMemorySourceRegistry();
         var host = new FakeIndexHost();
         var versions = new InMemoryIndexVersionStore();
         var provider = new RecordingEmbeddingProvider();
+        var chunks = new InMemoryIndexChunkStore();
 
         var builder = new IndexBuilder(
             store,
@@ -242,9 +295,10 @@ public class IndexBuilderTests
             host,
             new IndexCatalog(versions),
             new EmbedderRef("local", "test-model", 4),
-            maxChunkChars: 30);
+            maxChunkChars: 30,
+            chunkStore: chunks);
 
-        return (builder, host, store, registry, versions, provider);
+        return (builder, host, store, registry, versions, provider, chunks);
     }
 
     private static async Task BindAsync(
@@ -253,7 +307,8 @@ public class IndexBuilderTests
             InMemorySourceStore Store,
             InMemorySourceRegistry Registry,
             InMemoryIndexVersionStore Versions,
-            RecordingEmbeddingProvider Provider) fixture,
+            RecordingEmbeddingProvider Provider,
+            InMemoryIndexChunkStore Chunks) fixture,
         string path,
         string text,
         string mediaType = "text/plain")

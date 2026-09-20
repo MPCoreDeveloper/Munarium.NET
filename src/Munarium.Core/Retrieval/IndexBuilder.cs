@@ -33,6 +33,7 @@ using Munarium.Text;
 /// <param name="embedder">The embedder a manifest records, which is identity material.</param>
 /// <param name="maxChunkChars">The largest a chunk may be, which is identity material too.</param>
 /// <param name="extraction">Local extraction first, and the document-intelligence provider only if it found nothing.</param>
+/// <param name="chunkStore">Where a version chunks are kept, or <see langword="null"/> for none.</param>
 public sealed class IndexBuilder(
     ISourceStore sources,
     ISourceRegistry registry,
@@ -41,6 +42,7 @@ public sealed class IndexBuilder(
     IndexCatalog catalogue,
     EmbedderRef embedder,
     SourceExtraction? extraction = null,
+    IIndexChunkStore? chunkStore = null,
     int maxChunkChars = IngestRunner.DefaultChunkChars)
 {
     /// <summary>
@@ -55,6 +57,7 @@ public sealed class IndexBuilder(
     private readonly ISourceStore _sources = sources ?? throw new ArgumentNullException(nameof(sources));
     private readonly ISourceRegistry _registry = registry ?? throw new ArgumentNullException(nameof(registry));
     private readonly SourceExtraction _extraction = extraction ?? new SourceExtraction();
+    private readonly IIndexChunkStore? _chunks = chunkStore;
     private readonly IModelProvider _provider = provider ?? throw new ArgumentNullException(nameof(provider));
     private readonly IIndexHost _host = host ?? throw new ArgumentNullException(nameof(host));
     private readonly IndexCatalog _catalogue = catalogue ?? throw new ArgumentNullException(nameof(catalogue));
@@ -116,10 +119,11 @@ public sealed class IndexBuilder(
             bound);
 
         var instance = _host.Build(id, plan.Watermark);
+        var persisted = new List<PersistedChunk>();
 
         foreach (var row in rows)
         {
-            var refusal = await IndexAsync(instance, plan.Tenant, row, cancellationToken).ConfigureAwait(false);
+            var refusal = await IndexAsync(instance, plan.Tenant, row, persisted, cancellationToken).ConfigureAwait(false);
 
             // A refused build drops the instance rather than leaving it: a version that is half-built must not be
             // activatable by name, because it would answer with the documents the build got to before it stopped.
@@ -129,6 +133,14 @@ public sealed class IndexBuilder(
 
                 return refusal;
             }
+        }
+
+        // Written before the version is recorded, for the same reason the record is activated before it serves: a
+        // version an operator can name has to be one this deployment can answer from, and rows without their chunks
+        // would be a version that only looks built.
+        if (_chunks is not null)
+        {
+            await _chunks.WriteAsync(id, persisted, cancellationToken).ConfigureAwait(false);
         }
 
         var recorded = await _catalogue
@@ -156,10 +168,52 @@ public sealed class IndexBuilder(
         return recorded;
     }
 
+    /// <summary>Loads a version from its persisted chunks, without asking an embedder for anything.</summary>
+    /// <remarks>
+    /// The whole reason the chunks are persisted: a deployment that comes back holds the text a lexical index reads and
+    /// the vectors a vector index reads, so recovery is a read and a write into a fresh instance rather than a second
+    /// pass over the corpus. Nothing here is derived - these are the chunks the build indexed, in the order it did.
+    /// </remarks>
+    /// <param name="version">The version as the catalogue records it.</param>
+    /// <param name="chunks">Its chunks, in the order the build wrote them.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The instance, or <see langword="null"/> when there was nothing to load.</returns>
+    public async ValueTask<IndexInstance?> LoadAsync(
+        IndexVersion version,
+        IReadOnlyList<PersistedChunk> chunks,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(version);
+        ArgumentNullException.ThrowIfNull(chunks);
+
+        if (chunks.Count == 0)
+        {
+            return null;
+        }
+
+        var instance = _host.Build(version.Id, version.Watermark);
+
+        foreach (var chunk in chunks)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            instance.Writer.Index(chunk.Source, chunk.Text, [.. chunk.Embedding]);
+        }
+
+        // Serving follows the record, exactly as a build does: an active version has to be the one answering.
+        if (version.Active)
+        {
+            _host.Serve(version.Id);
+        }
+
+        return instance;
+    }
+
     private async ValueTask<IndexBuildRefused?> IndexAsync(
         IndexInstance instance,
         string tenant,
         SourceRecord row,
+        List<PersistedChunk> persisted,
         CancellationToken cancellationToken)
     {
         var bytes = await _sources
@@ -226,15 +280,24 @@ public sealed class IndexBuilder(
 
         for (var ordinal = 0; ordinal < chunks.Count; ordinal++)
         {
-            instance.Writer.Index(
-                new SourceReference(
-                    string.Concat(row.SourceId, "#", chunks[ordinal].Ordinal),
-                    row.SourceId,
-                    row.Path,
-                    row.ContentHash,
-                    chunks[ordinal].Ordinal),
-                chunks[ordinal].Text,
-                response.Vectors[ordinal].Span);
+            var reference = new SourceReference(
+                string.Concat(row.SourceId, "#", chunks[ordinal].Ordinal),
+                row.SourceId,
+                row.Path,
+                row.ContentHash,
+                chunks[ordinal].Ordinal);
+
+            instance.Writer.Index(reference, chunks[ordinal].Text, response.Vectors[ordinal].Span);
+
+            // The same chunk, kept for the store: what a restart loads is what a build indexed, and the embedding
+            // travels with it rather than being recomputed - which is the difference between a read and another pass
+            // over the corpus.
+            persisted.Add(new PersistedChunk
+            {
+                Source = reference,
+                Text = chunks[ordinal].Text,
+                Embedding = [.. response.Vectors[ordinal].Span],
+            });
         }
 
         return null;
