@@ -65,7 +65,7 @@ public class UpstreamContractTests
         var declared = Upstream();
         var covered = Served().Count(declared.Contains);
 
-        Assert.True(covered >= 43, $"this port covers {covered} of the original's operations, and it covered 43 before");
+        Assert.True(covered >= 44, $"this port covers {covered} of the original's operations, and it covered 44 before");
     }
 
     /// <summary>Reads the recorded upstream operations.</summary>
@@ -85,7 +85,7 @@ public class UpstreamContractTests
 
         foreach (var line in File.ReadAllLines(At("openapi/munarium.v1.yaml")))
         {
-            if (line.StartsWith("  /v1/", StringComparison.Ordinal) && line.EndsWith(':'))
+            if (line.StartsWith("  /", StringComparison.Ordinal) && line.EndsWith(':'))
             {
                 current = line.Trim().TrimEnd(':');
             }

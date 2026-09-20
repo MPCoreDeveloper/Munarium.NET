@@ -51,7 +51,7 @@ $served = [System.Collections.Generic.List[string]]::new()
 $current = ''
 
 foreach ($line in Get-Content $OurSpec) {
-    if ($line -match '^  (/v1/[^:]+):') {
+    if ($line -match '^  (/[^:]+):') {
         $current = $Matches[1]
     }
     elseif ($current -and $line -match '^    (get|post|put|delete|patch):') {
