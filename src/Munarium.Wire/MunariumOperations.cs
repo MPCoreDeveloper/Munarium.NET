@@ -63,6 +63,7 @@ public sealed class MunariumOperations(
     ISessionStore sessions,
     IAccessTokenAudit accessAudit,
     IAuthoringDraftStore authoring,
+    IShapeStore? shapeStore,
     string tenant,
     IModelProvider? model = null,
     string modelId = "")
@@ -138,6 +139,7 @@ public sealed class MunariumOperations(
 
     private readonly IStorageBackend _storage = storage ?? throw new ArgumentNullException(nameof(storage));
     private readonly IRunbookStore _runbooks = runbooks ?? throw new ArgumentNullException(nameof(runbooks));
+    private readonly IShapeStore? _shapeStore = shapeStore;
     private readonly ISessionStore _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
     private readonly IModelProvider? _model = model;
     private readonly string _modelId = modelId ?? string.Empty;
@@ -360,6 +362,119 @@ public sealed class MunariumOperations(
             ? null
             : await _authoring.FindAsync(name.Trim(), cancellationToken).ConfigureAwait(false);
 
+    /// <summary>Applies what a draft would apply, to this deployment.</summary>
+    /// <remarks>
+    /// Shapes first, then the runbook that binds them, which is the order the contract states: a collection binding a
+    /// shape this deployment does not serve would materialize nothing, so publishing the shape after the runbook would
+    /// leave a window in which the runbook is live and unusable.
+    /// <para>
+    /// The set is validated here as well as by the validation operation, and refused on an error finding either way: an
+    /// author who validated yesterday and answered a question today would otherwise apply something nobody checked.
+    /// </para>
+    /// </remarks>
+    /// <param name="name">The draft name.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What landed, or why nothing did.</returns>
+    public async ValueTask<WireDraftApplyResult> ApplyDraftAsync(
+        string name,
+        CancellationToken cancellationToken = default)
+    {
+        if (await StoredAsync(name, cancellationToken).ConfigureAwait(false) is not { } draft)
+        {
+            return UnknownDraft(name);
+        }
+
+        var (set, refused) = AuthoringMaterializer.Build(
+            draft.Name,
+            AuthoringCatalog.Pattern(draft.PatternId),
+            draft.Answers);
+
+        if (set is null)
+        {
+            return InvalidDraft(draft.Name, refused);
+        }
+
+        if (RunbookEntry(set) is not ({ } runbookPath, { } yaml))
+        {
+            return InvalidDraft(draft.Name, "the materialized set carries no runbook");
+        }
+
+        if (RunbookReader.Read(yaml) is not ({ } document, null))
+        {
+            return InvalidDraft(draft.Name, "the materialized runbook does not read");
+        }
+
+        if (!RunbookValidation.IsValid(RunbookValidation.Validate(document)))
+        {
+            return InvalidDraft(draft.Name, "it does not validate, and nothing that does not validate is applied");
+        }
+
+        var applied = new List<WireAppliedDocument>(set.Documents.Count);
+
+        // Shapes first, and a set whose shape cannot be published applies nothing at all: half an applied set is not an
+        // applied set, and reporting one as applied would be the worst of both.
+        foreach (var (path, json) in set.Documents.Where(entry => !entry.Key.EndsWith(".yaml", StringComparison.Ordinal)))
+        {
+            if (Shape(json) is not { } shape)
+            {
+                return InvalidDraft(draft.Name, $"the document at '{path}' is not a shape this deployment can read");
+            }
+
+            if (_shapeStore is null)
+            {
+                return InvalidDraft(
+                    draft.Name,
+                    "this deployment serves shapes from no directory, so it cannot publish one");
+            }
+
+            await _shapeStore.PublishAsync(shape, cancellationToken).ConfigureAwait(false);
+            _ = _shapes.Publish(shape);
+
+            applied.Add(new WireAppliedDocument(path, "Shape", shape.Name, ArtifactContent.Hash(json)));
+        }
+
+        return await ApplyRunbookAsync(new WireRunbookApply(yaml), cancellationToken).ConfigureAwait(false) switch
+        {
+            WireAppliedRunbook runbook => new WireAuthoringApplied(
+            [
+                .. applied,
+                new WireAppliedDocument(runbookPath, "Runbook", runbook.RunbookRef, ArtifactContent.Hash(yaml)),
+            ]),
+            WireProblem problem => problem,
+        };
+    }
+
+    /// <summary>Finds the one runbook a materialized set would apply, and the path it came under.</summary>
+    /// <param name="set">The materialized set.</param>
+    /// <returns>The path and the YAML, both <see langword="null"/> when the set carries no runbook.</returns>
+    private static (string? Path, string? Yaml) RunbookEntry(Materialized set)
+    {
+        foreach (var (path, document) in set.Documents)
+        {
+            if (path.EndsWith(".yaml", StringComparison.Ordinal))
+            {
+                return (path, document);
+            }
+        }
+
+        return (null, null);
+    }
+
+    /// <summary>Reads a document of a materialized set as a shape.</summary>
+    /// <param name="json">The document.</param>
+    /// <returns>The shape, or <see langword="null"/> when the document is not one this deployment reads.</returns>
+    private static FactShape? Shape(string json)
+    {
+        try
+        {
+            return ShapeDocuments.Read(json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Validates the documents a draft would apply, without applying anything.</summary>
     /// <remarks>
     /// The findings a deployment would refuse to apply on, read before anything is applied. An author who had to apply a
@@ -457,10 +572,7 @@ public sealed class MunariumOperations(
     /// </remarks>
     /// <param name="set">The materialized set.</param>
     /// <returns>The runbook's YAML, or <see langword="null"/> when the set carries none.</returns>
-    private static string? Runbook(Materialized set) => set.Documents
-        .Where(entry => entry.Key.EndsWith(".yaml", StringComparison.Ordinal))
-        .Select(entry => entry.Value)
-        .FirstOrDefault();
+    private static string? Runbook(Materialized set) => RunbookEntry(set).Yaml;
 
     /// <summary>Reads one finding as the contract carries it.</summary>
     /// <param name="finding">The finding.</param>
@@ -2951,7 +3063,7 @@ public sealed class MunariumOperations(
     /// enumerating who read it. It reports <em>that</em> reads happened and never the rows themselves.
     /// </remarks>
     public async ValueTask<WireEvidenceAccessResult> ReadEvidenceAccessesAsync(
-        string tenant,
+    string tenant,
         string evidenceId,
         long limit = 0,
         CancellationToken cancellationToken = default)
@@ -2990,7 +3102,7 @@ public sealed class MunariumOperations(
     /// sweep's - bytes first, then the row.
     /// </remarks>
     public async ValueTask<WireEvidencePurgeResult> PurgeEvidenceAsync(
-        string tenant,
+    string tenant,
         string evidenceId,
         CancellationToken cancellationToken = default)
     {
@@ -3040,7 +3152,7 @@ public sealed class MunariumOperations(
     /// instruction to preserve evidence that also hid it would be a strange instruction.
     /// </remarks>
     public async ValueTask<WireProblem?> SetEvidenceLegalHoldAsync(
-        string tenant,
+    string tenant,
         string evidenceId,
         bool hold,
         CancellationToken cancellationToken = default)

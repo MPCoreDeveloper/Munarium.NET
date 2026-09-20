@@ -6,14 +6,20 @@ using System.Diagnostics.CodeAnalysis;
 /// The shape registry: the shapes a deployment understands, resolved by name.
 /// </summary>
 /// <remarks>
-/// Registration is the whole mutable surface, and it happens once at composition. Resolution is then
-/// a lookup, so the write path never pays for a scan and a shape can never change under a running
-/// ledger.
+/// Registration happens at composition, and publishing is the one thing that can change afterwards - because a
+/// deployment serves the shapes an operator applied, not only the ones it shipped with.
+/// <para>
+/// Publishing a registered name replaces it for whatever is written next, and reinterprets nothing already recorded: a
+/// claim carries the lineage it was written under, computed once at write time, so the shape that produced an answer can
+/// be read back after the shape it came from is gone. That is what makes a mutable registry safe here rather than
+/// merely convenient.
+/// </para>
 /// </remarks>
 public sealed class ShapeRegistry
 {
     private readonly Dictionary<string, FactShape> _shapes = [];
-    private readonly IReadOnlyList<FactShape> _ordered;
+    private readonly Lock _publish = new();
+    private IReadOnlyList<FactShape> _ordered;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ShapeRegistry"/> class.
@@ -54,6 +60,34 @@ public sealed class ShapeRegistry
         TryResolve(name, out var shape)
             ? shape
             : throw new KeyNotFoundException($"No shape named '{name}' is registered.");
+
+    /// <summary>
+    /// Publishes a shape, replacing any shape of the same name.
+    /// </summary>
+    /// <remarks>
+    /// Replacement rather than refusal, because a name is what a runbook binds: refusing to publish <c>documents@2</c>
+    /// because <c>documents@1</c> is registered would leave a deployment unable to serve the document its operator just
+    /// applied. What it cannot do is change an answer already given, because a claim records the lineage it was written
+    /// under rather than deriving it again later.
+    /// </remarks>
+    /// <param name="shape">The shape.</param>
+    /// <returns>Whether that name was registered already, and is therefore replaced.</returns>
+    public bool Publish(FactShape shape)
+    {
+        ArgumentNullException.ThrowIfNull(shape);
+
+        lock (_publish)
+        {
+            var existed = _shapes.Remove(shape.Name);
+            _shapes[shape.Name] = shape;
+
+            // One reference assignment, so a reader sees the set before or the set after and never a half-published one:
+            // a caller listing shapes gets a consistent answer without taking a lock to read one.
+            _ordered = [.. _shapes.Values.OrderBy(shape => shape.Name, StringComparer.Ordinal)];
+
+            return existed;
+        }
+    }
 
     /// <summary>
     /// Derives a claim's lineage from its shape and body.

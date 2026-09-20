@@ -1024,6 +1024,43 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/authoring/drafts/{draft_id}/apply:
+    post:
+      operationId: ApplyAuthoringDraft
+      tags: [authoring]
+      summary: Apply what a draft materializes, to this deployment.
+      description: |
+        Shapes first, then the runbook that binds them: a collection binding a shape this deployment does not serve would
+        materialize nothing, so the shape lands before the document that names it. The set is validated here as well as
+        by the validation operation and refused on an error finding, because an author who validated yesterday and
+        answered a question today would otherwise apply something nobody checked.
+      parameters:
+        - name: draft_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The draft name.
+      responses:
+        "200":
+          description: What landed, in the order it landed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthoringDraftApplied"
+        "404":
+          description: No draft by that name is kept here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The draft does not validate, or its shape cannot be published here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
   /v1/authoring/drafts/{draft_id}/validate:
     post:
       operationId: ValidateAuthoringDraft
@@ -3348,6 +3385,33 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AuthoringDraft"
+
+    AppliedDocument:
+      type: object
+      required: [path, kind, ref, yaml_hash]
+      properties:
+        path:
+          type: string
+          description: The path the materialized set carried the document under.
+        kind:
+          type: string
+          description: Shape or Runbook.
+        ref:
+          type: string
+          description: The identity it is served under now.
+        yaml_hash:
+          type: string
+          description: Its content digest, as this port spells digests.
+
+    AuthoringDraftApplied:
+      type: object
+      required: [applied]
+      properties:
+        applied:
+          type: array
+          description: The documents, in the order they landed, shapes first.
+          items:
+            $ref: "#/components/schemas/AppliedDocument"
 
     ValidationFinding:
       type: object

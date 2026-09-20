@@ -1,7 +1,6 @@
 namespace Munarium.Server;
 
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Munarium.Shapes;
 
 /// <summary>
@@ -39,44 +38,62 @@ public static class MunariumShapeBundles
         return new ShapeRegistry(shapes);
     }
 
+    /// <summary>
+    /// Opens the store that publishes shapes under a directory.
+    /// </summary>
+    /// <remarks>
+    /// The same directory the loader reads, so a shape an operator applied is served again after a restart. A published
+    /// shape a restart forgot would silently take the runbooks that bind it with it, which is worse than refusing the
+    /// publish in the first place.
+    /// </remarks>
+    /// <param name="directory">The directory, or <see langword="null"/> when this deployment serves none.</param>
+    /// <returns>The store, or <see langword="null"/> when there is nowhere to publish.</returns>
+    public static IShapeStore? Store(string? directory) =>
+        string.IsNullOrWhiteSpace(directory) ? null : new BundleDirectoryShapeStore(directory);
+
     /// <summary>Reads one shape from its on-disk form.</summary>
     /// <param name="json">The shape as JSON.</param>
     /// <returns>The shape.</returns>
     /// <exception cref="JsonException">Thrown when the document is not a shape.</exception>
-    public static FactShape Read(string json)
-    {
-        var document = JsonSerializer.Deserialize(json, ShapeJson.Default.ShapeDocument)
-            ?? throw new JsonException("The shape document is empty.");
+    public static FactShape Read(string json) => ShapeDocuments.Read(json);
+}
 
-        // The schema is carried as JSON text from here on: that is what the validator takes, and what
-        // a digest over a shape's identity would have to agree with.
-        return new FactShape
+/// <summary>Publishes shapes as files, one shape per file, in the directory the loader reads.</summary>
+/// <remarks>
+/// The name is the file name, which is what makes a published shape findable by the name a runbook binds: a shape name
+/// that cannot be a file name is refused rather than stored under a name of this deployment\'s own choosing, because a
+/// document served under one name and stored under another is a document an operator cannot account for.
+/// </remarks>
+internal sealed class BundleDirectoryShapeStore : IShapeStore
+{
+    private readonly string _directory;
+
+    /// <summary>Initializes a new instance of the <see cref="BundleDirectoryShapeStore"/> class.</summary>
+    /// <param name="directory">The directory to write into.</param>
+    internal BundleDirectoryShapeStore(string directory)
+    {
+        _directory = directory;
+        _ = Directory.CreateDirectory(directory);
+    }
+
+    /// <inheritdoc />
+    /// <exception cref="ArgumentException">Thrown when the name cannot be a file name.</exception>
+    public async ValueTask PublishAsync(FactShape shape, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(shape);
+
+        if (shape.Name.Length == 0 || shape.Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
         {
-            Name = document.Name,
-            Version = document.Version,
-            Identity = document.Identity,
-            Schema = document.Schema.GetRawText(),
-        };
+            throw new ArgumentException(
+                $"The shape name '{shape.Name}' cannot be a file name, so this deployment will not store it.",
+                nameof(shape));
+        }
+
+        await File
+            .WriteAllTextAsync(
+                Path.Combine(_directory, string.Concat(shape.Name, ".json")),
+                ShapeDocuments.Write(shape),
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 }
-
-/// <summary>The on-disk shape document.</summary>
-public sealed record ShapeDocument
-{
-    /// <summary>Gets the shape name.</summary>
-    public required string Name { get; init; }
-
-    /// <summary>Gets the shape version.</summary>
-    public required int Version { get; init; }
-
-    /// <summary>Gets the body keys that identify a claim lineage.</summary>
-    public required IReadOnlyList<string> Identity { get; init; }
-
-    /// <summary>Gets the JSON Schema a fact body must satisfy.</summary>
-    public required JsonElement Schema { get; init; }
-}
-
-/// <summary>Serialization metadata for shape documents.</summary>
-[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
-[JsonSerializable(typeof(ShapeDocument))]
-public sealed partial class ShapeJson : JsonSerializerContext;

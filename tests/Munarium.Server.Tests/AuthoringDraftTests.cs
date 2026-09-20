@@ -109,6 +109,59 @@ public class AuthoringDraftTests
         Assert.True(await kernel.Operations.DeleteDraftAsync("vendor-security") is WireProblem { Status: 404 });
     }
 
+    /// <summary>Applying a draft lands its shape first and its runbook second, and both are served.</summary>
+    [Fact]
+    public async Task ApplyingADraftLandsItsShapeAndItsRunbook()
+    {
+        var shapeDirectory = Path.Combine(Path.GetTempPath(), $"MunariumShapes_{Guid.NewGuid():N}");
+
+        await using var kernel = MunariumKernel.Create(
+            Path.Combine(Path.GetTempPath(), $"Munarium_{Guid.NewGuid():N}"),
+            "munarium-apply",
+            new ShapeRegistry([]),
+            MunariumShapeBundles.Store(shapeDirectory));
+
+        Draft(await kernel.Operations.OpenDraftAsync(new WireAuthoringDraftRequest("apply-rb", "ask-the-corpus")));
+
+        var applied = Applied(await kernel.Operations.ApplyDraftAsync("apply-rb"));
+
+        // Shapes first, then the runbook that binds them: the order the contract states, and the order the answer is in.
+        Assert.Equal(2, applied.Applied.Count);
+        Assert.Equal("Shape", applied.Applied[0].Kind);
+        Assert.Equal("apply-rb-documents", applied.Applied[0].Ref);
+        Assert.Equal("Runbook", applied.Applied[1].Kind);
+        Assert.Equal("apply-rb@1", applied.Applied[1].Ref);
+        Assert.StartsWith("sha256:", applied.Applied[1].YamlHash, StringComparison.Ordinal);
+
+        // The shape is served now rather than after a restart, because a runbook that binds it is serving now.
+        Assert.True(kernel.Shapes.TryResolve("apply-rb-documents", out var published));
+
+        // And it is durable: a deployment that comes back reads the same shape out of the same directory.
+        Assert.True(MunariumShapeBundles.Load(shapeDirectory).TryResolve("apply-rb-documents", out var recovered));
+        Assert.Equal(published.Version, recovered.Version);
+
+        // The runbook is a version a session can pin by name, which is what applying one is for.
+        Assert.Contains(
+            (await kernel.Operations.ListRunbooksAsync()).Runbooks,
+            runbook => runbook.RunbookRef == "apply-rb@1");
+
+        // Applying again is the same version rather than a second one: the document carries its own version and the store
+        // upserts on the reference, so an apply is a write and not a producer of versions.
+        var again = Applied(await kernel.Operations.ApplyDraftAsync("apply-rb"));
+
+        Assert.Equal("apply-rb@1", again.Applied[1].Ref);
+        Assert.Single((await kernel.Operations.ListRunbooksAsync()).Runbooks);
+    }
+
+
+    /// <summary>Reads an applied set, insisting it is one.</summary>
+    /// <param name="result">The result.</param>
+    /// <returns>The applied set.</returns>
+    private static WireAuthoringApplied Applied(WireDraftApplyResult result) =>
+        result is WireAuthoringApplied applied
+            ? applied
+            : throw new InvalidOperationException($"the apply was refused: {result}");
+
     /// <summary>Reads a validation result, insisting it is one.</summary>
     /// <param name="result">The result.</param>
     /// <returns>The validation.</returns>

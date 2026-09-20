@@ -175,6 +175,23 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         };
     }
 
+    /// <inheritdoc />
+    public override async Task<ApplyAuthoringDraftResponse> ApplyAuthoringDraftAsync(
+        ApplyAuthoringDraftRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        return await _operations
+            .ApplyDraftAsync(request.DraftId, context.CancellationToken)
+            .ConfigureAwait(false) switch
+        {
+            WireAuthoringApplied applied => new ApplyAuthoringDraftResponse { Data = Applied(applied) },
+            WireProblem problem => throw Problem(problem),
+            var other => throw new InvalidOperationException($"unexpected apply result: {other}"),
+        };
+    }
+
     /// <summary>Carries a draft as the contract carries it.</summary>
     /// <param name="draft">The draft.</param>
     /// <returns>The message.</returns>
@@ -234,6 +251,25 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         Code = finding.Code,
         Message = finding.Message,
         Path = finding.Path,
+    };
+
+    /// <summary>Carries an applied set as the contract carries it.</summary>
+    /// <param name="applied">The applied set.</param>
+    /// <returns>The message.</returns>
+    private static AuthoringDraftApplied Applied(WireAuthoringApplied applied) => new()
+    {
+        Applied = { applied.Applied.Select(Applied) },
+    };
+
+    /// <summary>Carries one applied document as the contract carries it.</summary>
+    /// <param name="document">The document.</param>
+    /// <returns>The message.</returns>
+    private static AppliedDocument Applied(WireAppliedDocument document) => new()
+    {
+        Path = document.Path,
+        Kind = document.Kind,
+        Ref = document.Ref,
+        YamlHash = document.YamlHash,
     };
 
     /// <summary>Carries one answer as the contract carries it.</summary>

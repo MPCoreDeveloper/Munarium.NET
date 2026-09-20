@@ -139,8 +139,13 @@ public sealed class MunariumKernel : IAsyncDisposable
     /// <param name="databasePath">Where the ledger lives.</param>
     /// <param name="databaseName">The database name.</param>
     /// <param name="shapes">The shapes this deployment understands.</param>
+    /// <param name="shapeStore">Where published shapes are kept, or <see langword="null"/> when this deployment serves none.</param>
     /// <returns>The composed kernel.</returns>
-    public static MunariumKernel Create(string databasePath, string databaseName, ShapeRegistry shapes)
+    public static MunariumKernel Create(
+        string databasePath,
+        string databaseName,
+        ShapeRegistry shapes,
+        IShapeStore? shapeStore = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(databaseName);
@@ -270,6 +275,7 @@ public sealed class MunariumKernel : IAsyncDisposable
             sessions,
             audit,
             draftStore,
+            shapeStore,
             Tenant);
 
 

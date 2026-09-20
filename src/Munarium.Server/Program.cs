@@ -23,13 +23,15 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 // openapi/munarium.v1.yaml is served here, over the same MunariumOperations the JSON surface uses.
 builder.Services.AddGrpc();
 
-var shapes = MunariumShapeBundles.Load(
-    builder.Configuration["Munarium:ShapesDirectory"] ?? Path.Combine(AppContext.BaseDirectory, "shapes"));
+var shapesDirectory = builder.Configuration["Munarium:ShapesDirectory"] ?? Path.Combine(AppContext.BaseDirectory, "shapes");
+
+var shapes = MunariumShapeBundles.Load(shapesDirectory);
 
 var kernel = MunariumKernel.Create(
     builder.Configuration["Munarium:DatabasePath"] ?? Path.Combine(Path.GetTempPath(), "munarium"),
     builder.Configuration["Munarium:DatabaseName"] ?? "munarium",
-    shapes);
+    shapes,
+    MunariumShapeBundles.Store(shapesDirectory));
 
 builder.Services.AddSingleton(kernel);
 builder.Services.AddSingleton(kernel.Operations);

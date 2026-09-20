@@ -274,6 +274,19 @@ public sealed record WireAuthoringDraftRemoved(string Name);
 
 /// <summary>The answer to a removal: what was removed, or why nothing was.</summary>
 public readonly union WireDraftRemovalResult(WireAuthoringDraftRemoved, WireProblem);
+/// <summary>One document a draft applied.</summary>
+/// <param name="Path">The path the materialized set carried it under.</param>
+/// <param name="Kind">Shape or Runbook.</param>
+/// <param name="Ref">The identity it is served under now.</param>
+/// <param name="YamlHash">Its content digest, as this port spells digests.</param>
+public sealed record WireAppliedDocument(string Path, string Kind, string Ref, string YamlHash);
+
+/// <summary>What a draft applied.</summary>
+/// <param name="Applied">The documents, in the order they landed: shapes first, because a runbook binds them.</param>
+public sealed record WireAuthoringApplied(IReadOnlyList<WireAppliedDocument> Applied);
+
+/// <summary>The answer to an apply: what landed, or why nothing did.</summary>
+public readonly union WireDraftApplyResult(WireAuthoringApplied, WireProblem);
 
 /// <summary>A memory version: the identity claims are written under, and the node it occupies.</summary>
 /// <param name="VersionId">The version's identity, which is also the stream its claims go to.</param>
