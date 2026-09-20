@@ -222,6 +222,97 @@ public class IndexBuilderTests
         await Task.CompletedTask;
     }
 
+    /// <summary>A version built here verifies against its own persisted chunks.</summary>
+    [Fact]
+    public async Task ABuiltVersionVerifiesAgainstItsOwnChunks()
+    {
+        var fixture = Fixture();
+        await BindAsync(fixture, "docs/a.txt", Document);
+
+        var version = Recorded(await fixture.Builder.BuildAsync(Plan(prefix: "docs/")));
+        var verification = IndexArtifactVerification.Verify(version, await fixture.Chunks.ReadAsync(version.Id));
+
+        Assert.True(verification.Verified, string.Join("; ", verification.Findings.Select(finding => finding.Message)));
+        Assert.Empty(verification.Findings);
+    }
+
+    /// <summary>A chunk citing a hash the manifest does not name is refused, and its source reads as missing.</summary>
+    [Fact]
+    public async Task AChunkFromAnotherBuildIsRefused()
+    {
+        var fixture = Fixture();
+        await BindAsync(fixture, "docs/a.txt", Document);
+
+        var version = Recorded(await fixture.Builder.BuildAsync(Plan(prefix: "docs/")));
+        var persisted = await fixture.Chunks.ReadAsync(version.Id);
+
+        // Every chunk of the document is tampered, which is what a store from another build looks like: the hash the
+        // manifest names ends up represented by nothing, and something it does not name is.
+        var tampered = persisted
+            .Select(chunk => chunk with { Source = chunk.Source with { ContentHash = "sha256:somewhere-else" } })
+            .ToList();
+
+        var verification = IndexArtifactVerification.Verify(version, tampered);
+
+        Assert.False(verification.Verified);
+        Assert.Contains(verification.Findings, finding => finding.Code == "artifact.source-unknown");
+        Assert.Contains(verification.Findings, finding => finding.Code == "artifact.source-missing");
+    }
+
+    /// <summary>A vector of the wrong width is refused, which is how a store from another embedder shows up.</summary>
+    [Fact]
+    public async Task AWrongWidthVectorIsRefused()
+    {
+        var fixture = Fixture();
+        await BindAsync(fixture, "docs/a.txt", Document);
+
+        var version = Recorded(await fixture.Builder.BuildAsync(Plan(prefix: "docs/")));
+        var persisted = await fixture.Chunks.ReadAsync(version.Id);
+        var tampered = new List<PersistedChunk>(persisted)
+        {
+            [0] = persisted[0] with { Embedding = [1f, 2f] },
+        };
+
+        var verification = IndexArtifactVerification.Verify(version, tampered);
+
+        Assert.False(verification.Verified);
+        Assert.Contains(verification.Findings, finding => finding.Code == "artifact.embedding-dimensions");
+    }
+
+    /// <summary>A missing chunk of a document is seen, which a count alone cannot see.</summary>
+    [Fact]
+    public async Task AMissingChunkIsSeen()
+    {
+        var fixture = Fixture();
+        await BindAsync(fixture, "docs/a.txt", Document);
+
+        var version = Recorded(await fixture.Builder.BuildAsync(Plan(prefix: "docs/")));
+        var persisted = await fixture.Chunks.ReadAsync(version.Id);
+
+        Assert.True(persisted.Count > 1, "the document has to chunk into more than one piece for this test to mean anything");
+
+        var gapped = persisted.Skip(1).ToList();
+        var verification = IndexArtifactVerification.Verify(version, gapped);
+
+        Assert.False(verification.Verified);
+        Assert.Contains(verification.Findings, finding => finding.Code == "artifact.ordinal-gap");
+    }
+
+    /// <summary>Nothing persisted is not a passing verification: there are no bytes to have checked.</summary>
+    [Fact]
+    public async Task NothingPersistedIsNotVerifiable()
+    {
+        var fixture = Fixture();
+        await BindAsync(fixture, "docs/a.txt", Document);
+
+        var version = Recorded(await fixture.Builder.BuildAsync(Plan(prefix: "docs/")));
+        var verification = IndexArtifactVerification.Verify(version, []);
+
+        Assert.False(verification.Verified);
+        Assert.Single(verification.Findings);
+        Assert.Equal("artifact.empty", verification.Findings[0].Code);
+    }
+
     /// <summary>A build persists the chunks it indexed, in the order it indexed them.</summary>
     [Fact]
     public async Task ABuildPersistsTheChunksItIndexed()

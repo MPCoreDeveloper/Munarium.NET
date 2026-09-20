@@ -114,3 +114,28 @@ the ranking this port computed.
 The module also carries `Fusion/ReciprocalRankFusion.cs` and `Fusion/PoolMerge.cs`. This port fuses by rank itself, for a
 reason that still holds - the envelope records the ranking that decided the answer - so that stays as it is. It is noted
 here as a capability that exists rather than as a change to make.
+### What `index-artifacts` really is upstream, measured
+
+The routes were read rather than assumed, and they are not a local persistence surface. `datastore_builds.rs` implements
+`op_artifact_status`, `op_verify_artifacts`, `op_rebuild_artifact`, `op_bind_artifact`, `op_promote_artifact` and
+`op_backfill_collection`, and they work on a catalogue of artifacts bound into three slots - staged, shadow and serving -
+with a generation per binding and compare-and-swap on every move. Binding refuses the serving slot by contract (the
+serving slot is changed by promotion, not by bind), promotion evaluates a fleet gate first - every
+`retrieval_plane_expectations` row has to show fresh, ready nodes at the right plane and revision, and the staged
+candidate has to be open on a minimum number of nodes - and backfill mirrors every serving-required version of a
+collection under a policy whose default is active-pinned-and-horizon, using the same pin horizon retention and eviction
+use.
+
+That is a mirrored, multi-node deployment capability, and it is not the same thing as persisting an index locally. The
+distinction matters because this port has the second and not the first: the chunk store is the local counterpart of the
+original pg chunk table, one row per chunk with its vector, while the artifact plane would be a mirror plane over more
+than one node - a capability of its own rather than a stricter form of this one. An earlier plan of this port filed the
+routes as the operator surface for persistent chunks; that was wrong, and it is recorded here rather than quietly
+dropped.
+
+What does map one-to-one is verification, and the part worth taking is the stance rather than the shape: the original
+opens every artifact from its store and checks each component, because reading the catalogue own manifest projection
+would verify the database against itself. `IndexArtifactVerification` does the same at the scale one node has - it reads
+the persisted chunks and checks them against the manifest: every vector has the width the manifest records, every chunk
+obeys the maximum the build cut to, every source the manifest names is represented and nothing else is, and the ordinals
+of a document are contiguous, because a gap is the one failure a count cannot see.
