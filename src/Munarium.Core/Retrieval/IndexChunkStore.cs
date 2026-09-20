@@ -7,17 +7,14 @@ namespace Munarium.Retrieval;
 /// rebuild is not the index: it is reading every bound document and extracting and embedding it again, and a persisted
 /// chunk skips all three.
 /// <para>
-/// The ordinal is part of the record rather than implied by position, because a read has to be able to produce the same
-/// order twice: two chunks of one document are two facts about it, and which one came first is not the storage's choice.
+/// The position is not repeated here: <see cref="SourceReference.ChunkOrdinal"/> already carries it, and two fields that
+/// have to agree are two fields that can disagree.
 /// </para>
 /// </remarks>
 public sealed record PersistedChunk
 {
     /// <summary>Gets where the chunk came from, which is what a citation resolves.</summary>
     public required SourceReference Source { get; init; }
-
-    /// <summary>Gets the chunk's position within its source.</summary>
-    public required int Ordinal { get; init; }
 
     /// <summary>Gets the chunk text.</summary>
     public required string Text { get; init; }

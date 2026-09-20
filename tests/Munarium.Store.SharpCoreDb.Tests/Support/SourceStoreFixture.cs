@@ -31,7 +31,11 @@ internal sealed class SourceStoreFixture : IAsyncDisposable
         Sessions = new SharpCoreDbSessionStore(database);
         Runbooks = new SharpCoreDbRunbookStore(database);
         Audit = new SharpCoreDbAccessTokenAudit(database);
+        Chunks = new SharpCoreDbIndexChunkStore(database);
     }
+
+    /// <summary>Gets the index-chunk store under test.</summary>
+    public SharpCoreDbIndexChunkStore Chunks { get; }
 
     /// <summary>Gets the capability audit under test.</summary>
     public SharpCoreDbAccessTokenAudit Audit { get; }
