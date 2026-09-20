@@ -470,6 +470,84 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+        // The issuance audit: what this deployment handed out, and what it has ended. Never a token - the row is an
+        // identity and the claims it carried - and it takes the access scope, which is the one scope that says reading
+        // credentials is administrative work rather than governance's.
+        app.MapGet(
+            "/v1/access-tokens",
+            async (
+                HttpContext context,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var access = await kernel.Gate.ResolveAsync(
+                    context.Request.Headers.Authorization.ToString(),
+                    AccessScope.Access,
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
+
+                if (access is not EvidencePrincipal)
+                {
+                    return TypedResults.Json(
+                        new WireProblem(
+                            MunariumOperations.UnauthorizedProblem,
+                            access is AccessRefused refused ? refused.Reason : AccessGate.MissingReason,
+                            Status: 401,
+                            ExpectedHead: 0,
+                            ActualHead: 0),
+                        WireJson.Default.WireProblem,
+                        statusCode: 401);
+                }
+
+                IResult answer = TypedResults.Json(
+                    await operations.ListAccessTokensAsync(cancellationToken).ConfigureAwait(false),
+                    WireJson.Default.WireAccessTokenAuditList);
+
+                return answer;
+            });
+
+        // Withdrawal: the one thing that reaches a credential after it was handed out.
+        app.MapPost(
+            "/v1/access-tokens/{jti}/revoke",
+            async (
+                [FromRoute(Name = "jti")] string jti,
+                HttpContext context,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var access = await kernel.Gate.ResolveAsync(
+                    context.Request.Headers.Authorization.ToString(),
+                    AccessScope.Access,
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
+
+                if (access is not EvidencePrincipal)
+                {
+                    return TypedResults.Json(
+                        new WireProblem(
+                            MunariumOperations.UnauthorizedProblem,
+                            access is AccessRefused refused ? refused.Reason : AccessGate.MissingReason,
+                            Status: 401,
+                            ExpectedHead: 0,
+                            ActualHead: 0),
+                        WireJson.Default.WireProblem,
+                        statusCode: 401);
+                }
+
+                var result = await operations
+                    .RevokeAccessTokenAsync(jti, DateTimeOffset.UtcNow, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireAccessTokenAudit withdrawn => TypedResults.Json(
+                        withdrawn, WireJson.Default.WireAccessTokenAudit),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
         app.MapPost(
             "/v1/indexes",
             async (

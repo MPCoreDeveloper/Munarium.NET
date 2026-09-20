@@ -1096,6 +1096,91 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
     }
 
+    /// <summary>An issuance is audited, and a withdrawal through the contract's own route ends it.</summary>
+    /// <remarks>
+    /// The loop that matters end to end: a credential that worked stops working, on the same server and without a
+    /// restart - and the audit is what let an operator name it.
+    /// </remarks>
+    [Fact]
+    public async Task AnIssuanceIsAuditedAndAWithdrawalEndsIt()
+    {
+        var admin = await MintedCapability([AccessScope.Access]);
+        var uploading = await MintedCapability([AccessScope.Ingest]);
+
+        // It works before the withdrawal.
+        using var before = await PutWith(uploading.Token, "docs/before.txt");
+        Assert.Equal(HttpStatusCode.OK, before.StatusCode);
+
+        // The audit names it, and says it stands.
+        using var audited = await Audit(admin.Token, HttpMethod.Get, string.Empty);
+        var rows = (await audited.Content.ReadFromJsonAsync(WireJson.Default.WireAccessTokenAuditList))!;
+        var row = rows.Capabilities.Single(capability => capability.TokenId == uploading.TokenId);
+
+        Assert.Equal(HttpStatusCode.OK, audited.StatusCode);
+        Assert.Equal("tyler@example.com", row.Subject);
+        Assert.Null(row.RevokedAt);
+
+        // Withdraw it, and the same credential is refused from here on.
+        using var withdrawn = await Audit(admin.Token, HttpMethod.Post, $"/{uploading.TokenId}/revoke");
+        var ended = (await withdrawn.Content.ReadFromJsonAsync(WireJson.Default.WireAccessTokenAudit))!;
+
+        Assert.Equal(HttpStatusCode.OK, withdrawn.StatusCode);
+        Assert.NotNull(ended.RevokedAt);
+
+        using var after = await PutWith(uploading.Token, "docs/after.txt");
+        Assert.Equal(HttpStatusCode.Unauthorized, after.StatusCode);
+    }
+
+    /// <summary>Reading the audit is administrative work: a capability that may query is refused it.</summary>
+    [Fact]
+    public async Task TheAuditTakesTheAccessScope()
+    {
+        var querying = await MintedCapability([AccessScope.Query]);
+
+        using var refused = await Audit(querying.Token, HttpMethod.Get, string.Empty);
+        using var nothing = await Audit(querying.Token, HttpMethod.Post, "/jti-nothing/revoke");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, nothing.StatusCode);
+    }
+
+    /// <summary>Withdrawing something that was never issued is a 404 rather than a silent success.</summary>
+    [Fact]
+    public async Task WithdrawingWhatWasNeverIssuedIsNotFound()
+    {
+        var admin = await MintedCapability([AccessScope.Access]);
+
+        using var nothing = await Audit(admin.Token, HttpMethod.Post, "/jti-never-issued/revoke");
+
+        Assert.Equal(HttpStatusCode.NotFound, nothing.StatusCode);
+    }
+
+    /// <summary>Reads or writes the issuance audit, with a capability presented.</summary>
+    /// <param name="token">The capability to present.</param>
+    /// <param name="method">Whether this is a read or a withdrawal.</param>
+    /// <param name="suffix">What to append to the route.</param>
+    /// <returns>The answer.</returns>
+    private async Task<HttpResponseMessage> Audit(string token, HttpMethod method, string suffix)
+    {
+        using var request = new HttpRequestMessage(method, "/v1/access-tokens" + suffix);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        return await _client.SendAsync(request);
+    }
+
+    /// <summary>Mints a capability and hands back the whole answer, identity included.</summary>
+    /// <param name="scopes">The scopes it carries.</param>
+    /// <returns>The issued capability.</returns>
+    private async Task<WireAccessToken> MintedCapability(IReadOnlyList<string> scopes)
+    {
+        using var minted = await _client.PostAsJsonAsync(
+            "/v1/access-tokens",
+            new WireAccessTokenRequest("tyler@example.com", 9, [], scopes),
+            WireJson.Default.WireAccessTokenRequest);
+
+        return (await minted.Content.ReadFromJsonAsync(WireJson.Default.WireAccessToken))!;
+    }
+
     /// <summary>Mints a capability for a test.</summary>
     /// <param name="scopes">The scopes it carries.</param>
     /// <returns>The token itself.</returns>

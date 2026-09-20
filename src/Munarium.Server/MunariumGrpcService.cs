@@ -454,6 +454,44 @@ internal sealed class MunariumGrpcService(MunariumOperations operations) : Munar
         };
     }
 
+    /// <inheritdoc />
+    public override async Task<ListAccessTokensResponse> ListAccessTokensAsync(
+        ListAccessTokensRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var audit = await _operations
+            .ListAccessTokensAsync(context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return AccessGrpcMapping.ToMessage(audit);
+    }
+
+    /// <inheritdoc />
+    public override async Task<RevokeAccessTokenResponse> RevokeAccessTokenAsync(
+        RevokeAccessTokenRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var result = await _operations
+            .RevokeAccessTokenAsync(
+                request.Jti ?? string.Empty,
+                DateTimeOffset.UtcNow,
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireAccessTokenAudit withdrawn => new RevokeAccessTokenResponse
+            {
+                Data = AccessGrpcMapping.ToMessage(withdrawn),
+            },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
     public override async Task<BuildIndexVersionResponse> BuildIndexVersionAsync(
         BuildIndexVersionRequest request,
         ServerCallContext context)

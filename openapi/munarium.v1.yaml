@@ -953,6 +953,64 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Problem"
+    get:
+      operationId: ListAccessTokens
+      tags: [access]
+      summary: Read the issuance audit.
+      description: |
+        Who was given what, and which of those still stand. Never a token: nothing here stores token material, because a
+        bearer credential is not stored anywhere. This surface is this port's own - the original names four scopes and has
+        no audit route - and it takes the access scope, which says that reading credentials is administrative work rather
+        than governance's.
+      responses:
+        "200":
+          description: A tenant's issued capabilities, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessTokenAuditList"
+        "401":
+          description: No capability was presented, or it does not carry the access scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/access-tokens/{jti}/revoke:
+    post:
+      operationId: RevokeAccessToken
+      tags: [access]
+      summary: Withdraw a capability.
+      description: |
+        The one thing that reaches a credential after it was handed out: nothing stores token material, so a withdrawal
+        records the identity instead and verification refuses a capability whose row says it was withdrawn. It is
+        idempotent, because an operator acting on a stale list has done nothing new.
+      parameters:
+        - name: jti
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The identity of the capability to withdraw.
+      responses:
+        "200":
+          description: The row as it now stands.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessTokenAudit"
+        "401":
+          description: No capability was presented, or it does not carry the access scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: No capability with that identity was issued by this deployment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
   /v1/indexes:
     post:
       operationId: BuildIndexVersion
@@ -2883,7 +2941,7 @@ components:
           type: array
           items:
             type: string
-          description: One or more of query, ingest, findings and evidence.
+          description: One or more of query, ingest, findings, evidence and access.
         runbooks:
           type: array
           items:
@@ -2909,6 +2967,51 @@ components:
           format: int64
           description: When it stops being valid, in seconds since the epoch.
 
+    AccessTokenAudit:
+      type: object
+      required: [token_id, subject, tenant, level, issued_at, expires_at]
+      properties:
+        token_id:
+          type: string
+          description: The capability's identity, which is what a withdrawal names.
+        subject:
+          type: string
+        tenant:
+          type: string
+        level:
+          type: integer
+        compartments:
+          type: array
+          items:
+            type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        runbooks:
+          type: array
+          items:
+            type: string
+          description: The runbooks it permits, absent when it permits any the level allows.
+        issued_at:
+          type: integer
+          format: int64
+        expires_at:
+          type: integer
+          format: int64
+        revoked_at:
+          type: integer
+          format: int64
+          description: When it was withdrawn, absent while it stands.
+
+    AccessTokenAuditList:
+      type: object
+      required: [capabilities]
+      properties:
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccessTokenAudit"
     IndexManifest:
       type: object
       description: |
