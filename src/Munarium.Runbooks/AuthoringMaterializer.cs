@@ -2,7 +2,6 @@ namespace Munarium.Runbooks;
 
 using System.Globalization;
 using System.Text;
-using System.Text.Json;
 using YamlDotNet.RepresentationModel;
 
 /// <summary>What a draft materialized into: the documents, and what still has to be answered.</summary>
@@ -47,10 +46,10 @@ public static class AuthoringMaterializer
         var todos = new List<string>();
         var shapeRef = $"{name}-documents@1";
 
-        var description = Text(answers, "identity.description") ?? Placeholder(
-            todos,
-            "identity.description: describe the corpus and the question it answers",
-            "TODO: describe the corpus and the question this application answers");
+        if (Text(answers, "identity.description") is null)
+        {
+            todos.Add("identity.description: describe the corpus and the question it answers");
+        }
 
         // Normalized rather than submitted for validation: the rule is unambiguous and a prefix without its slash binds
         // the wrong documents, so reproducing the mistake for a validator to catch would be the wrong kind of help.
@@ -92,10 +91,10 @@ public static class AuthoringMaterializer
         }
         else
         {
-            foreach (var area in areas)
+            foreach (var path in areas)
             {
-                var key = area.Path.Trim('/');
-                var level = uniform ? 0 : (int)(Lookup(levels, key) ?? 0);
+                var key = path.Trim('/');
+                var level = uniform ? 0 : (int)IntegerOf(Lookup(levels, key));
 
                 if (!uniform && Lookup(levels, key) is null)
                 {
@@ -107,7 +106,7 @@ public static class AuthoringMaterializer
                     shapeRef,
                     level,
                     uniform ? [] : LookupList(compartments, key),
-                    $"{root}{area.Path}",
+                    $"{root}{path}",
                     LookupList(mediaTypes, key)));
             }
         }
@@ -145,7 +144,7 @@ public static class AuthoringMaterializer
                     "cutover",
                     cutoverApproval
                         ? new YamlMappingNode { { "approval", "required" } }
-                        : new YamlMappingNode()
+                        : NoStep
                 },
             },
             new YamlMappingNode
@@ -219,6 +218,8 @@ public static class AuthoringMaterializer
             null);
     }
 
+    /// <summary>An empty step body, for a step that carries nothing.</summary>
+    private static readonly YamlMappingNode NoStep = [];
     /// <summary>The completion template a materialized runbook carries.</summary>
     /// <remarks>
     /// The measured lessons, in the template itself: cite what was read, say when the corpus does not establish an answer,
@@ -272,8 +273,17 @@ public static class AuthoringMaterializer
     /// <returns>The node.</returns>
     private static YamlScalarNode Scalar(long value) =>
         new(value.ToString(System.Globalization.CultureInfo.InvariantCulture));
-    private static YamlSequenceNode Sequence(IEnumerable<string> values) =>
-        new([.. values.Select(value => (YamlNode)new YamlScalarNode(value))]);
+    private static YamlSequenceNode Sequence(IEnumerable<string> values)
+    {
+        var sequence = new YamlSequenceNode();
+
+        foreach (var value in values)
+        {
+            sequence.Add(new YamlScalarNode(value));
+        }
+
+        return sequence;
+    }
 
     private static string Emit(YamlDocument document)
     {
@@ -312,17 +322,16 @@ public static class AuthoringMaterializer
         answers.TryGetValue(key, out var value) ? value as IReadOnlyDictionary<string, object?> : null;
 
     /// <summary>Reads one area's entry from a per-area map, with or without its trailing slash.</summary>
-    private static object? Lookup(IReadOnlyDictionary<string, object?>? map, string key)
-    {
-        if (map is null)
-        {
-            return null;
-        }
+    private static object? Lookup(IReadOnlyDictionary<string, object?>? map, string key) =>
+        map is null ? null : At(map, key);
 
-        return map.TryGetValue(key, out var value)
-            ? value
-            : map.TryGetValue($"{key}/", out var trailed) ? trailed : null;
-    }
+    /// <summary>Reads a per-area entry under a key with or without the trailing slash its path carries.</summary>
+    private static object? At(IReadOnlyDictionary<string, object?> map, string key) =>
+        map.TryGetValue(key, out var value) ? value : Trailed(map, key);
+
+    /// <summary>Reads the same entry under the spelling an area path carries in an answer.</summary>
+    private static object? Trailed(IReadOnlyDictionary<string, object?> map, string key) =>
+        map.TryGetValue(string.Concat(key, "/"), out var value) ? value : null;
 
     /// <summary>Reads one area's entry as a whole number.</summary>
     private static long IntegerOf(object? value) => value switch
@@ -341,9 +350,9 @@ public static class AuthoringMaterializer
     /// A path of one slash would put the entire corpus behind one collection whose name is malformed, so it is not an
     /// area - the original drops it for the same reason.
     /// </remarks>
-    private static List<(string Path, string Description)> Areas(IReadOnlyDictionary<string, object?> answers)
+    private static List<string> Areas(IReadOnlyDictionary<string, object?> answers)
     {
-        var areas = new List<(string Path, string Description)>();
+        var areas = new List<string>();
 
         if (!answers.TryGetValue("prefix.areas", out var value) || value is not IReadOnlyList<object?> declared)
         {
@@ -353,7 +362,7 @@ public static class AuthoringMaterializer
         foreach (var item in declared)
         {
             if (item is not IReadOnlyDictionary<string, object?> entry
-                || entry.TryGetValue("path", out var raw) is false
+                || !entry.TryGetValue("path", out var raw)
                 || raw is not string path)
             {
                 continue;
@@ -366,11 +375,7 @@ public static class AuthoringMaterializer
                 continue;
             }
 
-            areas.Add((
-                normalized,
-                entry.TryGetValue("description", out var description) && description is string text
-                    ? text
-                    : string.Empty));
+            areas.Add(normalized);
         }
 
         return areas;
@@ -401,7 +406,7 @@ public static class AuthoringMaterializer
             builder.ToString().Split('-', StringSplitOptions.RemoveEmptyEntries));
     }
 
-    /// <summary>Records a TODO and answers with the value that keeps the draft readable.</summary>
+    /// <summary>Records an unanswered question and answers with the value that keeps the draft readable.</summary>
     private static T Placeholder<T>(List<string> todos, string todo, T value)
     {
         todos.Add(todo);
