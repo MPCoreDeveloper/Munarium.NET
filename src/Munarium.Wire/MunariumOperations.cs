@@ -13,6 +13,7 @@ using Munarium.Evidence;
 using Munarium.Facts;
 using Munarium.Governance;
 using Munarium.Idempotency;
+using Munarium.Authoring;
 using Munarium.Ledger;
 using Munarium.Providers;
 using Munarium.Promises;
@@ -61,6 +62,7 @@ public sealed class MunariumOperations(
     IRunbookStore runbooks,
     ISessionStore sessions,
     IAccessTokenAudit accessAudit,
+    IAuthoringDraftStore authoring,
     string tenant,
     IModelProvider? model = null,
     string modelId = "")
@@ -88,6 +90,9 @@ public sealed class MunariumOperations(
 
     /// <summary>The problem identifier an unknown application pattern answers with.</summary>
     public const string UnknownAuthoringPatternProblem = "https://munarium.dev/problems/unknown-authoring-pattern";
+
+    /// <summary>The problem identifier a draft that is not kept here answers with.</summary>
+    public const string UnknownAuthoringDraftProblem = "https://munarium.dev/problems/unknown-authoring-draft";
     /// <summary>The problem identifier a document that is not the one declared answers with.</summary>
     public const string ContentHashMismatchProblem = "https://munarium.dev/problems/content-hash-mismatch";
 
@@ -213,6 +218,7 @@ public sealed class MunariumOperations(
     private readonly IEvidenceStore _evidence = evidence ?? throw new ArgumentNullException(nameof(evidence));
     private readonly ISourceStore _evidenceBytes = evidenceBytes ?? throw new ArgumentNullException(nameof(evidenceBytes));
     private readonly IAccessTokenAudit _accessAudit = accessAudit ?? throw new ArgumentNullException(nameof(accessAudit));
+    private readonly IAuthoringDraftStore _authoring = authoring ?? throw new ArgumentNullException(nameof(authoring));
     private readonly string _tenant = string.IsNullOrWhiteSpace(tenant)
         ? throw new ArgumentException("The deployment's tenant must be named.", nameof(tenant))
         : tenant;
@@ -248,6 +254,261 @@ public sealed class MunariumOperations(
         pattern.ShapeNames,
         pattern.HasCompletion,
         pattern.DecisionNotes);
+
+    /// <summary>Opens a draft, which is a name and optionally the pattern to start from.</summary>
+    /// <param name="request">What to open.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The draft, or why it could not be opened.</returns>
+    public async ValueTask<WireAuthoringDraftResult> OpenDraftAsync(
+        WireAuthoringDraftRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var name = (request.Name ?? string.Empty).Trim();
+
+        // The rule the materializer applies, refused here where it can still be explained: a draft whose name is not a
+        // runbook name opens and then cannot be materialized, which is a worse experience than being told now.
+        if (name.Length == 0 || name.Contains('@', StringComparison.Ordinal))
+        {
+            return new WireProblem(
+                InvalidRequestProblem,
+                $"a draft name must be non-empty and must not contain '@', and '{name}' is not",
+                Status: 400,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        var patternId = request.PatternId is { Length: > 0 } asked ? asked : null;
+
+        if (patternId is not null && AuthoringCatalog.Pattern(patternId) is null)
+        {
+            return new WireProblem(
+                UnknownAuthoringPatternProblem,
+                $"No application pattern with the identity '{patternId}' is served here.",
+                Status: 404,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        var stored = await _authoring
+            .SaveAsync(new AuthoringDraft { Name = name, PatternId = patternId }, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Draft(stored);
+    }
+
+    /// <summary>Lists the drafts this deployment keeps, most recently written first.</summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The drafts.</returns>
+    public async ValueTask<WireAuthoringDraftList> ListDraftsAsync(CancellationToken cancellationToken = default)
+    {
+        var drafts = await _authoring.ListAsync(cancellationToken).ConfigureAwait(false);
+
+        return new WireAuthoringDraftList([.. drafts.Select(Draft)]);
+    }
+
+    /// <summary>Reads one draft, with the questions its pattern asks and what is still open.</summary>
+    /// <param name="name">The draft name.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The draft, or a problem when there is none by that name.</returns>
+    public async ValueTask<WireAuthoringDraftResult> ReadDraftAsync(
+        string name,
+        CancellationToken cancellationToken = default)
+    {
+        var draft = await StoredAsync(name, cancellationToken).ConfigureAwait(false);
+
+        return draft is null ? UnknownDraft(name) : Draft(draft);
+    }
+
+    /// <summary>Replaces a draft answers.</summary>
+    /// <remarks>
+    /// A replacement rather than a merge, because that is what a PUT is: an answer an author removes has to disappear,
+    /// and a merge would keep it alive forever.
+    /// </remarks>
+    /// <param name="name">The draft name.</param>
+    /// <param name="answers">The answers as they now stand.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The draft as stored, or a problem when there is none by that name.</returns>
+    public async ValueTask<WireAuthoringDraftResult> AnswerDraftAsync(
+        string name,
+        WireAuthoringAnswers answers,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(answers);
+
+        var draft = await StoredAsync(name, cancellationToken).ConfigureAwait(false);
+
+        if (draft is null)
+        {
+            return UnknownDraft(name);
+        }
+
+        var stored = await _authoring
+            .SaveAsync(draft with { Answers = Answered(answers) }, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Draft(stored);
+    }
+
+    /// <summary>Reads a stored draft, or nothing when the name is blank.</summary>
+    /// <param name="name">The draft name.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The draft, or <see langword="null"/>.</returns>
+    private async ValueTask<AuthoringDraft?> StoredAsync(string name, CancellationToken cancellationToken) =>
+        string.IsNullOrWhiteSpace(name)
+            ? null
+            : await _authoring.FindAsync(name.Trim(), cancellationToken).ConfigureAwait(false);
+
+    /// <summary>The problem a draft that is not kept here answers with.</summary>
+    /// <param name="name">The name asked for.</param>
+    /// <returns>The problem.</returns>
+    private static WireProblem UnknownDraft(string name) => new(
+        UnknownAuthoringDraftProblem,
+        $"No draft named '{name}' is kept here.",
+        Status: 404,
+        ExpectedHead: 0,
+        ActualHead: 0);
+
+    /// <summary>Projects a stored draft: its answers, the questions its pattern asks, and what is still open.</summary>
+    /// <remarks>
+    /// The open questions come from the materializer rather than from a second set of rules: what a draft still owes is
+    /// exactly the TODOs its documents would carry, so a reader cannot be told a draft is complete when it would
+    /// materialize with placeholders.
+    /// </remarks>
+    /// <param name="draft">The stored draft.</param>
+    /// <returns>The wire shape.</returns>
+    private static WireAuthoringDraft Draft(AuthoringDraft draft)
+    {
+        var pattern = AuthoringCatalog.Pattern(draft.PatternId);
+        var (set, _) = AuthoringMaterializer.Build(draft.Name, pattern, draft.Answers);
+
+        return new WireAuthoringDraft(
+            draft.Name,
+            draft.PatternId,
+            draft.CreatedAt,
+            draft.UpdatedAt,
+            Values(draft.Answers),
+            [
+                .. AuthoringInterview
+                    .For(pattern)
+                    .Select(section => new WireAuthoringDraftSection(
+                        section.Id,
+                        section.Title,
+                        section.DocRef,
+                        [.. section.Questions.Select(Question)])),
+            ],
+            set?.Todos ?? []);
+    }
+
+    /// <summary>Reads one question as the contract carries it, with its default as the text of a JSON value.</summary>
+    /// <param name="question">The question.</param>
+    /// <returns>The wire shape.</returns>
+    private static WireAuthoringQuestion Question(InterviewQuestion question) => new(
+        question.Id,
+        question.Prompt,
+        question.Guidance,
+        question.Kind,
+        question.Required,
+        DefaultText(question.Default),
+        question.Choices,
+        question.MapsTo);
+
+    /// <summary>Reads a map of stored answers as the contract carries them.</summary>
+    /// <param name="fields">The answers.</param>
+    /// <returns>The wire shape.</returns>
+    private static Dictionary<string, WireAuthoringValue> Values(IReadOnlyDictionary<string, object?> fields)
+    {
+        var values = new Dictionary<string, WireAuthoringValue>(StringComparer.Ordinal);
+
+        foreach (var (name, value) in fields)
+        {
+            values[name] = Value(value);
+        }
+
+        return values;
+    }
+
+    /// <summary>Renders a question default as the text of a JSON value, without a serializer.</summary>
+    /// <remarks>
+    /// Hand-rolled because the reflective serializer is not available to a NativeAOT publish, and because a default is
+    /// one of three things: a whole number, a flag or a piece of text.
+    /// </remarks>
+    /// <param name="value">The default, or <see langword="null"/>.</param>
+    /// <returns>The text, or <see langword="null"/> when there is no default.</returns>
+    private static string? DefaultText(object? value) => value switch
+    {
+        null => null,
+        string text => string.Concat("\"", text, "\""),
+        bool flag => flag ? "true" : "false",
+        long number => number.ToString(CultureInfo.InvariantCulture),
+        int number => number.ToString(CultureInfo.InvariantCulture),
+        var other => other.ToString(),
+    };
+
+    /// <summary>Reads one stored answer as the contract carries it.</summary>
+    /// <param name="answer">The answer.</param>
+    /// <returns>The wire shape.</returns>
+    private static WireAuthoringValue Value(object? answer) => answer switch
+    {
+        null => new WireAuthoringValue(null, null, null, null, null),
+        string text => new WireAuthoringValue(text, null, null, null, null),
+        bool flag => new WireAuthoringValue(null, null, flag, null, null),
+        long number => new WireAuthoringValue(null, number, null, null, null),
+        int number => new WireAuthoringValue(null, number, null, null, null),
+        IReadOnlyList<object?> items => new WireAuthoringValue(null, null, null, [.. items.Select(Value)], null),
+        IReadOnlyDictionary<string, object?> fields => new WireAuthoringValue(
+            null,
+            null,
+            null,
+            null,
+            Values(fields)),
+        _ => throw new FormatException($"an answer of type {answer.GetType().Name} is not one this contract carries"),
+    };
+
+    /// <summary>Reads offered answers back into what a materializer and a store take.</summary>
+    /// <param name="answers">The offered answers.</param>
+    /// <returns>The answers.</returns>
+    private static Dictionary<string, object?> Answered(WireAuthoringAnswers answers)
+    {
+        var read = new Dictionary<string, object?>(StringComparer.Ordinal);
+
+        foreach (var (name, value) in answers.Answers)
+        {
+            read[name] = Answered(value);
+        }
+
+        return read;
+    }
+
+    /// <summary>Reads one offered answer back.</summary>
+    /// <param name="value">The offered answer.</param>
+    /// <returns>The answer.</returns>
+    private static object? Answered(WireAuthoringValue value) => value switch
+    {
+        { Text: { } text } => text,
+        { Number: { } number } => number,
+        { Flag: { } flag } => flag,
+        { Items: { } items } => new List<object?>(items.Select(Answered)),
+        { Fields: { } fields } => Fielded(fields),
+        _ => null,
+    };
+
+    /// <summary>Reads a map of offered answers back.</summary>
+    /// <param name="fields">The map.</param>
+    /// <returns>The answers.</returns>
+    private static Dictionary<string, object?> Fielded(
+        IReadOnlyDictionary<string, WireAuthoringValue> fields)
+    {
+        var read = new Dictionary<string, object?>(StringComparer.Ordinal);
+
+        foreach (var (name, value) in fields)
+        {
+            read[name] = Answered(value);
+        }
+
+        return read;
+    }
 
     /// <summary>Liveness.</summary>
     /// <returns>Healthy, and which contract is answering.</returns>

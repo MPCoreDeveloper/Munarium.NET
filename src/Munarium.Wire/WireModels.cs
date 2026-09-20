@@ -198,6 +198,56 @@ public sealed record WireAuthoringPatternList(IReadOnlyList<WireAuthoringPattern
 
 /// <summary>A pattern, or why it is not one this deployment serves.</summary>
 public readonly union WireAuthoringPatternResult(WireAuthoringPattern, WireProblem);
+/// <summary>A draft to open: its name, which is the runbook name it will materialize into, and an optional pattern.</summary>
+public sealed record WireAuthoringDraftRequest(string Name, string? PatternId = null);
+
+/// <summary>One answer, in whichever of the five shapes an interview asks in.</summary>
+/// <remarks>
+/// Recursive rather than free-form JSON, so a generated client knows what an answer is: text, a whole number, a flag, a
+/// list of answers, or a map of answers. Exactly one member is set, and a null member is a member the answer does not use.
+/// </remarks>
+public sealed record WireAuthoringValue(
+    string? Text,
+    long? Number,
+    bool? Flag,
+    IReadOnlyList<WireAuthoringValue>? Items,
+    IReadOnlyDictionary<string, WireAuthoringValue>? Fields);
+/// <summary>Answers to store, as the flat map they are.</summary>
+public sealed record WireAuthoringAnswers(IReadOnlyDictionary<string, WireAuthoringValue> Answers);
+
+/// <summary>One question of the interview, with the rule it teaches attached to it.</summary>
+public sealed record WireAuthoringQuestion(
+    string Id,
+    string Prompt,
+    string Guidance,
+    string Kind,
+    bool Required,
+    string? Default,
+    IReadOnlyList<string> Choices,
+    string MapsTo);
+
+/// <summary>One section of the interview, in the order the decisions are hard to revise.</summary>
+public sealed record WireAuthoringDraftSection(
+    string Id,
+    string Title,
+    string DocRef,
+    IReadOnlyList<WireAuthoringQuestion> Questions);
+
+/// <summary>One draft, with the questions its pattern asks and what is still open.</summary>
+public sealed record WireAuthoringDraft(
+    string Name,
+    string? PatternId,
+    string? CreatedAt,
+    string? UpdatedAt,
+    IReadOnlyDictionary<string, WireAuthoringValue> Answers,
+    IReadOnlyList<WireAuthoringDraftSection> Sections,
+    IReadOnlyList<string> Todos);
+
+/// <summary>The drafts, most recently written first.</summary>
+public sealed record WireAuthoringDraftList(IReadOnlyList<WireAuthoringDraft> Drafts);
+
+/// <summary>A draft, or why it could not be opened, read or answered.</summary>
+public readonly union WireAuthoringDraftResult(WireAuthoringDraft, WireProblem);
 
 /// <summary>A memory version: the identity claims are written under, and the node it occupies.</summary>
 /// <param name="VersionId">The version's identity, which is also the stream its claims go to.</param>

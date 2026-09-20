@@ -212,6 +212,10 @@ public sealed class MunariumKernel : IAsyncDisposable
         // corpus again. One table per version, named from a digest of it.
         var chunkStore = new SharpCoreDbIndexChunkStore(database);
 
+        // Where an author draft lives while it is being written. A table, because a draft that a restart forgets would
+        // be a draft nobody could answer in two sittings.
+        var draftStore = new SharpCoreDbAuthoringDraftStore(database);
+
         var audit = new SharpCoreDbAccessTokenAudit(database);
 
         // The sealed evidence plane: the artifacts, their single-use grants and their audit, in tables of their own. Its
@@ -265,6 +269,7 @@ public sealed class MunariumKernel : IAsyncDisposable
             runbooks,
             sessions,
             audit,
+            draftStore,
             Tenant);
 
 
