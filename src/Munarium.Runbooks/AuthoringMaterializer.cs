@@ -2,6 +2,7 @@ namespace Munarium.Runbooks;
 
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using YamlDotNet.RepresentationModel;
 
 /// <summary>What a draft materialized into: the documents, and what still has to be answered.</summary>
@@ -73,6 +74,11 @@ public static class AuthoringMaterializer
         var candidateN = Integer(answers, "retrieval.candidate_n") ?? 100;
         var cutoverApproval = Boolean(answers, "lifecycle.cutover_approval") ?? true;
         var keepVersions = Integer(answers, "lifecycle.keep_versions") ?? 2;
+        if (Integer(answers, "retrieval.max_chars") is { } chunkChars)
+        {
+            todos.Add("retrieval.max_chars: this port cuts at a kernel constant (" + chunkChars.ToString(CultureInfo.InvariantCulture) + "), so the answer is recorded but not applied");
+        }
+
         var completionApplies = pattern?.HasCompletion != false;
         var completionEnabled = completionApplies && (Boolean(answers, "completion.enabled") ?? true);
         var completionTier = Text(answers, "completion.tier") ?? "capable";
@@ -213,6 +219,7 @@ public static class AuthoringMaterializer
                 new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     [$"runbooks/{name}.yaml"] = yaml,
+                    [$"shapes/{name}-documents.json"] = Shape($"{name}-documents", answers, todos),
                 },
                 todos),
             null);
@@ -293,6 +300,162 @@ public static class AuthoringMaterializer
 
         return writer.ToString();
     }
+
+    /// <summary>Builds the shape document a draft reads its facts through.</summary>
+    /// <remarks>
+    /// JSON rather than YAML, because this deployment loads shapes from JSON: a materialized shape is one it can drop
+    /// into its shapes directory and use. The lineage is subject and key, which is the vocabulary own rule - the value is
+    /// what changes over time and must not fork a lineage - and the two spellings travel with it, because a key carrying a
+    /// dot silently steals from the subject when subject.key is split at the last dot.
+    /// </remarks>
+    /// <param name="shapeName">The name the draft reads its facts through.</param>
+    /// <param name="answers">The answers.</param>
+    /// <param name="todos">What still has to be answered, appended to in place.</param>
+    /// <returns>The shape as JSON.</returns>
+    private static string Shape(string shapeName, IReadOnlyDictionary<string, object?> answers, List<string> todos)
+    {
+        var required = new List<string> { "subject", "key", "value" };
+        var declared = Fields(answers, todos);
+        using var buffer = new MemoryStream();
+
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("name", shapeName);
+            writer.WriteNumber("version", 1);
+            writer.WriteStartArray("identity");
+            writer.WriteStringValue("subject");
+            writer.WriteStringValue("key");
+            writer.WriteEndArray();
+            writer.WritePropertyName("schema");
+            writer.WriteStartObject();
+            writer.WriteString("type", "object");
+            writer.WritePropertyName("properties");
+            writer.WriteStartObject();
+            StringField(writer, "subject", "^[a-z][a-z0-9_]{0,63}$", 0, 0);
+            StringField(writer, "key", "^[a-z][a-z0-9_:-]{0,63}$", 0, 0);
+            StringField(writer, "value", string.Empty, 1, 512);
+
+            foreach (var (name, type, isRequired) in declared)
+            {
+                writer.WritePropertyName(name);
+                writer.WriteStartObject();
+                writer.WriteString("type", type);
+                writer.WriteEndObject();
+
+                if (isRequired)
+                {
+                    required.Add(name);
+                }
+            }
+
+            writer.WriteEndObject();
+            writer.WriteStartArray("required");
+
+            foreach (var name in required)
+            {
+                writer.WriteStringValue(name);
+            }
+
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        }
+
+        return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    /// <summary>Writes a string field with whatever constraints it carries.</summary>
+    /// <param name="writer">The writer.</param>
+    /// <param name="name">The field name.</param>
+    /// <param name="pattern">The pattern, or empty for none.</param>
+    /// <param name="minLength">The shortest value, or zero for none.</param>
+    /// <param name="maxLength">The longest value, or zero for none.</param>
+    private static void StringField(Utf8JsonWriter writer, string name, string pattern, int minLength, int maxLength)
+    {
+        writer.WritePropertyName(name);
+        writer.WriteStartObject();
+        writer.WriteString("type", "string");
+
+        if (pattern.Length > 0)
+        {
+            writer.WriteString("pattern", pattern);
+        }
+
+        if (minLength > 0)
+        {
+            writer.WriteNumber("minLength", minLength);
+        }
+
+        if (maxLength > 0)
+        {
+            writer.WriteNumber("maxLength", maxLength);
+        }
+
+        writer.WriteEndObject();
+    }
+
+    /// <summary>Reads the extra fact-body fields an author asked for, refusing what the vocabulary cannot carry.</summary>
+    /// <remarks>
+    /// Two refusals, both the original: a name that is not a lowercase field name is skipped, and a name from the core
+    /// vocabulary is skipped, because a field named key would quietly replace the dot-free-key pattern the whole
+    /// subject.key convention rests on. Both are reported rather than dropped in silence.
+    /// </remarks>
+    /// <param name="answers">The answers.</param>
+    /// <param name="todos">What still has to be answered, appended to in place.</param>
+    /// <returns>The fields that survived, with their type and whether they are required.</returns>
+    private static List<(string Name, string Type, bool Required)> Fields(
+        IReadOnlyDictionary<string, object?> answers,
+        List<string> todos)
+    {
+        var fields = new List<(string Name, string Type, bool Required)>();
+
+        if (!answers.TryGetValue("extraction.fact_fields", out var value) || value is not IReadOnlyList<object?> declared)
+        {
+            return fields;
+        }
+
+        foreach (var item in declared)
+        {
+            if (item is not IReadOnlyDictionary<string, object?> entry
+                || !entry.TryGetValue("key", out var raw)
+                || raw is not string name
+                || name.Trim().Length == 0)
+            {
+                continue;
+            }
+
+            name = name.Trim();
+
+            if (!IsFieldName(name))
+            {
+                todos.Add($"extraction.fact_fields: '{name}' is not a lowercase field name and was skipped");
+                continue;
+            }
+
+            if (name is "subject" or "key" or "value")
+            {
+                todos.Add($"extraction.fact_fields: '{name}' is the core vocabulary and was skipped");
+                continue;
+            }
+
+            fields.Add((
+                name,
+                entry.TryGetValue("type", out var declaredType) && declaredType is string kind ? kind : "string",
+                entry.TryGetValue("required", out var wanted) && wanted is true));
+        }
+
+        return fields;
+    }
+
+    /// <summary>Whether a name is one the fact vocabulary carries.</summary>
+    /// <param name="name">The name.</param>
+    /// <returns>Whether it is a lowercase letter followed by lowercase letters, digits or underscores.</returns>
+    private static bool IsFieldName(string name) =>
+        name.Length > 0
+        && char.IsAsciiLetterLower(name[0])
+        && name.All(character =>
+            char.IsAsciiLetterLower(character) || char.IsAsciiDigit(character) || character == '_');
 
     /// <summary>Reads a non-empty text answer.</summary>
     private static string? Text(IReadOnlyDictionary<string, object?> answers, string key) =>

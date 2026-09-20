@@ -1,5 +1,7 @@
 namespace Munarium.Runbooks.Tests;
 
+using System.Text.Json;
+
 /// <summary>Tests for materialization: answers in, documents out, and a TODO for whatever is missing.</summary>
 /// <remarks>
 /// The proof is the one the original makes: every emitted document is read back through the reader a deployment applies
@@ -119,6 +121,104 @@ public class AuthoringMaterializerTests
         Assert.Contains("name: t-real", set.Documents["runbooks/t.yaml"], StringComparison.Ordinal);
         Assert.DoesNotContain("name: t-index", set.Documents["runbooks/t.yaml"], StringComparison.Ordinal);
     }
+
+    /// <summary>The shape a draft is read through carries the core vocabulary and its lineage.</summary>
+    [Fact]
+    public void TheShapeCarriesTheCoreVocabularyAndItsLineage()
+    {
+        var (set, problem) = AuthoringMaterializer.Build(
+            "vendor-security", AuthoringCatalog.Pattern("ask-the-corpus"), Canonical());
+
+        Assert.Null(problem);
+        Assert.NotNull(set);
+
+        using var shape = JsonDocument.Parse(set.Documents["shapes/vendor-security-documents.json"]);
+        var root = shape.RootElement;
+
+        Assert.Equal("vendor-security-documents", root.GetProperty("name").GetString());
+        Assert.Equal(1, root.GetProperty("version").GetInt32());
+        Assert.Equal(
+            ["subject", "key"],
+            root.GetProperty("identity").EnumerateArray().Select(entry => entry.GetString()));
+
+        var schema = root.GetProperty("schema");
+        var properties = schema.GetProperty("properties");
+
+        Assert.Equal("object", schema.GetProperty("type").GetString());
+        Assert.Equal("^[a-z][a-z0-9_]{0,63}$", properties.GetProperty("subject").GetProperty("pattern").GetString());
+        Assert.Equal("^[a-z][a-z0-9_:-]{0,63}$", properties.GetProperty("key").GetProperty("pattern").GetString());
+        Assert.Equal(512, properties.GetProperty("value").GetProperty("maxLength").GetInt32());
+        Assert.Equal(
+            ["subject", "key", "value"],
+            schema.GetProperty("required").EnumerateArray().Select(entry => entry.GetString()));
+    }
+
+    /// <summary>An added field reaches the schema, and the required list only when it was asked for.</summary>
+    [Fact]
+    public void AnAddedFieldReachesTheSchema()
+    {
+        var answers = Canonical();
+        answers["extraction.fact_fields"] = new object?[]
+        {
+            Field("amount", "number", required: true),
+            Field("note", "string", required: false),
+        };
+
+        var (set, _) = AuthoringMaterializer.Build("t", null, answers);
+
+        Assert.NotNull(set);
+        Assert.Empty(set.Todos);
+
+        using var shape = JsonDocument.Parse(set.Documents["shapes/t-documents.json"]);
+        var schema = shape.RootElement.GetProperty("schema");
+
+        Assert.Equal("number", schema.GetProperty("properties").GetProperty("amount").GetProperty("type").GetString());
+        Assert.Equal(
+            ["subject", "key", "value", "amount"],
+            schema.GetProperty("required").EnumerateArray().Select(entry => entry.GetString()));
+    }
+
+    /// <summary>A field the vocabulary cannot carry is refused and reported, not dropped in silence.</summary>
+    [Fact]
+    public void AFieldTheVocabularyCannotCarryIsRefused()
+    {
+        var answers = Canonical();
+        answers["extraction.fact_fields"] = new object?[]
+        {
+            Field("Subject", "string", required: false),
+            Field("key", "string", required: false),
+        };
+
+        var (set, _) = AuthoringMaterializer.Build("t", null, answers);
+
+        Assert.NotNull(set);
+        Assert.Equal(2, set.Todos.Count);
+        Assert.Contains(set.Todos, todo => todo.Contains("lowercase field name", StringComparison.Ordinal));
+        Assert.Contains(set.Todos, todo => todo.Contains("core vocabulary", StringComparison.Ordinal));
+
+        using var shape = JsonDocument.Parse(set.Documents["shapes/t-documents.json"]);
+        var properties = shape.RootElement.GetProperty("schema").GetProperty("properties");
+
+        Assert.False(properties.TryGetProperty("Subject", out _));
+        Assert.Equal("^[a-z][a-z0-9_:-]{0,63}$", properties.GetProperty("key").GetProperty("pattern").GetString());
+    }
+
+    /// <summary>An answered chunk size is recorded and not applied, because the kernel cuts at a constant.</summary>
+    [Fact]
+    public void AnAnsweredChunkSizeIsRecordedAndNotApplied()
+    {
+        var answers = Canonical();
+        answers["retrieval.max_chars"] = 900L;
+
+        var (set, _) = AuthoringMaterializer.Build("t", null, answers);
+
+        Assert.NotNull(set);
+        Assert.Contains(set.Todos, todo => todo.Contains("retrieval.max_chars", StringComparison.Ordinal));
+    }
+
+    /// <summary>One extra fact-body field as an author answers it.</summary>
+    private static Dictionary<string, object?> Field(string key, string type, bool required) =>
+        new(StringComparer.Ordinal) { ["key"] = key, ["type"] = type, ["required"] = required };
 
     private static Dictionary<string, object?> Area(string path, string description) =>
         new(StringComparer.Ordinal) { ["path"] = path, ["description"] = description };
