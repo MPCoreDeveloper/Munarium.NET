@@ -1,0 +1,411 @@
+namespace Munarium.Runbooks;
+
+using System.Globalization;
+using System.Text;
+using System.Text.Json;
+using YamlDotNet.RepresentationModel;
+
+/// <summary>What a draft materialized into: the documents, and what still has to be answered.</summary>
+/// <param name="Documents">The path of each document, mapped to its text.</param>
+/// <param name="Todos">The questions an author still has to answer, in the order they were noticed.</param>
+public sealed record Materialized(IReadOnlyDictionary<string, string> Documents, IReadOnlyList<string> Todos);
+
+/// <summary>Deterministic materialization: interview answers into the documents a draft needs.</summary>
+/// <remarks>
+/// Deterministic and model-free, like the interview it follows: the same answers produce the same bytes, and an
+/// unanswered required question produces a placeholder plus an entry in <see cref="Materialized.Todos"/> rather than a
+/// failure, so a fresh draft is red TODOs and not a red document.
+/// <para>
+/// Everything emitted is proven by re-reading it through <see cref="RunbookReader"/>, which is the reader a deployment
+/// applies it with - the same proof the original makes by re-parsing before a document leaves the module.
+/// </para>
+/// </remarks>
+public static class AuthoringMaterializer
+{
+    /// <summary>The container documents are stored in.</summary>
+    private const string Container = "sources";
+
+    /// <summary>Builds a draft's runbook from interview answers.</summary>
+    /// <param name="name">The draft name, which is the runbook name.</param>
+    /// <param name="pattern">The chosen pattern, or <see langword="null"/> while none is chosen.</param>
+    /// <param name="answers">One flat map of answers, keyed by question id.</param>
+    /// <returns>The documents, or why nothing could be built.</returns>
+    public static (Materialized? Set, string? Problem) Build(
+        string name,
+        AuthoringPattern? pattern,
+        IReadOnlyDictionary<string, object?> answers)
+    {
+        ArgumentNullException.ThrowIfNull(answers);
+
+        name = (name ?? string.Empty).Trim();
+
+        if (name.Length == 0 || name.Contains('@', StringComparison.Ordinal))
+        {
+            return (null, $"draft name '{name}' must be non-empty and must not contain '@'");
+        }
+
+        var todos = new List<string>();
+        var shapeRef = $"{name}-documents@1";
+
+        var description = Text(answers, "identity.description") ?? Placeholder(
+            todos,
+            "identity.description: describe the corpus and the question it answers",
+            "TODO: describe the corpus and the question this application answers");
+
+        // Normalized rather than submitted for validation: the rule is unambiguous and a prefix without its slash binds
+        // the wrong documents, so reproducing the mistake for a validator to catch would be the wrong kind of help.
+        var root = Text(answers, "prefix.root") is { } submitted
+            ? Normalize(submitted)
+            : Placeholder(
+                todos,
+                $"prefix.root: choose the path prefix, which is immutable once uploaded; defaulting to '{name}/'",
+                $"{name}/");
+
+        var areas = Areas(answers);
+        var levels = Map(answers, "access.area_levels");
+        var compartments = Map(answers, "access.area_compartments");
+        var mediaTypes = Map(answers, "extraction.media_types");
+
+        // Uniform defaults to true only when no per-area answer exists: an author who supplied levels and then had them
+        // flattened to level 0 would have been told nothing.
+        var uniform = Boolean(answers, "access.uniform_public") ?? (levels is null && compartments is null);
+        var topK = Integer(answers, "retrieval.top_k") ?? 10;
+        var rrfK = Integer(answers, "retrieval.rrf_k") ?? 60;
+        var candidateN = Integer(answers, "retrieval.candidate_n") ?? 100;
+        var cutoverApproval = Boolean(answers, "lifecycle.cutover_approval") ?? true;
+        var keepVersions = Integer(answers, "lifecycle.keep_versions") ?? 2;
+        var completionApplies = pattern?.HasCompletion != false;
+        var completionEnabled = completionApplies && (Boolean(answers, "completion.enabled") ?? true);
+        var completionTier = Text(answers, "completion.tier") ?? "capable";
+        var verifyQuotes = Boolean(answers, "completion.verification_quotes") ?? true;
+        var verifyCitations = Boolean(answers, "completion.verification_citations") ?? true;
+
+        var collections = new YamlSequenceNode();
+
+        if (areas.Count == 0)
+        {
+            todos.Add(
+                "prefix.areas: list the corpus folders, one per governance boundary - defaulting to a single "
+                + "whole-prefix collection");
+
+            collections.Add(Collection($"{name}-index", shapeRef, 0, [], root, []));
+        }
+        else
+        {
+            foreach (var area in areas)
+            {
+                var key = area.Path.Trim('/');
+                var level = uniform ? 0 : (int)(Lookup(levels, key) ?? 0);
+
+                if (!uniform && Lookup(levels, key) is null)
+                {
+                    todos.Add($"access.area_levels: no level for area '{key}'; defaulting to 0");
+                }
+
+                collections.Add(Collection(
+                    $"{name}-{Slug(key)}",
+                    shapeRef,
+                    level,
+                    uniform ? [] : LookupList(compartments, key),
+                    $"{root}{area.Path}",
+                    LookupList(mediaTypes, key)));
+            }
+        }
+
+        var tasks = new YamlMappingNode
+        {
+            { "validation", new YamlMappingNode { { "provider", "local" }, { "tier", "fast" } } },
+        };
+
+        if (completionEnabled)
+        {
+            tasks.Add("completion", new YamlMappingNode { { "provider", "local" }, { "tier", completionTier } });
+        }
+
+        if (string.Equals(Text(answers, "retrieval.embedding"), "byok", StringComparison.Ordinal))
+        {
+            todos.Add("retrieval.embedding: a BYOK embedder is a measured choice this materializer does not write yet");
+        }
+
+        if (string.Equals(Text(answers, "completion.allow_overrides"), "all", StringComparison.Ordinal))
+        {
+            // Overrides here name the providers a caller may choose, so there is no way to say any: reporting that is
+            // better than writing a form that means something else.
+            todos.Add("completion.allow_overrides: permitting any is not expressible here; none was named");
+        }
+
+        var steps = new YamlSequenceNode
+        {
+            new YamlMappingNode { { "resolveSources", new YamlMappingNode() } },
+            new YamlMappingNode { { "buildIndex", new YamlMappingNode() } },
+            new YamlMappingNode { { "verify", new YamlMappingNode() } },
+            new YamlMappingNode
+            {
+                {
+                    "cutover",
+                    cutoverApproval
+                        ? new YamlMappingNode { { "approval", "required" } }
+                        : new YamlMappingNode()
+                },
+            },
+            new YamlMappingNode
+            {
+                { "retireOld", new YamlMappingNode { { "keep_versions", Scalar(keepVersions) } } },
+            },
+        };
+
+        var spec = new YamlMappingNode
+        {
+            { "sources", new YamlMappingNode { { "container", Container }, { "prefix", root } } },
+            { "collections", collections },
+            {
+                "retrieval",
+                new YamlMappingNode { { "topK", Scalar(topK) }, { "rrfK", Scalar(rrfK) }, { "candidateN", Scalar(candidateN) } }
+            },
+            {
+                "models",
+                new YamlMappingNode
+                {
+                    { "default", new YamlMappingNode { { "provider", "local" }, { "tier", "capable" } } },
+                    { "tasks", tasks },
+                    { "allowOverrides", new YamlSequenceNode() },
+                }
+            },
+            { "steps", steps },
+        };
+
+        if (completionEnabled)
+        {
+            spec.Add(
+                "completion",
+                new YamlMappingNode
+                {
+                    { "promptTemplate", PromptTemplate },
+                    {
+                        "verification",
+                        new YamlMappingNode
+                        {
+                            { "quotes", Scalar(verifyQuotes) },
+                            { "citations", Scalar(verifyCitations) },
+                            { "maxRetries", Scalar(1) },
+                        }
+                    },
+                });
+        }
+
+        var yaml = Emit(new YamlDocument(
+            new YamlMappingNode
+            {
+                { "apiVersion", "munarium.ioka.io/v1" },
+                { "kind", "Runbook" },
+                { "metadata", new YamlMappingNode { { "name", name }, { "version", Scalar(1) } } },
+                { "spec", spec },
+            }));
+
+        // The proof the original makes, made the same way: a document is only a document if the reader a deployment
+        // applies it with can read it.
+        if (RunbookReader.Read(yaml) is (null, { } refused))
+        {
+            return (null, $"the materialized runbook does not read: {refused}");
+        }
+
+        return (
+            new Materialized(
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    [$"runbooks/{name}.yaml"] = yaml,
+                },
+                todos),
+            null);
+    }
+
+    /// <summary>The completion template a materialized runbook carries.</summary>
+    /// <remarks>
+    /// The measured lessons, in the template itself: cite what was read, say when the corpus does not establish an answer,
+    /// and enumerate a whole set rather than sampling it, because a partial answer reads as complete.
+    /// </remarks>
+    private const string PromptTemplate =
+        "Answer only from the evidence below and cite every claim as doc#node. If the evidence does not establish an "
+        + "answer, say so plainly: a search hit you did not read is not a citation, and a partial answer to a whole-set "
+        + "question reads as complete.\n\nEvidence:\n{context}\n\nQuestion: {query}\n";
+
+    /// <summary>Builds one collection binding a prefix to its shape and access.</summary>
+    private static YamlMappingNode Collection(
+        string name,
+        string shape,
+        int level,
+        IReadOnlyList<string> compartments,
+        string prefix,
+        IReadOnlyList<string> mediaTypes)
+    {
+        var sources = new YamlMappingNode { { "filenamePrefix", prefix } };
+
+        if (mediaTypes.Count > 0)
+        {
+            sources.Add("mediaTypes", Sequence(mediaTypes));
+        }
+
+        var collection = new YamlMappingNode
+        {
+            { "name", name },
+            { "shape", shape },
+            { "accessLevel", Scalar(level) },
+        };
+
+        if (compartments.Count > 0)
+        {
+            collection.Add("compartments", Sequence(compartments));
+        }
+
+        collection.Add("sources", sources);
+
+        return collection;
+    }
+
+    /// <summary>Writes a flag, as the two words YAML reads rather than the two a serializer would.</summary>
+    /// <param name="value">The flag.</param>
+    /// <returns>The node.</returns>
+    private static YamlScalarNode Scalar(bool value) =>
+        new(value ? "true" : "false");
+    /// <summary>Writes a number, which is text in YAML like everything else.</summary>
+    /// <param name="value">The number.</param>
+    /// <returns>The node.</returns>
+    private static YamlScalarNode Scalar(long value) =>
+        new(value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    private static YamlSequenceNode Sequence(IEnumerable<string> values) =>
+        new([.. values.Select(value => (YamlNode)new YamlScalarNode(value))]);
+
+    private static string Emit(YamlDocument document)
+    {
+        var writer = new StringWriter(CultureInfo.InvariantCulture);
+
+        new YamlStream(document).Save(writer, assignAnchors: false);
+
+        return writer.ToString();
+    }
+
+    /// <summary>Reads a non-empty text answer.</summary>
+    private static string? Text(IReadOnlyDictionary<string, object?> answers, string key) =>
+        answers.TryGetValue(key, out var value) && value is string text && text.Trim().Length > 0
+            ? text.Trim()
+            : null;
+
+    /// <summary>Reads a whole-number answer.</summary>
+    private static long? Integer(IReadOnlyDictionary<string, object?> answers, string key) =>
+        answers.TryGetValue(key, out var value)
+            ? value switch
+            {
+                long number => number,
+                int number => number,
+                _ => null,
+            }
+            : null;
+
+    /// <summary>Reads a yes-or-no answer.</summary>
+    private static bool? Boolean(IReadOnlyDictionary<string, object?> answers, string key) =>
+        answers.TryGetValue(key, out var value) && value is bool flag ? flag : null;
+
+    /// <summary>Reads a per-area map answer.</summary>
+    private static IReadOnlyDictionary<string, object?>? Map(
+        IReadOnlyDictionary<string, object?> answers,
+        string key) =>
+        answers.TryGetValue(key, out var value) ? value as IReadOnlyDictionary<string, object?> : null;
+
+    /// <summary>Reads one area's entry from a per-area map, with or without its trailing slash.</summary>
+    private static object? Lookup(IReadOnlyDictionary<string, object?>? map, string key)
+    {
+        if (map is null)
+        {
+            return null;
+        }
+
+        return map.TryGetValue(key, out var value)
+            ? value
+            : map.TryGetValue($"{key}/", out var trailed) ? trailed : null;
+    }
+
+    /// <summary>Reads one area's entry as a whole number.</summary>
+    private static long IntegerOf(object? value) => value switch
+    {
+        long number => number,
+        int number => number,
+        _ => 0L,
+    };
+
+    /// <summary>Reads one area's entry as a list of strings.</summary>
+    private static IReadOnlyList<string> LookupList(IReadOnlyDictionary<string, object?>? map, string key) =>
+        Lookup(map, key) is IReadOnlyList<object?> items ? [.. items.OfType<string>()] : [];
+
+    /// <summary>Reads the corpus folders, dropping anything that would bind the whole root.</summary>
+    /// <remarks>
+    /// A path of one slash would put the entire corpus behind one collection whose name is malformed, so it is not an
+    /// area - the original drops it for the same reason.
+    /// </remarks>
+    private static List<(string Path, string Description)> Areas(IReadOnlyDictionary<string, object?> answers)
+    {
+        var areas = new List<(string Path, string Description)>();
+
+        if (!answers.TryGetValue("prefix.areas", out var value) || value is not IReadOnlyList<object?> declared)
+        {
+            return areas;
+        }
+
+        foreach (var item in declared)
+        {
+            if (item is not IReadOnlyDictionary<string, object?> entry
+                || entry.TryGetValue("path", out var raw) is false
+                || raw is not string path)
+            {
+                continue;
+            }
+
+            var normalized = Normalize(path.Trim().TrimStart('/'));
+
+            if (normalized.Length == 0)
+            {
+                continue;
+            }
+
+            areas.Add((
+                normalized,
+                entry.TryGetValue("description", out var description) && description is string text
+                    ? text
+                    : string.Empty));
+        }
+
+        return areas;
+    }
+
+    /// <summary>Ends a prefix in a slash, because matching is a literal prefix.</summary>
+    /// <param name="prefix">The prefix as answered.</param>
+    /// <returns>The prefix as a binding needs it.</returns>
+    private static string Normalize(string prefix) =>
+        prefix.Length == 0 || prefix.EndsWith('/')
+            ? prefix
+            : string.Concat(prefix, "/");
+
+    /// <summary>Folds a folder path into a collection name.</summary>
+    /// <param name="value">The path.</param>
+    /// <returns>The name fragment.</returns>
+    private static string Slug(string value)
+    {
+        var builder = new StringBuilder(value.Length);
+
+        foreach (var character in value.ToLowerInvariant())
+        {
+            builder.Append(char.IsAsciiLetterOrDigit(character) ? character : '-');
+        }
+
+        return string.Join(
+            '-',
+            builder.ToString().Split('-', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    /// <summary>Records a TODO and answers with the value that keeps the draft readable.</summary>
+    private static T Placeholder<T>(List<string> todos, string todo, T value)
+    {
+        todos.Add(todo);
+
+        return value;
+    }
+}
