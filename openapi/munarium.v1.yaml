@@ -923,6 +923,113 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/authoring/drafts:
+    post:
+      operationId: CreateAuthoringDraft
+      tags: [authoring]
+      summary: Open a draft.
+      description: |
+        A draft is a name and, optionally, the pattern to start from. The name is also the runbook name it will
+        materialize into, so a name that could not be one is refused here rather than at the end. Opening a draft that
+        already exists answers with it as it stands rather than replacing it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthoringDraftRequest"
+      responses:
+        "200":
+          description: The draft.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthoringDraft"
+        "400":
+          description: The name could not be a runbook name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: This deployment does not serve that pattern.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    get:
+      operationId: ListAuthoringDrafts
+      tags: [authoring]
+      summary: The drafts this deployment keeps.
+      responses:
+        "200":
+          description: The drafts, most recently written first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthoringDraftList"
+
+  /v1/authoring/drafts/{draft_id}:
+    get:
+      operationId: GetAuthoringDraft
+      tags: [authoring]
+      summary: One draft, with the questions its pattern asks and what is still open.
+      parameters:
+        - name: draft_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The draft name.
+      responses:
+        "200":
+          description: The draft.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthoringDraft"
+        "404":
+          description: No draft by that name is kept here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/authoring/drafts/{draft_id}/answers:
+    put:
+      operationId: PutAuthoringDraftAnswers
+      tags: [authoring]
+      summary: Replace a draft answers.
+      description: |
+        A replacement rather than a merge, because that is what a PUT is: an answer an author removes has to disappear,
+        and a merge would keep it alive forever.
+      parameters:
+        - name: draft_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The draft name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthoringAnswers"
+      responses:
+        "200":
+          description: The draft as stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthoringDraft"
+        "404":
+          description: No draft by that name is kept here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
   /v1/authoring/patterns:
     get:
       operationId: ListAuthoringPatterns
@@ -3045,6 +3152,137 @@ components:
           type: integer
           format: int64
           description: When it was withdrawn, absent while it stands.
+
+    AuthoringValue:
+      type: object
+      description: |
+        One answer, in whichever of the five shapes an interview asks in: text, a whole number, a flag, a list of answers,
+        or a map of answers. Exactly one member is set.
+      properties:
+        text:
+          type: string
+        number:
+          type: integer
+          format: int64
+        flag:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuthoringValue"
+        fields:
+          type: array
+          description: One entry per member of a map answer.
+          items:
+            $ref: "#/components/schemas/AuthoringAnswer"
+
+    AuthoringAnswer:
+      type: object
+      required: [name, value]
+      properties:
+        name:
+          type: string
+          description: The question id this answers.
+        value:
+          $ref: "#/components/schemas/AuthoringValue"
+
+    AuthoringAnswers:
+      type: object
+      required: [answers]
+      properties:
+        answers:
+          type: array
+          description: |
+            One entry per answer. A list of pairs rather than a map, because a map of values would be generated as a
+            well-known Struct, and a generated client is better served by a type it can name.
+          items:
+            $ref: "#/components/schemas/AuthoringAnswer"
+
+    AuthoringDraftRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: The draft name, which is the runbook name it will materialize into.
+        pattern_id:
+          type: string
+          description: The application pattern to start from, absent while none is chosen.
+
+    AuthoringQuestion:
+      type: object
+      required: [id, prompt, guidance, kind, required, maps_to]
+      properties:
+        id:
+          type: string
+        prompt:
+          type: string
+        guidance:
+          type: string
+        kind:
+          type: string
+          description: string, text, int, bool, enum, areas, fields or map.
+        required:
+          type: boolean
+        default:
+          type: string
+          description: The default as the text of a JSON value, absent when the question has none.
+        choices:
+          type: array
+          items:
+            type: string
+        maps_to:
+          type: string
+
+    AuthoringDraftSection:
+      type: object
+      required: [id, title, doc_ref, questions]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        doc_ref:
+          type: string
+        questions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuthoringQuestion"
+
+    AuthoringDraft:
+      type: object
+      required: [name, answers, sections, todos]
+      properties:
+        name:
+          type: string
+        pattern_id:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+        answers:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuthoringAnswer"
+        sections:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuthoringDraftSection"
+        todos:
+          type: array
+          items:
+            type: string
+          description: What still has to be answered, from the same rules that would materialize the draft.
+
+    AuthoringDraftList:
+      type: object
+      required: [drafts]
+      properties:
+        drafts:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuthoringDraft"
 
     AuthoringPattern:
       type: object

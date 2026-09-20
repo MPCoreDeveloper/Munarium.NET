@@ -71,6 +71,164 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
             string.Equals(entry.Key, "authorization", StringComparison.OrdinalIgnoreCase))?.Value;
 
     /// <inheritdoc />
+    public override async Task<CreateAuthoringDraftResponse> CreateAuthoringDraftAsync(
+        CreateAuthoringDraftRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        return await _operations
+            .OpenDraftAsync(
+                new WireAuthoringDraftRequest(request.Body?.Name ?? string.Empty, request.Body?.PatternId),
+                context.CancellationToken)
+            .ConfigureAwait(false) switch
+        {
+            WireAuthoringDraft draft => new CreateAuthoringDraftResponse { Data = Draft(draft) },
+            WireProblem problem => throw Problem(problem),
+            var other => throw new InvalidOperationException($"unexpected draft result: {other}"),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ListAuthoringDraftsResponse> ListAuthoringDraftsAsync(
+        ListAuthoringDraftsRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var listed = await _operations.ListDraftsAsync(context.CancellationToken).ConfigureAwait(false);
+
+        return new ListAuthoringDraftsResponse
+        {
+            Data = new AuthoringDraftList { Drafts = { listed.Drafts.Select(Draft) } },
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<GetAuthoringDraftResponse> GetAuthoringDraftAsync(
+        GetAuthoringDraftRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        return await _operations
+            .ReadDraftAsync(request.DraftId, context.CancellationToken)
+            .ConfigureAwait(false) switch
+        {
+            WireAuthoringDraft draft => new GetAuthoringDraftResponse { Data = Draft(draft) },
+            WireProblem problem => throw Problem(problem),
+            var other => throw new InvalidOperationException($"unexpected draft result: {other}"),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<PutAuthoringDraftAnswersResponse> PutAuthoringDraftAnswersAsync(
+        PutAuthoringDraftAnswersRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        return await _operations
+            .AnswerDraftAsync(request.DraftId, Answers(request.Body), context.CancellationToken)
+            .ConfigureAwait(false) switch
+        {
+            WireAuthoringDraft draft => new PutAuthoringDraftAnswersResponse { Data = Draft(draft) },
+            WireProblem problem => throw Problem(problem),
+            var other => throw new InvalidOperationException($"unexpected draft result: {other}"),
+        };
+    }
+
+    /// <summary>Carries a draft as the contract carries it.</summary>
+    /// <param name="draft">The draft.</param>
+    /// <returns>The message.</returns>
+    private static AuthoringDraft Draft(WireAuthoringDraft draft) => new()
+    {
+        Name = draft.Name,
+        PatternId = draft.PatternId ?? string.Empty,
+        CreatedAt = draft.CreatedAt ?? string.Empty,
+        UpdatedAt = draft.UpdatedAt ?? string.Empty,
+        Answers = { draft.Answers.Select(entry => new AuthoringAnswer { Name = entry.Key, Value = Value(entry.Value) }) },
+        Sections = { draft.Sections.Select(Section) },
+        Todos = { draft.Todos },
+    };
+
+    /// <summary>Carries one interview section as the contract carries it.</summary>
+    /// <param name="section">The section.</param>
+    /// <returns>The message.</returns>
+    private static AuthoringDraftSection Section(WireAuthoringDraftSection section) => new()
+    {
+        Id = section.Id,
+        Title = section.Title,
+        DocRef = section.DocRef,
+        Questions = { section.Questions.Select(Question) },
+    };
+
+    /// <summary>Carries one question as the contract carries it.</summary>
+    /// <param name="question">The question.</param>
+    /// <returns>The message.</returns>
+    private static AuthoringQuestion Question(WireAuthoringQuestion question) => new()
+    {
+        Id = question.Id,
+        Prompt = question.Prompt,
+        Guidance = question.Guidance,
+        Kind = question.Kind,
+        Required = question.Required,
+        Default = question.Default ?? string.Empty,
+        Choices = { question.Choices },
+        MapsTo = question.MapsTo,
+    };
+
+    /// <summary>Carries one answer as the contract carries it.</summary>
+    /// <param name="value">The answer.</param>
+    /// <returns>The message.</returns>
+    private static AuthoringValue Value(WireAuthoringValue value) => new()
+    {
+        Text = value.Text ?? string.Empty,
+        Number = value.Number ?? 0,
+        Flag = value.Flag ?? false,
+        Items = { value.Items?.Select(Value) ?? [] },
+        Fields = {
+            value.Fields?.Select(entry => new AuthoringAnswer { Name = entry.Key, Value = Value(entry.Value) })
+                ?? []
+        },
+    };
+
+    /// <summary>Reads the answers a caller sent.</summary>
+    /// <param name="answers">The message.</param>
+    /// <returns>The answers.</returns>
+    private static WireAuthoringAnswers Answers(AuthoringAnswers? answers) =>
+        new(new Dictionary<string, WireAuthoringValue>(
+            (answers?.Answers ?? []).Select(answer => new KeyValuePair<string, WireAuthoringValue>(
+                answer.Name, WireValue(answer.Value))),
+            StringComparer.Ordinal));
+
+    /// <summary>Reads one answer a caller sent.</summary>
+    /// <param name="value">The message.</param>
+    /// <returns>The answer.</returns>
+    private static WireAuthoringValue WireValue(AuthoringValue? value)
+    {
+        if (value is null)
+        {
+            return new WireAuthoringValue(null, null, null, null, null);
+        }
+
+        List<WireAuthoringValue>? items = value.Items.Count == 0 ? null : [.. value.Items.Select(WireValue)];
+        Dictionary<string, WireAuthoringValue>? fields = value.Fields.Count == 0
+            ? null
+            : new Dictionary<string, WireAuthoringValue>(
+                value.Fields.Select(field => new KeyValuePair<string, WireAuthoringValue>(
+                    field.Name, WireValue(field.Value))),
+                StringComparer.Ordinal);
+
+        return new WireAuthoringValue(
+            string.IsNullOrEmpty(value.Text) ? null : value.Text,
+            value.Number,
+            value.Flag,
+            items,
+            fields);
+    }
+
+    /// <inheritdoc />
     public override Task<GetHealthResponse> GetHealthAsync(GetHealthRequest request, ServerCallContext context) =>
         Task.FromResult(new GetHealthResponse { Data = ToMessage(MunariumOperations.Health()) });
 

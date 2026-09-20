@@ -671,6 +671,74 @@ public static class MunariumEndpoints
                     .ListIndexVersionsAsync(collectionId, cancellationToken)
                     .ConfigureAwait(false));
 
+        // The authoring drafts: what an author is in the middle of, with the questions its pattern asks and what is still
+        // open. Read and write, and no decisions of its own - every rule it applies is the kernel own.
+        app.MapPost(
+            "/v1/authoring/drafts",
+            async (
+                WireAuthoringDraftRequest request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.OpenDraftAsync(request, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireAuthoringDraft draft => TypedResults.Json(draft, WireJson.Default.WireAuthoringDraft),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet(
+            "/v1/authoring/drafts",
+            async (MunariumOperations operations, CancellationToken cancellationToken) => TypedResults.Json(
+                await operations.ListDraftsAsync(cancellationToken).ConfigureAwait(false),
+                WireJson.Default.WireAuthoringDraftList));
+
+        app.MapGet(
+            "/v1/authoring/drafts/{draft_id}",
+            async (
+                [FromRoute(Name = "draft_id")] string draftId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.ReadDraftAsync(draftId, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireAuthoringDraft draft => TypedResults.Json(draft, WireJson.Default.WireAuthoringDraft),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapPut(
+            "/v1/authoring/drafts/{draft_id}/answers",
+            async (
+                [FromRoute(Name = "draft_id")] string draftId,
+                WireAuthoringAnswers answers,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .AnswerDraftAsync(draftId, answers, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireAuthoringDraft draft => TypedResults.Json(draft, WireJson.Default.WireAuthoringDraft),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
         // The authoring catalog: the patterns an author can start from. Read-only, and the same list the interview
         // offers, so a client that shows the patterns offers exactly what a draft would accept.
         app.MapGet("/v1/authoring/patterns", () => MunariumOperations.ListAuthoringPatterns());
