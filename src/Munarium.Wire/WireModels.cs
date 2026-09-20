@@ -1206,6 +1206,27 @@ public sealed record WireRunbookList(IReadOnlyList<WireRunbook> Runbooks);
 
 /// <summary>The result of applying a runbook: the version, or why it was not applied.</summary>
 public readonly union WireApplyRunbookResult(WireAppliedRunbook, WireProblem);
+/// <summary>What confirming a removal has to repeat.</summary>
+/// <param name="RemovalId">The identity the request minted, which is what makes a confirmation about one request.</param>
+public sealed record WireRunbookRemovalRequest(string RemovalId);
+
+/// <summary>A removal, armed or confirmed.</summary>
+/// <param name="RunbookRef">The version, name@version.</param>
+/// <param name="Status">The status as the store spells it.</param>
+/// <param name="RemovalId">The identity of the request, which a confirmation has to repeat.</param>
+/// <param name="RequestedAt">When it was asked for.</param>
+/// <param name="RequestedBy">Who asked, when the deployment recorded one.</param>
+/// <param name="RemovedAt">When it was confirmed, absent while it is still armed.</param>
+public sealed record WireRunbookRemoval(
+    string RunbookRef,
+    string Status,
+    string? RemovalId,
+    string? RequestedAt,
+    string? RequestedBy,
+    string? RemovedAt);
+
+/// <summary>The answer to a removal request or a confirmation: what stands now, or why nothing does.</summary>
+public readonly union WireRunbookRemovalResult(WireRunbookRemoval, WireProblem);
 
 
 /// <summary>A session that was opened.</summary>

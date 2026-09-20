@@ -1930,6 +1930,83 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/runbooks/{name}/remove-request:
+    post:
+      operationId: RequestRunbookRemoval
+      tags: [runbooks]
+      summary: Arm the removal of a runbook version.
+      description: |
+        Two passes, because removal is the one act here that cannot be undone: this records who asked and what they were
+        asking about, and the version keeps answering until somebody confirms. The identity it answers with has to be
+        repeated on confirmation, so a confirmation cannot remove a version it did not arm.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The exact reference, name@version.
+      responses:
+        "200":
+          description: The removal as armed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunbookRemoval"
+        "404":
+          description: No such version was applied here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "410":
+          description: The version was already removed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/runbooks/{name}/remove-confirm:
+    post:
+      operationId: ConfirmRunbookRemoval
+      tags: [runbooks]
+      summary: Confirm an armed removal.
+      description: |
+        Only the request that armed a removal may confirm it, and only while it is still armed: a version re-applied in
+        the meantime is a different document, and confirming against the old identity is refused rather than obeyed.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The exact reference, name@version.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunbookRemovalRequest"
+      responses:
+        "200":
+          description: The version as removed. All data is retained.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunbookRemoval"
+        "404":
+          description: No such version was applied here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: No removal is armed under that identity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
   /v1/runbooks/validate:
     post:
       operationId: ValidateRunbook
@@ -3488,6 +3565,32 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AuthoringDraft"
+
+    RunbookRemovalRequest:
+      type: object
+      required: [removal_id]
+      properties:
+        removal_id:
+          type: string
+          description: The identity the request minted.
+
+    RunbookRemoval:
+      type: object
+      required: [runbook_ref, status]
+      properties:
+        runbook_ref:
+          type: string
+        status:
+          type: string
+          description: The status as the store spells it.
+        removal_id:
+          type: string
+        requested_at:
+          type: string
+        requested_by:
+          type: string
+        removed_at:
+          type: string
 
     RunbookValidationRequest:
       type: object

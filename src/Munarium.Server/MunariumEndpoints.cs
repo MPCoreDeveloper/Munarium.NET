@@ -866,6 +866,52 @@ public static class MunariumEndpoints
         app.MapGet("/v1/shapes", (MunariumOperations operations) => operations.ListShapes());
 
         app.MapPost(
+            "/v1/runbooks/{name}/remove-request",
+            async (
+                [FromRoute(Name = "name")] string runbookRef,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .RequestRunbookRemovalAsync(runbookRef, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireRunbookRemoval removal => TypedResults.Json(
+                        removal, WireJson.Default.WireRunbookRemoval),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapPost(
+            "/v1/runbooks/{name}/remove-confirm",
+            async (
+                [FromRoute(Name = "name")] string runbookRef,
+                WireRunbookRemovalRequest request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations
+                    .ConfirmRunbookRemovalAsync(runbookRef, request, cancellationToken)
+                    .ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireRunbookRemoval removal => TypedResults.Json(
+                        removal, WireJson.Default.WireRunbookRemoval),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+
+        app.MapPost(
             "/v1/runbooks/validate",
             async (
                 WireRunbookValidationRequest request,

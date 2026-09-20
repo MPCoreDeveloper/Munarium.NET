@@ -245,6 +245,42 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         return new ValidateRunbookResponse { Data = Validation(validation) };
     }
 
+    /// <inheritdoc />
+    public override async Task<RequestRunbookRemovalResponse> RequestRunbookRemovalAsync(
+        RequestRunbookRemovalRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        return await _operations
+            .RequestRunbookRemovalAsync(request.Name, context.CancellationToken)
+            .ConfigureAwait(false) switch
+        {
+            WireRunbookRemoval removal => new RequestRunbookRemovalResponse { Data = Removal(removal) },
+            WireProblem problem => throw Problem(problem),
+            var other => throw new InvalidOperationException($"unexpected removal result: {other}"),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ConfirmRunbookRemovalResponse> ConfirmRunbookRemovalAsync(
+        ConfirmRunbookRemovalRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var confirmation = new WireRunbookRemovalRequest(request.Body?.RemovalId ?? string.Empty);
+
+        return await _operations
+            .ConfirmRunbookRemovalAsync(request.Name, confirmation, context.CancellationToken)
+            .ConfigureAwait(false) switch
+        {
+            WireRunbookRemoval removal => new ConfirmRunbookRemovalResponse { Data = Removal(removal) },
+            WireProblem problem => throw Problem(problem),
+            var other => throw new InvalidOperationException($"unexpected removal result: {other}"),
+        };
+    }
+
     /// <summary>Carries a draft as the contract carries it.</summary>
     /// <param name="draft">The draft.</param>
     /// <returns>The message.</returns>
@@ -379,6 +415,19 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         Note = suggestion.Note,
     };
 
+
+    /// <summary>Carries a removal as the contract carries it.</summary>
+    /// <param name="removal">The removal.</param>
+    /// <returns>The message.</returns>
+    private static RunbookRemoval Removal(WireRunbookRemoval removal) => new()
+    {
+        RunbookRef = removal.RunbookRef,
+        Status = removal.Status,
+        RemovalId = removal.RemovalId ?? string.Empty,
+        RequestedAt = removal.RequestedAt ?? string.Empty,
+        RequestedBy = removal.RequestedBy ?? string.Empty,
+        RemovedAt = removal.RemovedAt ?? string.Empty,
+    };
 
     /// <summary>Carries one answer as the contract carries it.</summary>
     /// <param name="value">The answer.</param>

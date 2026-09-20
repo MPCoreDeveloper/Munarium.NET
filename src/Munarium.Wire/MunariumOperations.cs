@@ -2033,6 +2033,112 @@ public sealed class MunariumOperations(
         };
     }
 
+    /// <summary>The problem identifier a version whose removal is confirmed but was never armed answers with.</summary>
+    public const string RunbookRemovalNotArmedProblem = "https://munarium.dev/problems/runbook-removal-not-armed";
+
+    /// <summary>Arms the removal of a runbook version.</summary>
+    /// <remarks>
+    /// Two passes, because removal is the one act here that cannot be undone: the first records who asked and what they
+    /// were asking about, and the version keeps answering until somebody confirms. The identity is minted here and has to
+    /// be repeated on confirmation, so a confirmation cannot remove a version it did not arm.
+    /// </remarks>
+    /// <param name="runbookRef">The version, name@version.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What stands now, or why nothing does.</returns>
+    public async ValueTask<WireRunbookRemovalResult> RequestRunbookRemovalAsync(
+        string runbookRef,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(runbookRef);
+
+        // Resolved first, because two answers are two different truths: a version nobody applied is not found, and one that
+        // was already removed is gone. A caller told the wrong one of those cannot tell what to do next.
+        var resolved = await _runbooks
+            .ResolveAsync(_tenant, runbookRef, includeRemoved: true, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (resolved is null)
+        {
+            return UnknownRunbook(runbookRef);
+        }
+
+        if (resolved.Status == RunbookStatus.Removed)
+        {
+            return new WireProblem(
+                RunbookRemovedProblem,
+                $"The runbook version {runbookRef} was removed, so there is nothing left to remove.",
+                Status: 410,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        var removalId = string.Concat("rm-", Guid.CreateVersion7().ToString("N"));
+        var armed = await _runbooks
+            .RequestRemovalAsync(
+                _tenant,
+                runbookRef,
+                removalId,
+                Rfc3339(DateTimeOffset.UtcNow),
+                null,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return armed is null ? UnknownRunbook(runbookRef) : Removal(armed);
+    }
+
+    /// <summary>Confirms an armed removal, which is the act that removes the version.</summary>
+    /// <param name="runbookRef">The version, name@version.</param>
+    /// <param name="request">The identity the request minted.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What stands now, or why nothing does.</returns>
+    public async ValueTask<WireRunbookRemovalResult> ConfirmRunbookRemovalAsync(
+        string runbookRef,
+        WireRunbookRemovalRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(runbookRef);
+        ArgumentNullException.ThrowIfNull(request);
+
+        var removed = await _runbooks
+            .ConfirmRemovalAsync(
+                _tenant,
+                runbookRef,
+                request.RemovalId,
+                Rfc3339(DateTimeOffset.UtcNow),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return removed is null
+            ? new WireProblem(
+                RunbookRemovalNotArmedProblem,
+                $"No removal of {runbookRef} is armed under that identity.",
+                Status: 409,
+                ExpectedHead: 0,
+                ActualHead: 0)
+            : Removal(removed);
+    }
+
+    /// <summary>The problem a runbook version nobody applied answers with.</summary>
+    /// <param name="runbookRef">What was asked for.</param>
+    /// <returns>The problem.</returns>
+    private static WireProblem UnknownRunbook(string runbookRef) => new(
+        UnknownRunbookProblem,
+        $"No runbook version {runbookRef} was applied here.",
+        Status: 404,
+        ExpectedHead: 0,
+        ActualHead: 0);
+
+    /// <summary>Reads a removal as the contract carries it.</summary>
+    /// <param name="record">The record as stored.</param>
+    /// <returns>The wire shape.</returns>
+    private static WireRunbookRemoval Removal(RunbookRecord record) => new(
+        record.Ref,
+        record.Status.ToString(),
+        record.RemovalId,
+        record.RemovalRequestedAt,
+        record.RemovalRequestedBy,
+        record.RemovedAt);
+
     /// <summary>Lists the runbook versions this deployment has applied.</summary>
     /// <param name="includeRemoved">Whether removed versions are listed.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
