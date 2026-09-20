@@ -226,7 +226,47 @@ public class AuthoringDraftTests
     private static WireAuthoringBundle Bundled(WireDraftBundleResult result) =>
         result is WireAuthoringBundle bundle
             ? bundle
-            : throw new InvalidOperationException($"the export was refused: {result}");    /// <summary>Reads a validation result, insisting it is one.</summary>
+            : throw new InvalidOperationException($"the export was refused: {result}");    /// <summary>An assist with no model bound answers with a note and a 200, and never touches the draft.</summary>
+    [Fact]
+    public async Task AnAssistWithoutAModelAnswersWithANote()
+    {
+        await using var kernel = MunariumKernel.Create(
+            Path.Combine(Path.GetTempPath(), $"Munarium_{Guid.NewGuid():N}"),
+            "munarium-assist",
+            new ShapeRegistry([]));
+
+        Draft(await kernel.Operations.OpenDraftAsync(new WireAuthoringDraftRequest("assist-rb", "ask-the-corpus")));
+
+        var assist = Assisted(await kernel.Operations.AssistDraftAsync("assist-rb", new WireAssistDraftRequest()));
+
+        // A deployment with no model bound says so rather than failing: asking for help must not become an error.
+        Assert.Empty(assist.Suggestions);
+        Assert.Equal(MunariumOperations.AssistUnavailableNote, assist.AssistNote);
+
+        // And the draft is exactly as it was, because an assist suggests and does not edit.
+        var again = Draft(await kernel.Operations.ReadDraftAsync("assist-rb"));
+
+        Assert.Empty(again.Answers);
+        Assert.NotEmpty(again.Todos);
+
+        // The findings still come back, so an author who asked for help still reads what the deployment would say.
+        Assert.Equal(!assist.Validation.Findings.Any(finding => finding.Severity == "error"), assist.Validation.Valid);
+        Assert.NotEmpty(assist.Validation.Todos);
+
+        Assert.True(
+            await kernel.Operations.AssistDraftAsync("nothing", new WireAssistDraftRequest())
+                is WireProblem { Status: 404 });
+    }
+
+    /// <summary>Reads an assist, insisting it is one.</summary>
+    /// <param name="result">The result.</param>
+    /// <returns>The assist.</returns>
+    private static WireDraftAssist Assisted(WireDraftAssistResult result) =>
+        result is WireDraftAssist assist
+            ? assist
+            : throw new InvalidOperationException($"the assist was refused: {result}");
+
+    /// <summary>Reads a validation result, insisting it is one.</summary>
     /// <param name="result">The result.</param>
     /// <returns>The validation.</returns>
     private static WireDraftValidation Validated(WireDraftValidationResult result) =>

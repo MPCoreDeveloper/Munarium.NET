@@ -326,6 +326,26 @@ public sealed record WireAuthoringBundle(
 
 /// <summary>The answer to an export: the bundle, or why there is none.</summary>
 public readonly union WireDraftBundleResult(WireAuthoringBundle, WireProblem);
+/// <summary>What an author asks an assist to look at.</summary>
+/// <param name="Description">What they want, in their own words, when they say.</param>
+public sealed record WireAssistDraftRequest(string? Description = null);
+
+/// <summary>One thing an assist suggests.</summary>
+/// <param name="Path">The document it is about, which the model may leave unnamed.</param>
+/// <param name="Note">What to change and why.</param>
+public sealed record WireSuggestion(string Path, string Note);
+
+/// <summary>What an assist answered.</summary>
+/// <param name="Suggestions">What the model suggests, empty when it suggested nothing.</param>
+/// <param name="AssistNote">Why there is no help, when there is none.</param>
+/// <param name="Validation">What the draft validates as, unchanged: an assist never edits a draft.</param>
+public sealed record WireDraftAssist(
+    IReadOnlyList<WireSuggestion> Suggestions,
+    string? AssistNote,
+    WireDraftValidation Validation);
+
+/// <summary>The answer to an assist: what it suggests, or why the draft could not be looked at.</summary>
+public readonly union WireDraftAssistResult(WireDraftAssist, WireProblem);
 
 /// <summary>A memory version: the identity claims are written under, and the node it occupies.</summary>
 /// <param name="VersionId">The version's identity, which is also the stream its claims go to.</param>

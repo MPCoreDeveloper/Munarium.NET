@@ -209,6 +209,26 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         };
     }
 
+    /// <inheritdoc />
+    public override async Task<AssistAuthoringDraftResponse> AssistAuthoringDraftAsync(
+        AssistAuthoringDraftRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        return await _operations
+            .AssistDraftAsync(
+                request.DraftId,
+                new WireAssistDraftRequest(request.Body?.Description),
+                context.CancellationToken)
+            .ConfigureAwait(false) switch
+        {
+            WireDraftAssist assist => new AssistAuthoringDraftResponse { Data = Assist(assist) },
+            WireProblem problem => throw Problem(problem),
+            var other => throw new InvalidOperationException($"unexpected assist result: {other}"),
+        };
+    }
+
     /// <summary>Carries a draft as the contract carries it.</summary>
     /// <param name="draft">The draft.</param>
     /// <returns>The message.</returns>
@@ -311,6 +331,25 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
             Warns = bundle.Validation.Warns,
             Infos = bundle.Validation.Infos,
         },
+    };
+
+    /// <summary>Carries an assist as the contract carries it.</summary>
+    /// <param name="assist">The assist.</param>
+    /// <returns>The message.</returns>
+    private static AuthoringDraftAssist Assist(WireDraftAssist assist) => new()
+    {
+        Suggestions = { assist.Suggestions.Select(Suggestion) },
+        AssistNote = assist.AssistNote ?? string.Empty,
+        Validation = Validation(assist.Validation),
+    };
+
+    /// <summary>Carries one suggestion as the contract carries it.</summary>
+    /// <param name="suggestion">The suggestion.</param>
+    /// <returns>The message.</returns>
+    private static Suggestion Suggestion(WireSuggestion suggestion) => new()
+    {
+        Path = suggestion.Path,
+        Note = suggestion.Note,
     };
 
     /// <summary>Carries one answer as the contract carries it.</summary>

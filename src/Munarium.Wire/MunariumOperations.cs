@@ -362,14 +362,217 @@ public sealed class MunariumOperations(
             ? null
             : await _authoring.FindAsync(name.Trim(), cancellationToken).ConfigureAwait(false);
 
-    /// <summary>Exports what a draft materializes as a hash-manifested bundle.</summary>
+    /// <summary>The note an assist answers with when this deployment cannot call a model.</summary>
+    public const string AssistUnavailableNote = "assist unavailable: this deployment has no model bound";
+
+    /// <summary>The instruction an assist asks under.</summary>
+    /// <remarks>
+    /// One shape, stated once: the model answers with suggestions and nothing else, so a reply that is not that shape is
+    /// discarded rather than half-read. A model asked for prose produces prose, and an author cannot apply prose.
+    /// </remarks>
+    private const string AssistSystem =
+        "You review a runbook draft. Answer with JSON and nothing else: "
+        + "{\"suggestions\":[{\"path\":\"<document path>\",\"note\":\"<what to change and why>\"}]}";
+
+    /// <summary>Asks a model what it would change about a draft, and never edits the draft itself.</summary>
+    /// <remarks>
+    /// What this port does differently from the original, and why: there a draft holds documents, so an assist can replace
+    /// them. Here a draft holds answers and its documents are derived from them, which is what keeps a draft from
+    /// disagreeing with itself - so an assist suggests and reports, and the only way an answer changes is an author
+    /// answering. A deployment with no model bound, or one that fails, answers with a note instead: an author asking for
+    /// help must not be told their draft became invalid.
+    /// </remarks>
+    /// <param name="name">The draft name.</param>
+    /// <param name="request">What the author asked for.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What it suggests, or why the draft could not be looked at.</returns>
+    public async ValueTask<WireDraftAssistResult> AssistDraftAsync(
+        string name,
+        WireAssistDraftRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (await StoredAsync(name, cancellationToken).ConfigureAwait(false) is not { } draft)
+        {
+            return UnknownDraft(name);
+        }
+
+        var (set, refused) = AuthoringMaterializer.Build(
+            draft.Name,
+            AuthoringCatalog.Pattern(draft.PatternId),
+            draft.Answers);
+
+        if (set is null)
+        {
+            return InvalidDraft(draft.Name, refused);
+        }
+
+        if (RunbookEntry(set).Yaml is not { } yaml)
+        {
+            return InvalidDraft(draft.Name, "the materialized set carries no runbook");
+        }
+
+        var (suggestions, note) = await AdviseAsync(request, set, yaml, cancellationToken)
+            .ConfigureAwait(false);
+
+        var (document, _) = RunbookReader.Read(yaml);
+
+        return new WireDraftAssist(suggestions, note, Findings(document, set.Todos));
+    }
+
+    /// <summary>Asks the deployment model, degrading to a note rather than failing.</summary>
+    /// <remarks>
+    /// Three specific failures are caught rather than every failure: a provider that cannot be reached, one that answers
+    /// with something that is not a completion, and an answer that is not the JSON that was asked for. Anything else
+    /// propagates, because a bug in this deployment is not an authoring problem and turning one into a note would hide it.
+    /// </remarks>
+    /// <param name="request">What the author asked for.</param>
+    /// <param name="set">The materialized set.</param>
+    /// <param name="yaml">The runbook it would apply.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The suggestions, and the note when there is no help to give.</returns>
+    private async ValueTask<(IReadOnlyList<WireSuggestion> Suggestions, string? Note)> AdviseAsync(
+        WireAssistDraftRequest request,
+        Materialized set,
+        string yaml,
+        CancellationToken cancellationToken)
+    {
+        if (_model is null)
+        {
+            return ([], AssistUnavailableNote);
+        }
+
+        var asked = new CompletionRequest
+        {
+            Model = _modelId,
+            System = AssistSystem,
+            Prompt = AssistPrompt(request, yaml, set.Todos),
+        };
+
+        try
+        {
+            var completion = await _model.CompleteAsync(asked, cancellationToken).ConfigureAwait(false);
+
+            return (Suggestions(completion.Text), null);
+        }
+        catch (HttpRequestException exception)
+        {
+            return ([], $"assist unavailable: {exception.Message}");
+        }
+        catch (InvalidOperationException exception)
+        {
+            return ([], $"assist unavailable: {exception.Message}");
+        }
+        catch (JsonException exception)
+        {
+            return ([], $"assist unavailable: {exception.Message}");
+        }
+    }
+
+
+
+
+    /// <summary>States the draft to a model: what it would apply, what it still owes, and what the author wants.</summary>
+    /// <param name="request">What the author asked for.</param>
+    /// <param name="yaml">The runbook it would apply.</param>
+    /// <param name="todos">What the draft still owes.</param>
+    /// <returns>The prompt.</returns>
+    private static string AssistPrompt(
+        WireAssistDraftRequest request,
+        string yaml,
+        IReadOnlyList<string> todos) =>
+        $"This runbook is what the draft would apply:\n\n{yaml}\n\n"
+        + $"Still to be answered:\n{(todos.Count == 0 ? "nothing" : string.Join("\n", todos))}\n\n"
+        + (request.Description is { Length: > 0 } said ? $"The author asks: {said}\n" : string.Empty);
+
+    /// <summary>Reads the suggestions out of a model answer, discarding anything that is not one.</summary>
+    /// <remarks>
+    /// The reply is not repaired into shape: a model that wrapped its JSON in prose gets its prose dropped, because an
+    /// author can apply a suggestion and cannot apply a guess at what the model meant.
+    /// </remarks>
+    /// <param name="answer">The generated text.</param>
+    /// <returns>The suggestions, empty when the answer carries none.</returns>
+    private static List<WireSuggestion> Suggestions(string answer)
+    {
+        var suggestions = new List<WireSuggestion>();
+        var start = answer.IndexOf('{', StringComparison.Ordinal);
+        var end = answer.LastIndexOf('}');
+
+        if (start < 0 || end <= start)
+        {
+            return suggestions;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(answer[start..(end + 1)]);
+
+            if (document.RootElement.TryGetProperty("suggestions", out var list)
+                && list.ValueKind is JsonValueKind.Array)
+            {
+                foreach (var item in list.EnumerateArray())
+                {
+                    if (Suggestion(item) is { } suggestion)
+                    {
+                        suggestions.Add(suggestion);
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // A reply this cannot read says nothing. It is not half-read into a suggestion.
+            return suggestions;
+        }
+
+        return suggestions;
+    }
+
+    /// <summary>Reads a materialized runbook as the findings a validation reports.</summary>
+    /// <param name="document">The runbook, or <see langword="null"/> when it does not read at all.</param>
+    /// <param name="todos">What the draft still owes, which comes from the materializer rather than from a second rule.</param>
+    /// <returns>The findings.</returns>
+    private static WireDraftValidation Findings(RunbookDocument? document, IReadOnlyList<string> todos)
+    {
+        if (document is null)
+        {
+            return new WireDraftValidation(true, [], todos);
+        }
+
+        var reported = RunbookValidation.Validate(document);
+
+        return new WireDraftValidation(
+            RunbookValidation.IsValid(reported),
+            [.. reported.Select(Finding)],
+            todos);
+    }
+    /// <summary>Reads one suggestion, or nothing when the entry is not one.</summary>
+    /// <param name="element">The entry.</param>
+    /// <returns>The suggestion.</returns>
+    private static WireSuggestion? Suggestion(JsonElement element) =>
+        element.ValueKind is JsonValueKind.Object
+            && element.TryGetProperty("note", out var note)
+            && note.ValueKind is JsonValueKind.String
+            && note.GetString() is { Length: > 0 } text
+                ? new WireSuggestion(About(element), text)
+                : null;
+
+    /// <summary>Reads the document a suggestion is about, or an empty name when it says none.</summary>
+    /// <param name="element">The entry.</param>
+    /// <returns>The path the model named.</returns>
+    private static string About(JsonElement element) =>
+        element.TryGetProperty("path", out var path) && path.ValueKind is JsonValueKind.String
+            ? path.GetString() ?? string.Empty
+            : string.Empty;
+
     /// <remarks>
     /// Refused while an error finding exists, which is the same gate apply stands behind: a bundle is what an author hands
     /// to an operator, and handing over something a deployment would refuse is handing over a refusal.
     /// </remarks>
     /// <param name="name">The draft name.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The bundle, or why there is none.</returns>
+    /// <returns>The bundle, or why there is none.</returns>    /// <summary>Exports what a draft materializes as a hash-manifested bundle.</summary>
     public async ValueTask<WireDraftBundleResult> ExportDraftAsync(
         string name,
         CancellationToken cancellationToken = default)
