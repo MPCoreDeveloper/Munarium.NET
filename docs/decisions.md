@@ -77,3 +77,42 @@ artifact manifest with a verifier. Choosing B later is a slice; choosing C later
 - Everything single-node stays in scope: authoring's drafts surface, the provider, report and run planes, the CLI and the
   matrix client - and `index-build-jobs`, which is single-node, carries the original's names, and is a prerequisite for
   any later fleet story because a fleet promotes what was first built as an artifact.
+
+## The provider plane: declarations, a relay, and where the credential lives
+
+The original declares seven operations here - list and apply a provider config, health by name, complete and embed by
+name, and get and set the deployment ceiling - plus `healthai`, which is a provider health summary and therefore belongs
+to this plane rather than to the operational routes where this port had been counting it.
+
+The decision this needs before any code, because the seam says the kernel never holds a credential, never picks a vendor
+and never touches a network.
+
+### A registration is a declaration, not a secret
+
+Measured rather than assumed: the original carries no credential field anywhere in its server, and applying a provider
+config produces a registry entry. So `POST /v1/providers` records a dialect, an endpoint and the model names that dialect
+serves. Where the credential lives is a deployment property - the environment of the process that already holds every
+other secret - and it is read by the adapter at the moment of a call, never stored beside the declaration. A registry row
+that held a credential would make the ledger the place secrets are kept, which is the one place this port has said they do
+not go.
+
+### The relay is a privilege, and the gate goes in front of it
+
+`POST /v1/providers/{name}/complete` and `embed` make a deployment spend its own credential on a caller's behalf. That is
+what the original does, and it is also the largest abuse surface in the whole contract: without the access scope the port
+already has, it is an open proxy to somebody's account. So the gate is not beside these routes, it is in front of them: a
+caller presents an `access` capability or the route refuses before a provider is chosen. The completions these routes
+produce are not turn evidence and are not recorded as such - they are a caller using a model through a deployment, which
+is a different act from a conversation that reads a corpus.
+
+### The ceiling is pipeline state, not a table
+
+`GET` and `POST /v1/max-tokens` set a deployment ceiling. A ceiling that only a table knew about would be a number nobody
+enforces, so it is written where the turn pipeline reads it and the tests assert against the pipeline rather than against
+the store.
+
+### The order
+
+Registry, list and health first: they are declarations and probes, they need no credential, and they make the plane
+legible. Then complete and embed behind the gate, which is where the work is and where the restraint matters. Then the
+ceiling with the pipeline. `healthai` goes with the probes, and the operations list stops counting it as operational.
