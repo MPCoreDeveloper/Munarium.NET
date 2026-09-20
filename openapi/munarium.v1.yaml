@@ -1930,6 +1930,30 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/runbooks/validate:
+    post:
+      operationId: ValidateRunbook
+      tags: [runbooks]
+      summary: Validate a runbook document.
+      description: |
+        Deterministic checks, always. A document that does not parse answers as a finding rather than a refusal, because a
+        document with one thing wrong with it is exactly what an author wants to read about. The advisory pass is separate
+        and never changes the findings: an advisory pass that could refuse a document would be a second validator whose
+        rules nobody can read.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunbookValidationRequest"
+      responses:
+        "200":
+          description: The findings, and what a model suggested when one was asked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunbookValidation"
+
   /v1/runbooks:
     post:
       operationId: ApplyRunbook
@@ -3464,6 +3488,35 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AuthoringDraft"
+
+    RunbookValidationRequest:
+      type: object
+      required: [yaml]
+      properties:
+        yaml:
+          type: string
+          description: The document as written.
+        suggest:
+          type: boolean
+          description: Whether to also ask a model, which never changes the findings.
+
+    RunbookValidation:
+      type: object
+      required: [valid, findings]
+      properties:
+        valid:
+          type: boolean
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationFinding"
+        suggestions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Suggestion"
+        suggest_note:
+          type: string
+          description: Why there are no suggestions, when they were asked for.
 
     AssistDraftRequest:
       type: object

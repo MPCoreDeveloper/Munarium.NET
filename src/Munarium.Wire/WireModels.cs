@@ -347,6 +347,22 @@ public sealed record WireDraftAssist(
 /// <summary>The answer to an assist: what it suggests, or why the draft could not be looked at.</summary>
 public readonly union WireDraftAssistResult(WireDraftAssist, WireProblem);
 
+/// <summary>A runbook to validate, and whether to ask a model for advice about it.</summary>
+/// <param name="Yaml">The document as written.</param>
+/// <param name="Suggest">Whether to also ask a model, which never changes the findings.</param>
+public sealed record WireRunbookValidationRequest(string Yaml, bool Suggest = false);
+
+/// <summary>What validating a runbook found.</summary>
+/// <param name="Valid">Whether nothing found is an error.</param>
+/// <param name="Findings">The findings, in the order the checks ran.</param>
+/// <param name="Suggestions">What a model suggested, empty when it was not asked or had nothing to say.</param>
+/// <param name="SuggestNote">Why there are no suggestions, when they were asked for.</param>
+public sealed record WireRunbookValidation(
+    bool Valid,
+    IReadOnlyList<WireValidationFinding> Findings,
+    IReadOnlyList<WireSuggestion> Suggestions,
+    string? SuggestNote);
+
 /// <summary>A memory version: the identity claims are written under, and the node it occupies.</summary>
 /// <param name="VersionId">The version's identity, which is also the stream its claims go to.</param>
 /// <param name="ParentVersionId">The version it descends from, empty when it starts a lineage.</param>

@@ -866,6 +866,15 @@ public static class MunariumEndpoints
         app.MapGet("/v1/shapes", (MunariumOperations operations) => operations.ListShapes());
 
         app.MapPost(
+            "/v1/runbooks/validate",
+            async (
+                WireRunbookValidationRequest request,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) => TypedResults.Json(
+                    await operations.ValidateRunbookAsync(request, cancellationToken).ConfigureAwait(false),
+                    WireJson.Default.WireRunbookValidation));
+
+        app.MapPost(
             "/v1/runbooks",
             async (
                 WireRunbookApply request,

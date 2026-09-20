@@ -229,6 +229,22 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         };
     }
 
+    /// <inheritdoc />
+    public override async Task<ValidateRunbookResponse> ValidateRunbookAsync(
+        ValidateRunbookRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var validation = await _operations
+            .ValidateRunbookAsync(
+                new WireRunbookValidationRequest(request.Body?.Yaml ?? string.Empty, request.Body?.Suggest ?? false),
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return new ValidateRunbookResponse { Data = Validation(validation) };
+    }
+
     /// <summary>Carries a draft as the contract carries it.</summary>
     /// <param name="draft">The draft.</param>
     /// <returns>The message.</returns>
@@ -277,6 +293,17 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         Valid = validation.Valid,
         Findings = { validation.Findings.Select(Finding) },
         Todos = { validation.Todos },
+    };
+
+    /// <summary>Carries a runbook validation as the contract carries it.</summary>
+    /// <param name="validation">The validation.</param>
+    /// <returns>The message.</returns>
+    private static RunbookValidation Validation(WireRunbookValidation validation) => new()
+    {
+        Valid = validation.Valid,
+        Findings = { validation.Findings.Select(Finding) },
+        Suggestions = { validation.Suggestions.Select(Suggestion) },
+        SuggestNote = validation.SuggestNote ?? string.Empty,
     };
 
     /// <summary>Carries one finding as the contract carries it.</summary>
@@ -351,6 +378,7 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         Path = suggestion.Path,
         Note = suggestion.Note,
     };
+
 
     /// <summary>Carries one answer as the contract carries it.</summary>
     /// <param name="value">The answer.</param>

@@ -1921,6 +1921,92 @@ public sealed class MunariumOperations(
     /// <summary>The problem identifier a version that was removed answers with.</summary>
     public const string RunbookRemovedProblem = "https://munarium.dev/problems/runbook-removed";
 
+
+    /// <summary>The finding code a document that does not parse answers as.</summary>
+    /// <remarks>
+    /// A finding rather than a refusal, which is the original rule and the better one: an author editing a runbook wants
+    /// to read what is wrong with it, and a document that does not parse has exactly one thing wrong with it.
+    /// </remarks>
+    public const string RunbookParseFindingCode = "parse";
+
+    /// <summary>Validates a runbook document, without applying it.</summary>
+    /// <remarks>
+    /// The checks are deterministic and always run. Asking a model is separate and never changes the findings, because
+    /// an advisory pass that could refuse a document would be a second validator whose rules nobody can read.
+    /// </remarks>
+    /// <param name="request">The document, and whether to ask a model.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The findings, and what a model suggested when one was asked.</returns>
+    public async ValueTask<WireRunbookValidation> ValidateRunbookAsync(
+        WireRunbookValidationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (RunbookReader.Read(request.Yaml) is not ({ } document, null))
+        {
+            return new WireRunbookValidation(
+                false,
+                [new WireValidationFinding("error", RunbookParseFindingCode, "the document does not read as a runbook", "$")],
+                [],
+                null);
+        }
+
+        var reported = RunbookValidation.Validate(document);
+        var (suggestions, note) = request.Suggest
+            ? await AdviseRunbookAsync(request.Yaml, cancellationToken).ConfigureAwait(false)
+            : ((IReadOnlyList<WireSuggestion>)[], (string?)null);
+
+        return new WireRunbookValidation(
+            RunbookValidation.IsValid(reported),
+            [.. reported.Select(Finding)],
+            suggestions,
+            note);
+    }
+
+    /// <summary>Asks the deployment model what it would change about a runbook.</summary>
+    /// <param name="yaml">The document.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The suggestions, and the note when there is no help to give.</returns>
+    private async ValueTask<(IReadOnlyList<WireSuggestion> Suggestions, string? Note)> AdviseRunbookAsync(
+        string yaml,
+        CancellationToken cancellationToken)
+    {
+        if (_model is null)
+        {
+            return ([], SuggestUnavailableNote);
+        }
+
+        var asked = new CompletionRequest
+        {
+            Model = _modelId,
+            System = AssistSystem,
+            Prompt = $"This runbook is up for review:\n\n{yaml}\n",
+        };
+
+        try
+        {
+            var completion = await _model.CompleteAsync(asked, cancellationToken).ConfigureAwait(false);
+
+            return (Suggestions(completion.Text), null);
+        }
+        catch (HttpRequestException exception)
+        {
+            return ([], $"suggestions unavailable: {exception.Message}");
+        }
+        catch (InvalidOperationException exception)
+        {
+            return ([], $"suggestions unavailable: {exception.Message}");
+        }
+        catch (JsonException exception)
+        {
+            return ([], $"suggestions unavailable: {exception.Message}");
+        }
+    }
+
+    /// <summary>The note an advisory pass answers with when this deployment cannot call a model.</summary>
+    public const string SuggestUnavailableNote = "suggestions unavailable: this deployment has no model bound";
+
     /// <summary>Applies a runbook version.</summary>
     /// <remarks>
     /// The catalog gates the write and the store keeps it, which is the same pair the sessions plane resolves through:
