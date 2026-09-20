@@ -14,7 +14,11 @@ using SharpCoreDB.Interfaces;
 /// drops by dropping the table rather than deleting rows a predicate at a time. The original partitions its chunk store by
 /// collection for the same reason - a search should touch one version's rows and nothing else.
 /// <para>
-/// The embedding goes in the engine's own vector column. That is not decoration: it is what makes these rows the ones a
+/// The embedding goes in the engine own vector column, and what that column can carry today is text: a write of a
+/// float array or of the engine own binary blob both read back as the element type name - System.Single and System.Byte,
+/// both measured - because neither the write path nor the read path reaches the registered type provider. Text
+/// round-trips, so text is what a chunk is written as. When the engine decodes its own vector blob on read, this store
+/// can write the blob instead, which is smaller and is what a declared vector index would prefer.
 /// declared vector index could serve from, so the vector leg can move into the engine without the rows moving with it.
 /// This port still fuses by rank itself, because its envelope records the ranking that decided the answer.
 /// </para>
@@ -166,25 +170,11 @@ public sealed class SharpCoreDbIndexChunkStore(
         Embedding = Vector(row),
     };
 
-    /// <summary>Writes an embedding as the text the engine parses.</summary>
-    /// <remarks>
-    /// Measured: a VECTOR column accepts a float array on the way in but reads it back as the string System.Single, while
-    /// the engine own parser takes text - a float array, bytes or JSON. So the round trip that works today is text in and
-    /// text out. The array form is what the column documents, and this is the seam to remove when the engine closes it.
-    /// </remarks>
-    /// <param name="embedding">The embedding.</param>
-    /// <returns>The text.</returns>
-    private static string EmbeddingText(IReadOnlyList<float> embedding) =>
-        string.Concat(
-            "[",
-            string.Join(",", embedding.Select(component => component.ToString("R", CultureInfo.InvariantCulture))),
-            "]");
-
     /// <summary>Reads the embedding column, in whichever shape the engine hands it back.</summary>
     /// <remarks>
-    /// The column is the engine's vector type, and what a read produces is the engine's business: its client maps that to a
-    /// double array while the table API keeps floats, so both are accepted. Anything else is refused by name rather than
-    /// by a cast that would fail somewhere with less to say.
+    /// The engine own vector blob is what a write puts there, and a read may hand it back as bytes. Text is still read
+    /// because rows written before this store used the blob hold a bracketed list, and a store that could not read its
+    /// own earlier rows would be a store nobody could upgrade.
     /// </remarks>
     /// <param name="row">The row.</param>
     /// <returns>The embedding.</returns>
@@ -201,6 +191,20 @@ public sealed class SharpCoreDbIndexChunkStore(
                     $"the embedding column came back as {value?.GetType().Name ?? "null"}, which is not a vector"),
             }
             : [];
+
+    /// <summary>Writes an embedding as the text the engine parses.</summary>
+    /// <remarks>
+    /// Text because that is what the column can carry today: a write of a float array or of the engine binary blob both
+    /// read back as the element type name - System.Single for one, System.Byte for the other, both measured - while a
+    /// bracketed list round-trips, which is also the form the engine own parser accepts on the way in.
+    /// </remarks>
+    /// <param name="embedding">The embedding.</param>
+    /// <returns>The text.</returns>
+    private static string EmbeddingText(IReadOnlyList<float> embedding) =>
+        string.Concat(
+            "[",
+            string.Join(",", embedding.Select(component => component.ToString("R", CultureInfo.InvariantCulture))),
+            "]");
 
     /// <summary>Reads an embedding the engine handed back as text.</summary>
     /// <remarks>
