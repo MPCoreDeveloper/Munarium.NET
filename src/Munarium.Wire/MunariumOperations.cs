@@ -1037,6 +1037,15 @@ public sealed class MunariumOperations(
     /// <returns>Healthy, and which contract is answering.</returns>
     public static WireHealth Health() => new("ok", Contract);
 
+    /// <summary>What this deployment is: the contract it speaks and the version answering.</summary>
+    /// <remarks>
+    /// Two things rather than one, because they move independently and a caller needs both: the contract says what shape
+    /// the answers are, the version says which build produced this one. A health check that cannot say who answered is one
+    /// a fleet cannot use to tell its members apart.
+    /// </remarks>
+    /// <returns>The version.</returns>
+    public static WireDeploymentVersion Version() => new(Contract, ToolVersion);
+
     /// <summary>The current head of a version's stream.</summary>
     /// <param name="versionId">The version to read.</param>
     /// <param name="cancellationToken">Cancellation token.</param>

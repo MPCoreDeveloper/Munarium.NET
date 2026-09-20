@@ -246,6 +246,21 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
     }
 
     /// <inheritdoc />
+    public override Task<GetVersionResponse> GetVersionAsync(
+        GetVersionRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var version = MunariumOperations.Version();
+
+        return Task.FromResult(new GetVersionResponse
+        {
+            Data = new DeploymentVersion { Contract = version.Contract, Version = version.Version },
+        });
+    }
+
+    /// <inheritdoc />
     public override async Task<RequestRunbookRemovalResponse> RequestRunbookRemovalAsync(
         RequestRunbookRemovalRequest request,
         ServerCallContext context)

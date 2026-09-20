@@ -65,7 +65,7 @@ public class UpstreamContractTests
         var declared = Upstream();
         var covered = Served().Count(declared.Contains);
 
-        Assert.True(covered >= 44, $"this port covers {covered} of the original's operations, and it covered 44 before");
+        Assert.True(covered >= 45, $"this port covers {covered} of the original's operations, and it covered 45 before");
     }
 
     /// <summary>Reads the recorded upstream operations.</summary>

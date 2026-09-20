@@ -29,6 +29,9 @@ public static class MunariumEndpoints
         ArgumentNullException.ThrowIfNull(app);
 
         app.MapGet("/healthz", () => TypedResults.Ok(MunariumOperations.Health()));
+        app.MapGet(
+            "/version",
+            () => TypedResults.Json(MunariumOperations.Version(), WireJson.Default.WireDeploymentVersion));
 
         // The capability plane: the identity provider in front authenticates people, and this is where the authority it
         // asserts is exchanged for a short-lived credential. Nothing here decides anything about the ledger; it mints what

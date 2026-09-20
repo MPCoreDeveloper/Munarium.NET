@@ -47,3 +47,21 @@ What that changes here: **a green CI is evidence that the solution compiles and 
 of a warning-free build.** `dotnet test -c Release` on a developer's machine is the stricter gate, and it is the result
 to quote. The lesson is the one the five corrections above taught, one layer up: the pipeline had been treated as the
 measurement, and what it measures had not been read.
+
+## Never anchor an insert on a doc comment
+
+A text anchor that sits on, or immediately after, a line of documentation splits the block it belongs to. The symptom is
+not a missing type: it is a type whose documentation describes a different type, which the compiler reports as a param tag
+for a parameter that does not exist. It has cost three separate incidents - the export doc comment, and the wire models
+twice - and it fails in the direction that wastes the most work, because the build output points at the documentation
+rather than at the insert.
+
+Two rules that remove it entirely:
+
+- Append at the end of the file when the language allows it, which for a file-scoped namespace it does.
+- Otherwise anchor on an attribute or a code line, never on a documentation line, and re-emit the anchor in the
+  replacement so it cannot be consumed. An editor replacement consumes its anchor; forgetting that is how the export doc
+  comment was lost.
+
+The same class of mistake as reusing a count from memory: an anchor or a count recalled rather than read is a claim, not a
+measurement.

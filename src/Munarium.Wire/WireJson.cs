@@ -22,6 +22,7 @@ using Munarium.Evidence;
 [JsonSerializable(typeof(WireRunbook))]
 [JsonSerializable(typeof(WireRunbookList))]
 [JsonSerializable(typeof(WireHealth))]
+[JsonSerializable(typeof(WireDeploymentVersion))]
 [JsonSerializable(typeof(WireVersionHead))]
 [JsonSerializable(typeof(WireVersion))]
 [JsonSerializable(typeof(WireVersionLineage))]

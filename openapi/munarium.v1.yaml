@@ -50,6 +50,21 @@ tags:
     description: What a claim is allowed to look like.
 
 paths:
+  /version:
+    get:
+      operationId: GetVersion
+      tags: [operations]
+      summary: What this deployment is.
+      description: |
+        The contract it speaks and the version answering, because they move independently and a caller needs both: the
+        contract says what shape the answers are, and the version says which build produced this one.
+      responses:
+        "200":
+          description: The contract and the version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeploymentVersion"
   /healthz:
     get:
       operationId: GetHealth
@@ -2355,6 +2370,15 @@ components:
         actual_head:
           type: integer
           format: int64
+
+    DeploymentVersion:
+      type: object
+      required: [contract, version]
+      properties:
+        contract:
+          type: string
+        version:
+          type: string
 
     Health:
       type: object

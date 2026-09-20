@@ -1620,3 +1620,7 @@ public readonly union WireSessionResult(WireSession, WireProblem);
 /// <summary>The result of closing a session: the session, or why it was not closed.</summary>
 public readonly union WireCloseSessionResult(WireSessionClosed, WireProblem);
 
+/// <summary>What this deployment is, so a caller can tell which one answered.</summary>
+/// <param name="Contract">The wire contract version it speaks, which is what shape the answers are.</param>
+/// <param name="Version">The version of the server itself, which is which build produced this answer.</param>
+public sealed record WireDeploymentVersion(string Contract, string Version);
