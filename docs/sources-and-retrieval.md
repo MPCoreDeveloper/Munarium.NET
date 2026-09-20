@@ -138,4 +138,5 @@ opens every artifact from its store and checks each component, because reading t
 would verify the database against itself. `IndexArtifactVerification` does the same at the scale one node has - it reads
 the persisted chunks and checks them against the manifest: every vector has the width the manifest records, every chunk
 obeys the maximum the build cut to, every source the manifest names is represented and nothing else is, and the ordinals
-of a document are contiguous, because a gap is the one failure a count cannot see.
+of a document are contiguous, because a gap is the one failure a count cannot see. The deployment shape that decides whether the mirror plane is built at all is recorded, with its measurements, in
+docs/decisions.md.

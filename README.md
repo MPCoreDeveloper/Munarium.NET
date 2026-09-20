@@ -199,7 +199,8 @@ The engine can do better, and the route is measured rather than guessed: SharpCo
 vector index that persists under its `vector_index:` storage prefix - so chunks and embeddings belong in a table per index
 version with the vector index declared over them, and a restart then **loads** rather than re-reading and re-embedding the
 corpus. The lexical leg is rebuilt from the persisted chunk text, because the engine's `FullTextIndex` is an in-process
-class and no persisted full-text index was found (measured). That slice is next, and it needs no change to SharpCoreDB.
+class and no persisted full-text index was found (measured). That slice is next, and it needs no change to SharpCoreDB. Whether a fleet is in scope at all is a deployment-shape decision, and it is recorded in
+docs/decisions.md together with what was measured for it.
 
 The two-stage
   collection selection a wide runbook may ask for is half there, and the half that is missing is written here rather than
