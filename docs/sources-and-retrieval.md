@@ -60,3 +60,34 @@ ways. Building records a version **without** making it live, a cutover is per co
 superseded version stays resolvable, and `ResolveAsync` takes an answer's envelope and checks that the version
 it names exists, that the bytes it cites are ones that version indexed, and that it does not claim more of the
 ledger than the index ever reflected.
+
+## The persisted index, and what the engine already does
+
+This port rebuilds every live index version at startup, and that is a cost rather than a design - the README says so,
+and the reason is measurable. `SharpCoreDbRetriever` holds a `List<IndexedChunk>`, a `FullTextIndex` and an `IVectorIndex`
+(FlatIndex or DiskAnnIndex) in the process, and the host opens every version empty, so the chunks, their text and their
+vectors all have to come back from the source rows.
+
+The original does not work that way. Its `munarium-retrieval-pg` writes one row per chunk - `(chunk_id, source_id,
+source_hash, ordinal, text, embedding)` - into Postgres, with pgvector columns and HNSW indexes (GIN for the lexical side),
+cascading per partition. Its index *is* its database, so a restart is a reconnect.
+
+The engine underneath this port can hold that too, and it does not have to be changed for it:
+
+| What the gap needs | What SharpCoreDB already has |
+|---|---|
+| A column that holds an embedding | `ColumnType.Vector`, documented as a fixed-dimension float32 array for similarity search |
+| An index over it | `CREATE VECTOR INDEX name ON table(column) USING FLAT\|HNSW\|DISKANN[(params)]` |
+| The index definition to survive | That statement stores it in the table own metadata, for the VectorSearch module to consume |
+| The index itself to survive | `VectorStorageFormat.VectorIndexPrefix` - a persisted vector index under the engine storage |
+| A query that uses it | An `IVectorQueryOptimizer`, invoked when a query can be answered by a vector index |
+
+So the slice is: a chunk table per index version, a `Vector` column holding the embedding, `CREATE VECTOR INDEX` over it,
+the chunk rows written as a build indexes them, and recovery that loads what is there and rebuilds only what is missing.
+The table name carries the version because a predicate can compare an identity and nothing else (measured: caller-supplied
+text does not compare), so the version is keyed by a derived value rather than by its own text.
+
+One thing stays in the process: the lexical leg. `FullTextIndex` is an in-process class and no persisted full-text index
+was found anywhere in the engine (measured, by searching the checkout). The chunk text is in the table, so the lexical
+index is rebuilt from it at startup - no extraction and no embedding, which is where the cost was. If the engine ever grows
+a persisted full-text index, this is the one place that would use it.

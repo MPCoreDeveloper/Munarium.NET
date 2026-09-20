@@ -192,7 +192,16 @@ in the order it is planned:
   answer's envelope and says whether the bytes it cites were in the version it names. What is not there is a persisted
   index: the chunks live in the process that built them, so a deployment that restarts rebuilds every live version from
   the rows before the first question arrives - which is why a version records the prefix it was built from - and a very
-  large corpus pays for that rebuild at every start rather than reading its vectors back from disk. The two-stage
+  large corpus pays for that rebuild at every start rather than reading its vectors back from disk.
+
+The engine can do better, and the route is measured rather than guessed: SharpCoreDB has a native `Vector` column type, a
+`CREATE VECTOR INDEX ... USING FLAT|HNSW|DISKANN` whose definition the engine keeps in the table's own metadata, and a
+vector index that persists under its `vector_index:` storage prefix - so chunks and embeddings belong in a table per index
+version with the vector index declared over them, and a restart then **loads** rather than re-reading and re-embedding the
+corpus. The lexical leg is rebuilt from the persisted chunk text, because the engine's `FullTextIndex` is an in-process
+class and no persisted full-text index was found (measured). That slice is next, and it needs no change to SharpCoreDB.
+
+The two-stage
   collection selection a wide runbook may ask for is half there, and the half that is missing is written here rather than
   left to be discovered: the ranking is in the kernel - `CollectionSelection`, with the original's own measured
   thresholds as its tests, so a pool that is 85% phrase counts 3.55× and one that is 6% counts 1.18× - but the probe it
