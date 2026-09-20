@@ -1155,6 +1155,24 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Equal(HttpStatusCode.NotFound, nothing.StatusCode);
     }
 
+    /// <summary>The authoring catalog reads, and an unknown pattern is a 404 rather than an empty answer.</summary>
+    [Fact]
+    public async Task TheAuthoringCatalogReads()
+    {
+        using var all = await _client.GetAsync("/v1/authoring/patterns");
+        var catalog = (await all.Content.ReadFromJsonAsync(WireJson.Default.WireAuthoringPatternList))!;
+
+        Assert.Equal(HttpStatusCode.OK, all.StatusCode);
+        Assert.Equal(7, catalog.Patterns.Count);
+        Assert.Contains(catalog.Patterns, pattern => pattern.Id == "ask-the-corpus" && pattern.HasCompletion);
+
+        using var one = await _client.GetAsync("/v1/authoring/patterns/red-flag-review");
+        using var missing = await _client.GetAsync("/v1/authoring/patterns/nope");
+
+        Assert.Equal(HttpStatusCode.OK, one.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+    }
+
     /// <summary>Reads or writes the issuance audit, with a capability presented.</summary>
     /// <param name="token">The capability to present.</param>
     /// <param name="method">Whether this is a read or a withdrawal.</param>

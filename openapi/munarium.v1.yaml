@@ -923,6 +923,48 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/authoring/patterns:
+    get:
+      operationId: ListAuthoringPatterns
+      tags: [authoring]
+      summary: The application patterns this deployment serves.
+      description: |
+        The same list the interview offers, so a client that shows the patterns offers exactly what a draft would
+        accept. Each pattern names the committed exemplar runbook to start from and whether it carries a completion arm.
+      responses:
+        "200":
+          description: The served patterns, in the catalog own order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthoringPatternList"
+
+  /v1/authoring/patterns/{id}:
+    get:
+      operationId: GetAuthoringPattern
+      tags: [authoring]
+      summary: One application pattern.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The pattern identity.
+      responses:
+        "200":
+          description: The pattern.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthoringPattern"
+        "404":
+          description: This deployment does not serve that pattern.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
   /v1/access-tokens:
     post:
       operationId: IssueAccessToken
@@ -3003,6 +3045,42 @@ components:
           type: integer
           format: int64
           description: When it was withdrawn, absent while it stands.
+
+    AuthoringPattern:
+      type: object
+      required: [id, name, description, start_from, guidance, has_completion]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        start_from:
+          type: string
+          description: The key of the committed exemplar runbook this pattern starts from.
+        guidance:
+          type: string
+        shape_names:
+          type: array
+          items:
+            type: string
+        has_completion:
+          type: boolean
+          description: Whether the pattern carries a completion arm, which is what gates the interview completion section.
+        decision_notes:
+          type: array
+          items:
+            type: string
+
+    AuthoringPatternList:
+      type: object
+      required: [patterns]
+      properties:
+        patterns:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuthoringPattern"
 
     AccessTokenAuditList:
       type: object

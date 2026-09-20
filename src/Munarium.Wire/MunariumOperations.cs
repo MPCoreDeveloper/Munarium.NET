@@ -85,6 +85,9 @@ public sealed class MunariumOperations(
 
     /// <summary>The problem identifier a withdrawal naming something never issued answers with.</summary>
     public const string UnknownAccessTokenProblem = "https://munarium.dev/problems/unknown-access-token";
+
+    /// <summary>The problem identifier an unknown application pattern answers with.</summary>
+    public const string UnknownAuthoringPatternProblem = "https://munarium.dev/problems/unknown-authoring-pattern";
     /// <summary>The problem identifier a document that is not the one declared answers with.</summary>
     public const string ContentHashMismatchProblem = "https://munarium.dev/problems/content-hash-mismatch";
 
@@ -214,6 +217,37 @@ public sealed class MunariumOperations(
         ? throw new ArgumentException("The deployment's tenant must be named.", nameof(tenant))
         : tenant;
 
+
+    /// <summary>The application patterns this deployment serves.</summary>
+    /// <returns>The patterns, in the catalog own order.</returns>
+    public static WireAuthoringPatternList ListAuthoringPatterns() =>
+        new([.. AuthoringCatalog.Patterns.Select(Pattern)]);
+
+    /// <summary>One application pattern.</summary>
+    /// <param name="id">Its identity.</param>
+    /// <returns>The pattern, or a problem when this deployment does not serve it.</returns>
+    public static WireAuthoringPatternResult AuthoringPattern(string id) =>
+        AuthoringCatalog.Pattern(id) is { } pattern
+            ? Pattern(pattern)
+            : new WireProblem(
+                UnknownAuthoringPatternProblem,
+                $"No application pattern with the identity '{id}' is served here.",
+                Status: 404,
+                ExpectedHead: 0,
+                ActualHead: 0);
+
+    /// <summary>Reads a served pattern as the contract carries it.</summary>
+    /// <param name="pattern">The pattern.</param>
+    /// <returns>The wire shape.</returns>
+    private static WireAuthoringPattern Pattern(AuthoringPattern pattern) => new(
+        pattern.Id,
+        pattern.Name,
+        pattern.Description,
+        pattern.StartFrom,
+        pattern.Guidance,
+        pattern.ShapeNames,
+        pattern.HasCompletion,
+        pattern.DecisionNotes);
 
     /// <summary>Liveness.</summary>
     /// <returns>Healthy, and which contract is answering.</returns>

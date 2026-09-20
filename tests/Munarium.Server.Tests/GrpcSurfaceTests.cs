@@ -55,6 +55,19 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
             Assert.Equal(StatusCode.Unauthenticated, refused.StatusCode);
         });
 
+    /// <summary>The catalog answers over gRPC with the same patterns the JSON surface serves.</summary>
+    [Fact]
+    public async Task TheAuthoringCatalogAnswersOverGrpc() =>
+        await WithClient(async client =>
+        {
+            var catalog = await client.ListAuthoringPatternsAsync(new ListAuthoringPatternsRequest());
+            var pattern = await client.GetAuthoringPatternAsync(new GetAuthoringPatternRequest { Id = "red-flag-review" });
+
+            Assert.Equal(7, catalog.Data.Patterns.Count);
+            Assert.Equal("Red-flag review", pattern.Data.Name);
+            Assert.False(pattern.Data.HasCompletion);
+        });
+
     [Fact]
     public async Task AClaimAndTheFactsItProducedTravelOverGrpc() =>
         await WithClient(async client =>

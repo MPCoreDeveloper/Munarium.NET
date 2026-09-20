@@ -671,8 +671,28 @@ public static class MunariumEndpoints
                     .ListIndexVersionsAsync(collectionId, cancellationToken)
                     .ConfigureAwait(false));
 
-        app.MapGet("/v1/shapes", (MunariumOperations operations) => operations.ListShapes());
+        // The authoring catalog: the patterns an author can start from. Read-only, and the same list the interview
+        // offers, so a client that shows the patterns offers exactly what a draft would accept.
+        app.MapGet("/v1/authoring/patterns", () => MunariumOperations.ListAuthoringPatterns());
 
+        app.MapGet(
+            "/v1/authoring/patterns/{id}",
+            ([FromRoute(Name = "id")] string id) =>
+            {
+                var result = MunariumOperations.AuthoringPattern(id);
+
+                IResult answer = result switch
+                {
+                    WireAuthoringPattern pattern => TypedResults.Json(
+                        pattern, WireJson.Default.WireAuthoringPattern),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet("/v1/shapes", (MunariumOperations operations) => operations.ListShapes());
 
         app.MapPost(
             "/v1/runbooks",

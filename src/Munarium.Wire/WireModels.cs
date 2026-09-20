@@ -182,6 +182,22 @@ public sealed record WireShape(string Name, int Version, IReadOnlyList<string> I
 /// <summary>The shapes a deployment understands.</summary>
 /// <param name="Shapes">The registered shapes, ordered by name.</param>
 public sealed record WireShapeList(IReadOnlyList<WireShape> Shapes);
+/// <summary>One application pattern an author can start from.</summary>
+public sealed record WireAuthoringPattern(
+    string Id,
+    string Name,
+    string Description,
+    string StartFrom,
+    string Guidance,
+    IReadOnlyList<string> ShapeNames,
+    bool HasCompletion,
+    IReadOnlyList<string> DecisionNotes);
+
+/// <summary>The patterns this deployment can serve, in the catalog own order.</summary>
+public sealed record WireAuthoringPatternList(IReadOnlyList<WireAuthoringPattern> Patterns);
+
+/// <summary>A pattern, or why it is not one this deployment serves.</summary>
+public readonly union WireAuthoringPatternResult(WireAuthoringPattern, WireProblem);
 
 /// <summary>A memory version: the identity claims are written under, and the node it occupies.</summary>
 /// <param name="VersionId">The version's identity, which is also the stream its claims go to.</param>

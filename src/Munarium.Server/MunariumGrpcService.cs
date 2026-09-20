@@ -682,6 +682,31 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
 
     // A failure is one failure: the problem's own status decides the gRPC code, so the two surfaces answer
     // the same failure the same way instead of each inventing a mapping.
+    /// <inheritdoc />
+    public override Task<ListAuthoringPatternsResponse> ListAuthoringPatternsAsync(
+        ListAuthoringPatternsRequest request,
+        ServerCallContext context) =>
+        Task.FromResult(new ListAuthoringPatternsResponse
+        {
+            Data = ToMessage(MunariumOperations.ListAuthoringPatterns()),
+        });
+
+    /// <inheritdoc />
+    public override Task<GetAuthoringPatternResponse> GetAuthoringPatternAsync(
+        GetAuthoringPatternRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var result = MunariumOperations.AuthoringPattern(request.Id ?? string.Empty);
+
+        return Task.FromResult(result switch
+        {
+            WireAuthoringPattern pattern => new GetAuthoringPatternResponse { Data = ToMessage(pattern) },
+            WireProblem problem => throw Problem(problem),
+        });
+    }
+
     private static RpcException Problem(WireProblem problem) =>
         new(new Status(CodeOf(problem.Status), problem.Detail));
 
@@ -1198,6 +1223,39 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
             : null;
     }
 
+
+    /// <summary>Reads the catalog as the messages the specification declares.</summary>
+    /// <param name="patterns">The catalog.</param>
+    /// <returns>The message.</returns>
+    private static AuthoringPatternList ToMessage(WireAuthoringPatternList patterns)
+    {
+        var list = new AuthoringPatternList();
+
+        list.Patterns.AddRange(patterns.Patterns.Select(ToMessage));
+
+        return list;
+    }
+
+    /// <summary>Reads one pattern as the message.</summary>
+    /// <param name="pattern">The pattern.</param>
+    /// <returns>The message.</returns>
+    private static AuthoringPattern ToMessage(WireAuthoringPattern pattern)
+    {
+        var message = new AuthoringPattern
+        {
+            Id = pattern.Id,
+            Name = pattern.Name,
+            Description = pattern.Description,
+            StartFrom = pattern.StartFrom,
+            Guidance = pattern.Guidance,
+            HasCompletion = pattern.HasCompletion,
+        };
+
+        message.ShapeNames.AddRange(pattern.ShapeNames);
+        message.DecisionNotes.AddRange(pattern.DecisionNotes);
+
+        return message;
+    }
 
     private static Health ToMessage(WireHealth health) => new()
     {
