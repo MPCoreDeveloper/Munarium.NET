@@ -8,7 +8,24 @@ using YamlDotNet.RepresentationModel;
 /// <summary>What a draft materialized into: the documents, and what still has to be answered.</summary>
 /// <param name="Documents">The path of each document, mapped to its text.</param>
 /// <param name="Todos">The questions an author still has to answer, in the order they were noticed.</param>
-public sealed record Materialized(IReadOnlyDictionary<string, string> Documents, IReadOnlyList<string> Todos);
+public sealed record Materialized(IReadOnlyDictionary<string, string> Documents, IReadOnlyList<string> Todos)
+{
+    /// <summary>Gets the order the documents have to be applied in.</summary>
+    /// <remarks>
+    /// Shapes before everything else, each group in path order. A collection binds a shape, so a runbook applied before
+    /// the shape it binds would materialize nothing for as long as that shape was missing - and a deployment that applied
+    /// a whole set in the wrong order would have been serving half of it in between.
+    /// </remarks>
+    public IReadOnlyList<string> ApplyOrder =>
+    [
+        .. Documents.Keys
+            .Where(path => path.StartsWith(AuthoringMaterializer.ShapeDirectory, StringComparison.Ordinal))
+            .OrderBy(path => path, StringComparer.Ordinal),
+        .. Documents.Keys
+            .Where(path => !path.StartsWith(AuthoringMaterializer.ShapeDirectory, StringComparison.Ordinal))
+            .OrderBy(path => path, StringComparer.Ordinal),
+    ];
+}
 
 /// <summary>Deterministic materialization: interview answers into the documents a draft needs.</summary>
 /// <remarks>
@@ -23,6 +40,9 @@ public sealed record Materialized(IReadOnlyDictionary<string, string> Documents,
 public static class AuthoringMaterializer
 {
     /// <summary>The container documents are stored in.</summary>
+    /// <summary>The directory a materialized shape lands under, which is what makes the apply order decidable.</summary>
+    public const string ShapeDirectory = "shapes/";
+
     private const string Container = "sources";
 
     /// <summary>Builds a draft's runbook from interview answers.</summary>

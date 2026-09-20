@@ -1,5 +1,6 @@
 namespace Munarium.Server.Tests;
 
+using Munarium.Runbooks;
 using Munarium.Shapes;
 using Munarium.Wire;
 
@@ -162,7 +163,70 @@ public class AuthoringDraftTests
             ? applied
             : throw new InvalidOperationException($"the apply was refused: {result}");
 
-    /// <summary>Reads a validation result, insisting it is one.</summary>
+    /// <summary>An export carries the set, a digest for each document, the order to apply them in, and agrees with itself.</summary>
+    [Fact]
+    public async Task AnExportCarriesTheSetAndAgreesWithItself()
+    {
+        await using var kernel = MunariumKernel.Create(
+            Path.Combine(Path.GetTempPath(), $"Munarium_{Guid.NewGuid():N}"),
+            "munarium-export",
+            new ShapeRegistry([]));
+
+        Draft(await kernel.Operations.OpenDraftAsync(new WireAuthoringDraftRequest("export-rb", "ask-the-corpus")));
+
+        var bundle = Bundled(await kernel.Operations.ExportDraftAsync("export-rb"));
+
+        Assert.Equal("MunariumAuthoringBundle", bundle.Kind);
+        Assert.Equal("munarium.ioka.io/v1", bundle.ApiVersion);
+        Assert.Equal("export-rb", bundle.DraftId);
+        Assert.Equal("munarium-server", bundle.Tool.Name);
+
+        // Every document travels with a digest over what travelled, and the order names them shapes first, because a
+        // runbook binds a shape and a set applied out of order would have served nothing in between.
+        Assert.Equal(2, bundle.Files.Count);
+        Assert.Equal(bundle.Files.Count, bundle.Hashes.Count);
+        Assert.Equal(2, bundle.ApplyOrder.Count);
+        Assert.StartsWith("shapes/", bundle.ApplyOrder[0], StringComparison.Ordinal);
+        Assert.StartsWith("runbooks/", bundle.ApplyOrder[1], StringComparison.Ordinal);
+
+        // The manifest is a digest of what the bundle says about itself, so it is the same digest whoever computes it.
+        Assert.Equal(AuthoringBundle.ManifestDigest(bundle.Hashes), bundle.ManifestHash, StringComparer.Ordinal);
+
+        // The invariant the manifest exists for: change one document and the bundle is refused by its own check.
+        var honest = Honest();
+        var drifted = honest with
+        {
+            Hashes = honest.Hashes.ToDictionary(
+                entry => entry.Key,
+                entry => entry.Key == "runbooks/export-rb.yaml" ? "sha256:drifted" : entry.Value,
+                StringComparer.Ordinal),
+        };
+
+        Assert.Null(AuthoringBundle.Verify(honest));
+        Assert.NotNull(AuthoringBundle.Verify(drifted));
+    }
+
+    /// <summary>Builds the bundle of a set as the materializer produces it, which is what a recipient checks.</summary>
+    private static AuthoringBundle Honest()
+    {
+        var (set, _) = AuthoringMaterializer.Build(
+            "export-rb",
+            AuthoringCatalog.Pattern("ask-the-corpus"),
+            new Dictionary<string, object?>(StringComparer.Ordinal));
+
+        return AuthoringBundle.Build(
+            "export-rb",
+            "2026-01-01T00:00:00Z",
+            "1.0.0",
+            set ?? throw new InvalidOperationException("the set did not materialize"),
+            new BundleValidation { Valid = true, Errors = 0, Warns = 0, Infos = 0 });
+    }
+
+    /// <summary>Reads an exported bundle, insisting it is one.</summary>
+    private static WireAuthoringBundle Bundled(WireDraftBundleResult result) =>
+        result is WireAuthoringBundle bundle
+            ? bundle
+            : throw new InvalidOperationException($"the export was refused: {result}");    /// <summary>Reads a validation result, insisting it is one.</summary>
     /// <param name="result">The result.</param>
     /// <returns>The validation.</returns>
     private static WireDraftValidation Validated(WireDraftValidationResult result) =>

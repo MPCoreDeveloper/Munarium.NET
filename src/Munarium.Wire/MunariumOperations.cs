@@ -362,6 +362,92 @@ public sealed class MunariumOperations(
             ? null
             : await _authoring.FindAsync(name.Trim(), cancellationToken).ConfigureAwait(false);
 
+    /// <summary>Exports what a draft materializes as a hash-manifested bundle.</summary>
+    /// <remarks>
+    /// Refused while an error finding exists, which is the same gate apply stands behind: a bundle is what an author hands
+    /// to an operator, and handing over something a deployment would refuse is handing over a refusal.
+    /// </remarks>
+    /// <param name="name">The draft name.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The bundle, or why there is none.</returns>
+    public async ValueTask<WireDraftBundleResult> ExportDraftAsync(
+        string name,
+        CancellationToken cancellationToken = default)
+    {
+        if (await StoredAsync(name, cancellationToken).ConfigureAwait(false) is not { } draft)
+        {
+            return UnknownDraft(name);
+        }
+
+        var (set, refused) = AuthoringMaterializer.Build(
+            draft.Name,
+            AuthoringCatalog.Pattern(draft.PatternId),
+            draft.Answers);
+
+        if (set is null)
+        {
+            return InvalidDraft(draft.Name, refused);
+        }
+
+        if (RunbookEntry(set).Yaml is not { } yaml)
+        {
+            return InvalidDraft(draft.Name, "the materialized set carries no runbook");
+        }
+
+        if (RunbookReader.Read(yaml) is not ({ } document, null))
+        {
+            return InvalidDraft(draft.Name, "the materialized runbook does not read");
+        }
+
+        var reported = RunbookValidation.Validate(document);
+
+        if (!RunbookValidation.IsValid(reported))
+        {
+            return InvalidDraft(draft.Name, "it does not validate, and a bundle that does not validate is not exported");
+        }
+
+        var bundle = AuthoringBundle.Build(
+            draft.Name,
+            Rfc3339(DateTimeOffset.UtcNow),
+            ToolVersion,
+            set,
+            BundleValidation.From(reported));
+
+        // The materializer proves its own output reads, and this proves a bundle of it agrees with itself: a bundle is what
+        // leaves this deployment, and one that fails its own check on arrival is a refusal that travelled.
+        return AuthoringBundle.Verify(bundle) is { } broken
+            ? new WireProblem(
+                BundleInconsistentProblem,
+                $"The exported bundle does not agree with itself: {broken}",
+                Status: 500,
+                ExpectedHead: 0,
+                ActualHead: 0)
+            : Bundle(bundle);
+    }
+
+    /// <summary>Gets the version of this server, as a bundle reports it.</summary>
+    private static string ToolVersion =>
+        typeof(MunariumOperations).Assembly.GetName().Version?.ToString() ?? "0.0.0";
+
+    /// <summary>Carries a bundle as the contract carries it.</summary>
+    /// <param name="bundle">The bundle.</param>
+    /// <returns>The wire shape.</returns>
+    private static WireAuthoringBundle Bundle(AuthoringBundle bundle) => new(
+        AuthoringBundle.Kind,
+        AuthoringBundle.ApiVersion,
+        new WireBundleTool(bundle.Tool.Name, bundle.Tool.Version),
+        bundle.DraftId,
+        bundle.Name,
+        bundle.CreatedAt,
+        bundle.Files,
+        bundle.Hashes,
+        bundle.ApplyOrder,
+        bundle.ManifestHash,
+        new WireBundleValidation(
+            bundle.Validation.Valid,
+            bundle.Validation.Errors,
+            bundle.Validation.Warns,
+            bundle.Validation.Infos));
     /// <summary>Applies what a draft would apply, to this deployment.</summary>
     /// <remarks>
     /// Shapes first, then the runbook that binds them, which is the order the contract states: a collection binding a
@@ -546,6 +632,12 @@ public sealed class MunariumOperations(
             : UnknownDraft(wanted);
     }
 
+    /// <summary>The problem identifier a bundle that disagrees with itself answers with.</summary>
+    /// <remarks>
+    /// A server fault rather than a caller one: nothing a caller sent can make a bundle inconsistent, so this firing would
+    /// mean a deployment built something it would not accept from anyone else.
+    /// </remarks>
+    public const string BundleInconsistentProblem = "https://munarium.dev/problems/bundle-inconsistent";
     /// <summary>The problem identifier a draft that cannot be built answers with.</summary>
     public const string InvalidAuthoringDraftProblem = "https://munarium.dev/problems/authoring-draft-invalid";
 

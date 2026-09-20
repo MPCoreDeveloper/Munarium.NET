@@ -76,6 +76,7 @@ using Munarium.Evidence;
 [JsonSerializable(typeof(WireDraftValidation))]
 [JsonSerializable(typeof(WireAuthoringDraftRemoved))]
 [JsonSerializable(typeof(WireAuthoringApplied))]
+[JsonSerializable(typeof(WireAuthoringBundle))]
 [JsonSerializable(typeof(WireIngestedSource))]
 [JsonSerializable(typeof(WireSourceInfo))]
 [JsonSerializable(typeof(WireSourceList))]

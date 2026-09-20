@@ -1061,6 +1061,43 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/authoring/drafts/{draft_id}/export:
+    post:
+      operationId: ExportAuthoringDraft
+      tags: [authoring]
+      summary: Export what a draft materializes as a hash-manifested bundle.
+      description: |
+        The documents verbatim, a digest for each, the order they have to be applied in, and a digest over the manifest,
+        so drift between an export and an apply is detectable anywhere with nothing but a sha256 implementation. Refused
+        while an error finding exists: a bundle is what an author hands to an operator, and handing over something a
+        deployment would refuse is handing over a refusal.
+      parameters:
+        - name: draft_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The draft name.
+      responses:
+        "200":
+          description: The bundle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthoringBundle"
+        "404":
+          description: No draft by that name is kept here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The draft does not validate, so there is nothing to hand over.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
   /v1/authoring/drafts/{draft_id}/validate:
     post:
       operationId: ValidateAuthoringDraft
@@ -3385,6 +3422,82 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AuthoringDraft"
+
+    BundleFile:
+      type: object
+      required: [path, content]
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+          description: The document verbatim, as it travels.
+
+    BundleDigest:
+      type: object
+      required: [path, hash]
+      properties:
+        path:
+          type: string
+        hash:
+          type: string
+
+    BundleTool:
+      type: object
+      required: [name, version]
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+
+    BundleValidation:
+      type: object
+      required: [valid, errors, warns, infos]
+      properties:
+        valid:
+          type: boolean
+        errors:
+          type: integer
+        warns:
+          type: integer
+        infos:
+          type: integer
+
+    AuthoringBundle:
+      type: object
+      required: [kind, api_version, tool, draft_id, name, created_at, files, hashes, apply_order, manifest_hash, validation]
+      properties:
+        kind:
+          type: string
+        api_version:
+          type: string
+        tool:
+          $ref: "#/components/schemas/BundleTool"
+        draft_id:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+        files:
+          type: array
+          description: The documents, as path and content pairs.
+          items:
+            $ref: "#/components/schemas/BundleFile"
+        hashes:
+          type: array
+          description: Their digests, as path and digest pairs.
+          items:
+            $ref: "#/components/schemas/BundleDigest"
+        apply_order:
+          type: array
+          items:
+            type: string
+        manifest_hash:
+          type: string
+        validation:
+          $ref: "#/components/schemas/BundleValidation"
 
     AppliedDocument:
       type: object

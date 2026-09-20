@@ -731,6 +731,26 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+        app.MapPost(
+            "/v1/authoring/drafts/{draft_id}/export",
+            async (
+                [FromRoute(Name = "draft_id")] string draftId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.ExportDraftAsync(draftId, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireAuthoringBundle bundle => TypedResults.Json(
+                        bundle, WireJson.Default.WireAuthoringBundle),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
         // The authoring drafts: what an author is in the middle of, with the questions its pattern asks and what is still
         // open. Read and write, and no decisions of its own - every rule it applies is the kernel own.
         app.MapPost(

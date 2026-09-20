@@ -192,6 +192,23 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         };
     }
 
+    /// <inheritdoc />
+    public override async Task<ExportAuthoringDraftResponse> ExportAuthoringDraftAsync(
+        ExportAuthoringDraftRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        return await _operations
+            .ExportDraftAsync(request.DraftId, context.CancellationToken)
+            .ConfigureAwait(false) switch
+        {
+            WireAuthoringBundle bundle => new ExportAuthoringDraftResponse { Data = Bundle(bundle) },
+            WireProblem problem => throw Problem(problem),
+            var other => throw new InvalidOperationException($"unexpected export result: {other}"),
+        };
+    }
+
     /// <summary>Carries a draft as the contract carries it.</summary>
     /// <param name="draft">The draft.</param>
     /// <returns>The message.</returns>
@@ -270,6 +287,30 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         Kind = document.Kind,
         Ref = document.Ref,
         YamlHash = document.YamlHash,
+    };
+
+    /// <summary>Carries a bundle as the contract carries it.</summary>
+    /// <param name="bundle">The bundle.</param>
+    /// <returns>The message.</returns>
+    private static AuthoringBundle Bundle(WireAuthoringBundle bundle) => new()
+    {
+        Kind = Munarium.Runbooks.AuthoringBundle.Kind,
+        ApiVersion = Munarium.Runbooks.AuthoringBundle.ApiVersion,
+        Tool = new BundleTool { Name = bundle.Tool.Name, Version = bundle.Tool.Version },
+        DraftId = bundle.DraftId,
+        Name = bundle.Name,
+        CreatedAt = bundle.CreatedAt,
+        Files = { bundle.Files.Select(entry => new BundleFile { Path = entry.Key, Content = entry.Value }) },
+        Hashes = { bundle.Hashes.Select(entry => new BundleDigest { Path = entry.Key, Hash = entry.Value }) },
+        ApplyOrder = { bundle.ApplyOrder },
+        ManifestHash = bundle.ManifestHash,
+        Validation = new BundleValidation
+        {
+            Valid = bundle.Validation.Valid,
+            Errors = bundle.Validation.Errors,
+            Warns = bundle.Validation.Warns,
+            Infos = bundle.Validation.Infos,
+        },
     };
 
     /// <summary>Carries one answer as the contract carries it.</summary>

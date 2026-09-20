@@ -287,6 +287,45 @@ public sealed record WireAuthoringApplied(IReadOnlyList<WireAppliedDocument> App
 
 /// <summary>The answer to an apply: what landed, or why nothing did.</summary>
 public readonly union WireDraftApplyResult(WireAuthoringApplied, WireProblem);
+/// <summary>What wrote a bundle.</summary>
+/// <param name="Name">The name of the tool.</param>
+/// <param name="Version">Its version.</param>
+public sealed record WireBundleTool(string Name, string Version);
+
+/// <summary>What validation said about a set, counted.</summary>
+/// <param name="Valid">Whether nothing found was an error.</param>
+/// <param name="Errors">How many findings were errors.</param>
+/// <param name="Warns">How many were warnings.</param>
+/// <param name="Infos">How many were advisory.</param>
+public sealed record WireBundleValidation(bool Valid, int Errors, int Warns, int Infos);
+
+/// <summary>A validated set, hash-manifested, for applying somewhere else.</summary>
+/// <param name="Kind">The bundle kind, which a reader recognizes first.</param>
+/// <param name="ApiVersion">The bundle format version.</param>
+/// <param name="Tool">What wrote it.</param>
+/// <param name="DraftId">The draft it came from.</param>
+/// <param name="Name">The runbook name it applies under.</param>
+/// <param name="CreatedAt">When it was written.</param>
+/// <param name="Files">The documents, keyed by the path each travels under.</param>
+/// <param name="Hashes">Their digests, keyed the same way.</param>
+/// <param name="ApplyOrder">The paths in the order they have to be applied in: shapes first.</param>
+/// <param name="ManifestHash">The digest over the manifest, which is what makes drift detectable.</param>
+/// <param name="Validation">What validation said.</param>
+public sealed record WireAuthoringBundle(
+    string Kind,
+    string ApiVersion,
+    WireBundleTool Tool,
+    string DraftId,
+    string Name,
+    string CreatedAt,
+    IReadOnlyDictionary<string, string> Files,
+    IReadOnlyDictionary<string, string> Hashes,
+    IReadOnlyList<string> ApplyOrder,
+    string ManifestHash,
+    WireBundleValidation Validation);
+
+/// <summary>The answer to an export: the bundle, or why there is none.</summary>
+public readonly union WireDraftBundleResult(WireAuthoringBundle, WireProblem);
 
 /// <summary>A memory version: the identity claims are written under, and the node it occupies.</summary>
 /// <param name="VersionId">The version's identity, which is also the stream its claims go to.</param>
