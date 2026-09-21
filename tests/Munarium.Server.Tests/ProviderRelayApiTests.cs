@@ -7,10 +7,6 @@ using Munarium.Budgets;
 using Munarium.Wire;
 using Munarium.Wire.Generated;
 
-// The contract's ceilings and the generated message of the same name are both in scope here; the test asserts on the
-// first and builds the second, so the contract's shape gets a name of its own.
-using Budget = Munarium.Budgets.MaxTokensBudget;
-
 /// <summary>
 /// The ceiling and the relay over both transports: the ceilings every paid call is held to, and the routes that make a
 /// deployment spend its own credential.
@@ -24,12 +20,12 @@ public class ProviderRelayApiTests(MunariumApiFactory factory) : IClassFixture<M
     {
         using var client = _factory.CreateClient();
 
-        // A composed deployment with no replacement reports the process defaults, with no instant to name.
+        // Whatever is in force is read first, because the replacement is read back whole and that claim does not depend
+        // on what came before it. What a deployment that has replaced *nothing* reports is a claim of its own, and it
+        // lives in ProviderCeilingTests: a test that reads a pristine ceiling cannot share a deployment with a test
+        // that replaces one, and this class replaces ceilings. It was written the other way first, and the runner ran
+        // the replacement first - "expected environment, actual tenant" - which is what a claim about order looks like.
         var before = await ReadCeilingsAsync(client);
-
-        Assert.Equal(MaxTokensCeiling.EnvironmentSource, before.Source);
-        Assert.Null(before.UpdatedAt);
-        Assert.Equal(Budget.Builtin.TurnCompletion, before.Budgets.TurnCompletion);
 
         var asked = before.Budgets with { TurnCompletion = 4096, HealthAiProbe = 1024 };
         var replaced = await client.PostAsJsonAsync("/v1/max-tokens", asked, WireJson.Default.WireMaxTokensBudget);
