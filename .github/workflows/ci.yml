@@ -78,6 +78,13 @@ jobs:
         if: env.SONAR_TOKEN != ''
         run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
 
+      # A release pushes exactly what this step produces, so the packages are built and read back on
+      # every push rather than first at the tag. tools/release-packages.ps1 checks the set of packages
+      # and, inside each one, the symbols, licence, notice, credits, readme and icon that a release is
+      # expected to carry. The pack output is not uploaded anywhere: the release workflow packs again.
+      - name: Pack and check the release packages
+        run: pwsh tools/release-packages.ps1 -Configuration ${{ env.CONFIGURATION }} -NoBuild
+
   # NativeAOT and platform independence, proven per platform: publish the smoke tool as a fully
   # AOT-compiled native binary and run it. A reflection or codegen hazard fails this job.
   aot-smoke:

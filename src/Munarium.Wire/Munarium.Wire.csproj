@@ -39,4 +39,16 @@
     <PackageReference Include="Posseth.UlidFactory" />
   </ItemGroup>
 
+  <!--
+    The contract itself ships inside the package that implements it: a consumer generating a client
+    for another language reads the same specification this repository generates its own surface
+    from, rather than a copy of it that could have drifted.
+  -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\..\openapi\munarium.v1.yaml"
+          Pack="true"
+          PackagePath="contract/"
+          Visible="false" />
+  </ItemGroup>
+
 </Project>

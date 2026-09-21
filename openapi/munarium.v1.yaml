@@ -48,6 +48,8 @@ tags:
     description: Documents in, and where they went.
   - name: shapes
     description: What a claim is allowed to look like.
+  - name: providers
+    description: The model-provider plane - declarations, tier models and live probes.
 
 paths:
   /version:
@@ -2343,6 +2345,270 @@ paths:
                 $ref: "#/components/schemas/Problem"
         "503":
           description: A required layer could not answer, or no completion model is configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /healthai:
+    get:
+      operationId: HealthAi
+      tags: [providers]
+      summary: Probe the provider plane.
+      description: |
+        A live probe of the built-in tier models: one small completion per reachable family and tier, so what a
+        deployment can actually reach is observed rather than assumed. A family whose conventional credential is unset
+        is a skipped check rather than a failure, and the plane is healthy when at least one check ran and every check
+        that ran passed - so a deployment with nothing configured reads as not healthy rather than as vacuously
+        healthy. It spends real provider tokens when it runs, which is why it is a route of its own rather than part of
+        liveness.
+      responses:
+        "200":
+          description: What each probe observed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthAi"
+
+  /v1/providers:
+    get:
+      operationId: ListProviders
+      tags: [providers]
+      summary: Read the provider plane.
+      description: |
+        Free introspection: every configuration this deployment applied, then the environment-backed defaults behind
+        them, each with the concrete model its fast, capable and frontier tiers resolve to and whether its credential
+        resolves now. Zero provider calls and zero tokens, and never key material: where a credential lives is stated,
+        and never its value.
+      responses:
+        "200":
+          description: The provider plane, applied configurations first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderList"
+    post:
+      operationId: ApplyProvider
+      tags: [providers]
+      summary: Apply a provider configuration.
+      description: |
+        A registration is a declaration and not a secret: this records a dialect, an endpoint, the models that dialect
+        serves and where the credential lives - an environment variable's name or a file's path - and it never records
+        the credential itself. The reserved name "default" is refused, because it is the default-provider rule rather
+        than a configuration. A document this reader cannot read is refused with the reader's own complaint, and a
+        declared rate budget is refused by name: the relay that would enforce one is not served yet.
+      requestBody:
+        required: true
+        content:
+          text/yaml:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: The name the configuration is now held under.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderApplied"
+        "400":
+          description: The document could not be read, or it named something that cannot be served.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/providers/{name}/health:
+    get:
+      operationId: ProviderHealth
+      tags: [providers]
+      summary: Probe one configuration.
+      description: |
+        What a live probe of one configuration observed. A credential that does not resolve, and a family this
+        deployment holds no adapter for, are both answers rather than errors: an operator asking about a configuration
+        wants to be told what is missing, by name.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The name the configuration was applied under, or default-<family>.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: What the probe observed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderHealth"
+        "404":
+          description: No configuration of that name is held.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+
+  /v1/max-tokens:
+    get:
+      operationId: GetMaxTokens
+      tags: [providers]
+      summary: The ceilings a deployment's paid calls are held to.
+      description: |
+        One object of per-call output-token ceilings, flattened, plus where it comes from - a tenant's replacement
+        through this route, or the process's own variables over the built-ins. It is read where the calls are made, so a
+        turn, an assist, an advisory, a probe and a relayed completion are held to exactly what this reports.
+      responses:
+        "200":
+          description: The effective ceilings, and where they come from.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaxTokens"
+    post:
+      operationId: ReplaceMaxTokens
+      tags: [providers]
+      summary: Replace the ceilings a deployment's paid calls are held to.
+      description: |
+        The whole set is replaced, never part of it: a body missing a ceiling is invalid input rather than a partial
+        update, so an operator cannot change one by accident. A value outside the range a call could honour is refused
+        with the number and the bound in the detail, because a ceiling nobody could enforce is worse than a refusal.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MaxTokensBudget"
+      responses:
+        "200":
+          description: The ceilings in force after the replacement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaxTokens"
+        "400":
+          description: A ceiling is missing, or out of the range it is bounded to.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/providers/{name}/complete:
+    post:
+      operationId: ProviderComplete
+      tags: [providers]
+      summary: Spend this deployment's credential on a completion.
+      description: |
+        A relay, and a privilege: the deployment calls a model with its own key on the caller's behalf, so a caller
+        presents an access capability or the route refuses before a provider is chosen. The configuration resolves
+        first, then the model - an explicit one, the tier, the configuration's own first model, then the family's
+        capable built-in - then the ceiling, then the configuration's declared budget, and only then the call. The
+        answer is not turn evidence and is recorded nowhere; version_id is refused by name, because the
+        invocation-provenance plane this port would record it in is not ported.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The name the configuration was applied under, or default for the default-provider rule.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompletionQuery"
+      responses:
+        "200":
+          description: What the model answered, and what it cost.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Completion"
+        "400":
+          description: What was asked for cannot be honoured as written.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: No capability was presented, or it does not carry the access scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: No configuration of that name is held.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          description: A ceiling the configuration declares is reached.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "502":
+          description: The deployment cannot call that family - no credential, no adapter, or a provider that failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/providers/{name}/embed:
+    post:
+      operationId: ProviderEmbed
+      tags: [providers]
+      summary: Spend this deployment's credential on an embedding.
+      description: |
+        The same privilege and the same gate as a relayed completion. There is no output ceiling to apply here, so what
+        is checked is the configuration's own budget against the size of the texts. This port keeps no embedding cache,
+        so cache_hit is reported false rather than invented.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The name the configuration was applied under, or default for the default-provider rule.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmbeddingQuery"
+      responses:
+        "200":
+          description: One vector per input, in the order they were given.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Embedding"
+        "400":
+          description: What was asked for cannot be honoured as written.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: No capability was presented, or it does not carry the access scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: No configuration of that name is held.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          description: A ceiling the configuration declares is reached.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "502":
+          description: The deployment cannot call that family - no credential, no adapter, or a provider that failed.
           content:
             application/json:
               schema:
@@ -4979,4 +5245,325 @@ components:
           description: The applied versions, in name and then version order.
           items:
             $ref: "#/components/schemas/RunbookVersion"
+
+    ProviderSummary:
+      type: object
+      description: |
+        One provider configuration as an operator reads it - free introspection, no provider call and no token spent.
+        Never the credential, and never where the credential lives: only whether it resolves.
+      required: [name, provider, source, credential_ok]
+      properties:
+        name:
+          type: string
+          description: The config name, or default-<family> for a synthesized, environment-backed default.
+        provider:
+          type: string
+          description: The provider family (anthropic | openai | openrouter | ollama).
+        source:
+          type: string
+          description: applied (a configuration this deployment holds) or default (synthesized from the conventional variable).
+        credential_ok:
+          type: boolean
+          description: Whether its credential resolves now - or is unnecessary, for a local endpoint.
+        fast:
+          type: string
+          description: The concrete model the fast tier resolves to.
+          nullable: true
+        capable:
+          type: string
+          description: The concrete model the capable tier resolves to.
+          nullable: true
+        frontier:
+          type: string
+          description: The concrete model the frontier tier resolves to.
+          nullable: true
+
+    ProviderList:
+      type: object
+      required: [providers]
+      properties:
+        providers:
+          type: array
+          description: Applied configurations first, then the environment-backed defaults.
+          items:
+            $ref: "#/components/schemas/ProviderSummary"
+
+    ProviderApplied:
+      type: object
+      description: A provider configuration that was applied, named so a caller can address it afterwards.
+      required: [config_name]
+      properties:
+        config_name:
+          type: string
+
+    ProviderHealth:
+      type: object
+      description: What a live probe of one configuration observed.
+      required: [healthy, provider, endpoint_fingerprint, detail]
+      properties:
+        healthy:
+          type: boolean
+        provider:
+          type: string
+          description: The provider family that was probed.
+        endpoint_fingerprint:
+          type: string
+          description: A fingerprint of the endpoint, never of the credential.
+        detail:
+          type: string
+          description: What was observed, or why nothing could be - never key material.
+
+    HealthAiCheck:
+      type: object
+      description: One probe of the provider plane - a small live completion against one family and tier.
+      required: [provider, tier, model, ok, skipped, detail]
+      properties:
+        provider:
+          type: string
+          description: The provider family probed.
+        tier:
+          type: string
+          description: The tier probed (fast | capable | frontier).
+        model:
+          type: string
+          description: The model id probed.
+        ok:
+          type: boolean
+          description: Whether the model answered the probe.
+        skipped:
+          type: boolean
+          description: Whether the probe was skipped because no credential resolves.
+        latency_ms:
+          type: integer
+          format: int64
+          description: How long the probe took, when it ran at all.
+          nullable: true
+        detail:
+          type: string
+          description: The outcome in words - never key material, never a response body.
+
+    HealthAi:
+      type: object
+      description: |
+        GET /healthai: what a live probe of the built-in tier models observed, and whether the plane counts as
+        healthy - which it is only when at least one check ran and every check that ran passed.
+      required: [healthy, checks]
+      properties:
+        healthy:
+          type: boolean
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/HealthAiCheck"
+
+    MaxTokensBudget:
+      type: object
+      description: |
+        The per-call output-token ceilings the server hands a model provider, as ONE object. Every field is required: a
+        replacement replaces the whole set, so a body missing a field is invalid input rather than a partial update.
+        Precedence at call time is a runbook's own declaration where the grammar has one, then a tenant's replacement
+        through POST /v1/max-tokens, then the process's MUNARIUM_MAX_TOKENS_* variables, then the built-ins.
+      required: [turn_completion, query_expansion, complete_default, healthai_probe, hierarchy_classifier,
+                 hierarchy_intent, runbook_advisory, authoring_assist]
+      properties:
+        turn_completion:
+          type: integer
+          format: int32
+          description: A session turn's answer; a runbook's completion.maxTokens overrides it. Built-in 2,048.
+          minimum: 0
+        query_expansion:
+          type: integer
+          format: int32
+          description: The modelQueryExpansion variant call; a runbook's own ceiling overrides it. Built-in 256.
+          minimum: 0
+        complete_default:
+          type: integer
+          format: int32
+          description: A relayed completion that names no ceiling. Built-in 1,024.
+          minimum: 0
+        healthai_probe:
+          type: integer
+          format: int32
+          description: Each /healthai probe completion. Built-in 512.
+          minimum: 0
+        hierarchy_classifier:
+          type: integer
+          format: int32
+          description: The evidence hierarchy's one-word question classifier, which is the intent call here. Built-in 32.
+          minimum: 0
+        hierarchy_intent:
+          type: integer
+          format: int32
+          description: |
+            The evidence hierarchy's semantic-intent task. Carried and replaceable, and read by nothing in this port
+            yet, because its hierarchy resolves intent in one classification call where the original makes two.
+          minimum: 0
+        runbook_advisory:
+          type: integer
+          format: int32
+          description: The advisory pass a runbook validation may ask a model for. Built-in 2,048.
+          minimum: 0
+        authoring_assist:
+          type: integer
+          format: int32
+          description: The guided-authoring assist draft. Built-in 8,192.
+          minimum: 0
+
+    MaxTokens:
+      type: object
+      description: |
+        GET /v1/max-tokens, and what POST /v1/max-tokens answers with: the effective ceilings, flattened so a GET body
+        round-trips into a POST, plus where they come from.
+      required: [turn_completion, query_expansion, complete_default, healthai_probe, hierarchy_classifier,
+                 hierarchy_intent, runbook_advisory, authoring_assist, source]
+      properties:
+        turn_completion:
+          type: integer
+          format: int32
+        query_expansion:
+          type: integer
+          format: int32
+        complete_default:
+          type: integer
+          format: int32
+        healthai_probe:
+          type: integer
+          format: int32
+        hierarchy_classifier:
+          type: integer
+          format: int32
+        hierarchy_intent:
+          type: integer
+          format: int32
+        runbook_advisory:
+          type: integer
+          format: int32
+        authoring_assist:
+          type: integer
+          format: int32
+        source:
+          type: string
+          description: tenant after the tenant replaced the set through this route; environment while the process defaults apply.
+        updated_at:
+          type: string
+          description: The instant of the tenant's last replacement; absent while the process defaults apply.
+          nullable: true
+
+    CompletionQuery:
+      type: object
+      description: What a relayed completion is asked for. The model resolves as an explicit model, then the tier, then
+        the configuration's first completion model, then the family's capable built-in.
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+        system:
+          type: string
+          nullable: true
+        model:
+          type: string
+          description: An explicit model id, which wins over the tier when both are named.
+          nullable: true
+        tier:
+          type: string
+          description: "fast | capable | frontier. Ignored when model is set."
+          nullable: true
+        max_tokens:
+          type: integer
+          format: int32
+          description: The output ceiling, or absent for the deployment's own complete_default.
+          nullable: true
+        temperature:
+          type: number
+          format: double
+          nullable: true
+        provider:
+          type: string
+          description: A family override, honoured only on the reserved "default" config name.
+          nullable: true
+        version_id:
+          type: string
+          description: |
+            A version to record the invocation against. Refused by name here: this port has no invocation-provenance
+            plane, and a call is refused rather than made unrecorded.
+          nullable: true
+
+    Completion:
+      type: object
+      description: What a relayed completion answered, and what it cost.
+      required: [text, stop_reason, input_tokens, output_tokens, provider, model]
+      properties:
+        text:
+          type: string
+        stop_reason:
+          type: string
+          description: The dialect's own stop reason, carried verbatim.
+        input_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+        output_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+        provider:
+          type: string
+          description: The family that served the request.
+        model:
+          type: string
+          description: The model that served the request.
+        invocation_event_id:
+          type: string
+          description: The recorded invocation, always absent here - the invocation-provenance plane is not ported.
+          nullable: true
+
+    EmbeddingQuery:
+      type: object
+      required: [inputs]
+      properties:
+        inputs:
+          type: array
+          description: The texts to embed, which have to be at least one.
+          items:
+            type: string
+        model:
+          type: string
+          description: None = the configuration's first embed model.
+          nullable: true
+        provider:
+          type: string
+          description: A family override, honoured only on the reserved "default" config name.
+          nullable: true
+        version_id:
+          type: string
+          description: A version to record the invocation against. Refused by name here.
+          nullable: true
+
+    Embedding:
+      type: object
+      required: [vectors, dimensions, cache_hit, provider, model]
+      properties:
+        vectors:
+          type: array
+          description: One vector per input, in the order they were given.
+          items:
+            type: array
+            items:
+              type: number
+              format: float
+        dimensions:
+          type: integer
+          format: int64
+          minimum: 0
+        cache_hit:
+          type: boolean
+          description: Whether it was served from a cache - always false here, because this port keeps none.
+        provider:
+          type: string
+        model:
+          type: string
+        invocation_event_id:
+          type: string
+          description: The recorded invocation, always absent here.
+          nullable: true
 

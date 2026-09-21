@@ -75,6 +75,19 @@ jobs:
           fi
           dotnet pack Munarium.slnx "${ARGS[@]}"
 
+      # Nothing is pushed before it has been read back: tools/release-packages.ps1 checks the set of
+      # packages, that each carries its symbols, licence, notice, credits, readme and icon, and that a
+      # tag's version is the version that was actually packed - the check that catches a version that
+      # moved nothing before NuGet, where it could never be corrected.
+      - name: Check the packages
+        shell: bash
+        run: |
+          RELEASE_ARGS=(-Configuration "$CONFIGURATION" -CheckOnly -Output "$PACKAGE_OUTPUT")
+          if [[ -n "${{ steps.version.outputs.value }}" ]]; then
+            RELEASE_ARGS+=(-Version "${{ steps.version.outputs.value }}")
+          fi
+          pwsh tools/release-packages.ps1 "${RELEASE_ARGS[@]}"
+
       - name: Push to NuGet.org
         shell: bash
         env:

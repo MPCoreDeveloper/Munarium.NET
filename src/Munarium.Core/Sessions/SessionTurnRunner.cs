@@ -1,5 +1,6 @@
 namespace Munarium.Sessions;
 
+using Munarium.Budgets;
 using Munarium.Evidence;
 using Munarium.Ledger;
 using Munarium.Providers;
@@ -125,6 +126,11 @@ public readonly union SessionTurnResult(
 /// <param name="collections">
 /// The collections this deployment can search one at a time, or <see langword="null"/> when it built one corpus.
 /// </param>
+/// <param name="ceiling">
+/// The deployment's paid-call ceilings, or <see langword="null"/> for the built-ins. The turn reads its completion, its
+/// expansion and its classifier ceilings here, because a runbook that declares none has to be held to what the
+/// deployment says rather than to a constant compiled into the kernel.
+/// </param>
 public sealed class SessionTurnRunner(
     ISessionStore sessions,
     IIndexHost index,
@@ -133,7 +139,8 @@ public sealed class SessionTurnRunner(
     string embeddingModel,
     IReadOnlyList<IEvidenceProvider> providers,
     string tenant,
-    ICollectionIndexes? collections = null)
+    ICollectionIndexes? collections = null,
+    MaxTokensCeiling? ceiling = null)
 {
     private readonly ISessionStore _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
     private readonly IIndexHost _index = index ?? throw new ArgumentNullException(nameof(index));
@@ -153,19 +160,28 @@ public sealed class SessionTurnRunner(
     /// permitted collection's own live version; when it is not, it searches the one that serves.
     /// </remarks>
     private readonly ICollectionIndexes? _collections = collections;
+    private readonly MaxTokensCeiling? _ceiling = ceiling;
 
     /// <summary>
-    /// The completion ceiling a runbook that names none gets.
+    /// The completion ceiling a runbook that names none gets, when the deployment composed none either.
     /// </summary>
     /// <remarks>
-    /// The original's built-in turn ceiling is two thousand and forty-eight, and it is a ceiling rather than spend: a
-    /// runbook that needs a longer answer should say so, and one that says nothing should not be able to buy an
-    /// arbitrarily large one by accident.
+    /// It is <see cref="MaxTokensBudget.Builtin"/>'s <c>turn_completion</c>: two thousand and forty-eight, and a ceiling
+    /// rather than spend - a runbook that needs a longer answer should say so, and one that says nothing should not be
+    /// able to buy an arbitrarily large one by accident.
     /// </remarks>
-    public const int DefaultCompletionMaxTokens = 2048;
+    public static int DefaultCompletionMaxTokens => MaxTokensBudget.Builtin.TurnCompletion;
 
-    /// <summary>The chunk ceiling a turn gets when neither the caller nor the runbook names one.</summary>
+    /// <summary>Gets the chunk ceiling a turn gets when neither the caller nor the runbook names one.</summary>
     public const int DefaultTopK = 10;
+
+    /// <summary>Reads the ceilings a turn's paid steps are held to.</summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The ceilings that apply, or the built-ins when this runner was composed without a ceiling.</returns>
+    private async ValueTask<MaxTokensBudget> CeilingAsync(CancellationToken cancellationToken) =>
+        _ceiling is null
+            ? MaxTokensBudget.Builtin
+            : (await _ceiling.EffectiveAsync(_tenant, cancellationToken).ConfigureAwait(false)).Budgets;
 
     /// <summary>
     /// Runs a turn.
@@ -203,8 +219,16 @@ public sealed class SessionTurnRunner(
                 $"session '{session.Id}' is {session.State.ToWireName()} and accepts no further turns");
         }
 
+        var budgets = await CeilingAsync(cancellationToken).ConfigureAwait(false);
+
         var intent = await IntentResolution
-            .ResolveAsync(document, question, _model, models.Intent, cancellationToken: cancellationToken)
+            .ResolveAsync(
+                document,
+                question,
+                _model,
+                models.Intent,
+                maxTokens: budgets.HierarchyClassifier,
+                cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
         var (profile, problem) = ResearchProfiles.Resolve(
@@ -214,7 +238,18 @@ public sealed class SessionTurnRunner(
 
         return problem is not null
             ? problem
-            : await AnswerAsync(session, document, question, intent, profile, models, complete, topK, onProgress, cancellationToken)
+            : await AnswerAsync(
+                    session,
+                    document,
+                    question,
+                    intent,
+                    profile,
+                    models,
+                    budgets,
+                    complete,
+                    topK,
+                    onProgress,
+                    cancellationToken)
                 .ConfigureAwait(false);
     }
 
@@ -228,6 +263,7 @@ public sealed class SessionTurnRunner(
         QueryIntent intent,
         ResearchProfile? profile,
         TurnModels models,
+        MaxTokensBudget budgets,
         bool complete,
         int topK,
         Action<TurnProgress>? onProgress,
@@ -237,7 +273,7 @@ public sealed class SessionTurnRunner(
         // reads what the conversation was opened to read.
         var searched = SessionCreation.PermittedCollections(document, session.Access);
         var plan = profile is null ? null : ResearchProfiles.BuildPlan(profile, intent);
-        var request = Completion(document, complete, question);
+        var request = Completion(document, complete, question, budgets.TurnCompletion);
         SessionTurnSearch? hits = null;
 
         // Which model is about to answer is known before anything is paid for, which is the only moment a stream can
@@ -253,7 +289,7 @@ public sealed class SessionTurnRunner(
         {
             if (hits is { } already) return already;
 
-            var widened = await WidenAsync(document, question, models.Expansion, onProgress, token)
+            var widened = await WidenAsync(document, question, models.Expansion, budgets.QueryExpansion, onProgress, token)
                 .ConfigureAwait(false);
 
             // The fan-out when the deployment has an index per collection, and the one serving index otherwise - which
@@ -382,13 +418,14 @@ public sealed class SessionTurnRunner(
     /// <param name="document">The runbook.</param>
     /// <param name="complete">Whether the caller asked for an answer.</param>
     /// <param name="question">The question, which the prompt's placeholders are filled with.</param>
+    /// <param name="maxTokens">The ceiling a runbook that names none gets, which is the deployment's own.</param>
     /// <returns>The request, or <see langword="null"/>.</returns>
-    private static TurnRequest? Completion(RunbookDocument document, bool complete, string question) =>
+    private static TurnRequest? Completion(RunbookDocument document, bool complete, string question, int maxTokens) =>
         complete && document.Spec.Completion is { } spec
             ? new TurnRequest(
                 question,
                 spec.PromptTemplate,
-                spec.MaxTokens ?? DefaultCompletionMaxTokens,
+                spec.MaxTokens ?? maxTokens,
                 new TurnVerificationChecks(
                     spec.Verification?.Quotes ?? false,
                     spec.Verification?.Citations ?? false,
@@ -408,6 +445,7 @@ public sealed class SessionTurnRunner(
     /// <param name="document">The runbook.</param>
     /// <param name="question">The question as asked.</param>
     /// <param name="modelId">The model to widen with.</param>
+    /// <param name="maxTokens">The ceiling a runbook that names none gets, which is the deployment's own.</param>
     /// <param name="onProgress">An optional listener.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The text to search with.</returns>
@@ -415,11 +453,12 @@ public sealed class SessionTurnRunner(
         RunbookDocument document,
         string question,
         string modelId,
+        int maxTokens,
         Action<TurnProgress>? onProgress,
         CancellationToken cancellationToken)
     {
         var result = await QueryExpansion
-            .ResolveAsync(document, question, _model, modelId, cancellationToken)
+            .ResolveAsync(document, question, _model, modelId, maxTokens, cancellationToken)
             .ConfigureAwait(false);
 
         switch (result)

@@ -33,6 +33,154 @@ public static class MunariumEndpoints
             "/version",
             () => TypedResults.Json(MunariumOperations.Version(), WireJson.Default.WireDeploymentVersion));
 
+        // The provider plane: declarations and probes. Applying records a dialect, an endpoint, the models it serves and
+        // where the credential lives - never the credential - and a probe answers over whatever adapter this deployment
+        // holds for that family, naming the absence when it holds none.
+        app.MapGet(
+            "/healthai",
+            async (MunariumOperations operations, CancellationToken cancellationToken) =>
+            {
+                var health = await operations.HealthAiAsync(cancellationToken).ConfigureAwait(false);
+
+                return TypedResults.Json(health, WireJson.Default.WireHealthAi);
+            });
+
+        app.MapGet(
+            "/v1/providers",
+            async (MunariumOperations operations, CancellationToken cancellationToken) =>
+            {
+                var providers = await operations.ListProvidersAsync(cancellationToken).ConfigureAwait(false);
+
+                return TypedResults.Json(providers, WireJson.Default.WireProviderList);
+            });
+
+        app.MapPost(
+            "/v1/providers",
+            async (HttpRequest request, MunariumOperations operations, CancellationToken cancellationToken) =>
+            {
+                // The body is the document itself (text/yaml), so it is read rather than bound: a YAML configuration
+                // has no JSON envelope, and the same text is what the gRPC surface carries.
+                using var reader = new StreamReader(request.Body);
+                var yaml = await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+                var result = await operations.ApplyProviderAsync(yaml, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireProviderApplied applied => TypedResults.Json(
+                        applied, WireJson.Default.WireProviderApplied),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapGet(
+            "/v1/providers/{name}/health",
+            async (
+                [FromRoute(Name = "name")] string name,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.ProviderHealthAsync(name, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireProviderHealth health => TypedResults.Json(
+                        health, WireJson.Default.WireProviderHealth),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        // The ceiling: what every paid call is held to, read and replaced as one set. It is read by the operations that
+        // make the calls rather than reported from somewhere else, which is what makes the number an operator sees the
+        // number a turn, an assist, an advisory, a probe and a relayed completion are actually held to.
+        app.MapGet(
+            "/v1/max-tokens",
+            async (MunariumOperations operations, CancellationToken cancellationToken) =>
+            {
+                var ceilings = await operations.MaxTokensAsync(cancellationToken).ConfigureAwait(false);
+
+                return TypedResults.Json(ceilings, WireJson.Default.WireMaxTokens);
+            });
+
+        app.MapPost(
+            "/v1/max-tokens",
+            async (
+                WireMaxTokensBudget budgets,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.ReplaceMaxTokensAsync(budgets, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireMaxTokens ceiling => TypedResults.Json(ceiling, WireJson.Default.WireMaxTokens),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        // The relay. These routes make this deployment spend its own credential on a caller's behalf, so the access
+        // capability is resolved before a provider is chosen - the same gate the ingestion plane uses, in front of the
+        // same kind of decision.
+        app.MapPost(
+            "/v1/providers/{name}/complete",
+            async (
+                [FromRoute(Name = "name")] string name,
+                WireCompletionQuery query,
+                HttpContext context,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                if (await RelayRefusalAsync(kernel, context, cancellationToken).ConfigureAwait(false) is { } refused)
+                {
+                    return TypedResults.Json(refused, WireJson.Default.WireProblem, statusCode: refused.Status);
+                }
+
+                var result = await operations.CompleteAsync(name, query, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireCompletion completion => TypedResults.Json(completion, WireJson.Default.WireCompletion),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
+        app.MapPost(
+            "/v1/providers/{name}/embed",
+            async (
+                [FromRoute(Name = "name")] string name,
+                WireEmbeddingQuery query,
+                HttpContext context,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                if (await RelayRefusalAsync(kernel, context, cancellationToken).ConfigureAwait(false) is { } refused)
+                {
+                    return TypedResults.Json(refused, WireJson.Default.WireProblem, statusCode: refused.Status);
+                }
+
+                var result = await operations.EmbedAsync(name, query, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireEmbedding embedding => TypedResults.Json(embedding, WireJson.Default.WireEmbedding),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
+
         // The capability plane: the identity provider in front authenticates people, and this is where the authority it
         // asserts is exchanged for a short-lived credential. Nothing here decides anything about the ledger; it mints what
         // the contract asks for, or refuses by naming the rule that refused.
@@ -1427,4 +1575,39 @@ public static class MunariumEndpoints
 
     private static WireProblem Invalid(string detail) =>
         new(MunariumOperations.InvalidRequestProblem, detail, Status: 400, ExpectedHead: 0, ActualHead: 0);
+
+    /// <summary>Resolves the capability a relayed call needs, before any provider is chosen.</summary>
+    /// <remarks>
+    /// In front of the relay rather than beside it: a route that spends a deployment's own credential is the largest
+    /// abuse surface in the contract, so a caller who may not spend it is refused before a configuration is resolved,
+    /// let alone called.
+    /// </remarks>
+    /// <param name="kernel">The deployment whose gate resolves the capability.</param>
+    /// <param name="context">The request, whose header carries the capability.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The refusal, or <see langword="null"/> when the caller may relay a call.</returns>
+    private static async ValueTask<WireProblem?> RelayRefusalAsync(
+        MunariumKernel kernel,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        var access = await kernel
+            .Gate.ResolveAsync(
+                context.Request.Headers.Authorization.ToString(),
+                AccessScope.Access,
+                DateTimeOffset.UtcNow,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var reason = access is AccessRefused refused ? refused.Reason : AccessGate.MissingReason;
+
+        return access is EvidencePrincipal
+            ? null
+            : new WireProblem(
+                MunariumOperations.UnauthorizedProblem,
+                reason,
+                Status: 401,
+                ExpectedHead: 0,
+                ActualHead: 0);
+    }
 }

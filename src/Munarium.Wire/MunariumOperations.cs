@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Munarium.Access;
+using Munarium.Budgets;
 using Munarium.Claims;
 using Munarium.Commands;
 using Munarium.Context;
@@ -65,8 +66,10 @@ public sealed class MunariumOperations(
     IAuthoringDraftStore authoring,
     IShapeStore? shapeStore,
     string tenant,
+    ProviderRegistry providers,
     IModelProvider? model = null,
-    string modelId = "")
+    string modelId = "",
+    MaxTokensCeiling? ceiling = null)
 {
     /// <summary>The wire contract version this implementation speaks.</summary>
     public const string Contract = "mmp.v1";
@@ -136,6 +139,15 @@ public sealed class MunariumOperations(
     /// <summary>The problem identifier bytes that are not what the manifest declares answer with.</summary>
     public const string EvidenceHashMismatchProblem = "https://munarium.dev/problems/evidence-hash-mismatch";
 
+    /// <summary>The problem identifier a probe of a configuration this deployment holds nothing under answers with.</summary>
+    public const string UnknownProviderConfigProblem = "https://munarium.dev/problems/unknown-provider-config";
+
+    /// <summary>The problem identifier a call a configuration's own ceiling refused answers with.</summary>
+    public const string RateLimitedProblem = "https://munarium.dev/problems/rate-limited";
+
+    /// <summary>The problem identifier a call this deployment cannot make answers with.</summary>
+    public const string ProviderUnavailableProblem = "https://munarium.dev/problems/provider-unavailable";
+
 
     private readonly IStorageBackend _storage = storage ?? throw new ArgumentNullException(nameof(storage));
     private readonly IRunbookStore _runbooks = runbooks ?? throw new ArgumentNullException(nameof(runbooks));
@@ -164,7 +176,8 @@ public sealed class MunariumOperations(
         embeddingModel,
         [],
         tenant,
-        new CollectionIndexes(indexVersions, indexHost, tenant));
+        new CollectionIndexes(indexVersions, indexHost, tenant),
+        ceiling);
 
     /// <summary>The problem identifier a session nobody opened answers with.</summary>
     public const string SessionNotFoundProblem = "https://munarium.dev/problems/session-not-found";
@@ -221,6 +234,8 @@ public sealed class MunariumOperations(
     private readonly ISourceStore _evidenceBytes = evidenceBytes ?? throw new ArgumentNullException(nameof(evidenceBytes));
     private readonly IAccessTokenAudit _accessAudit = accessAudit ?? throw new ArgumentNullException(nameof(accessAudit));
     private readonly IAuthoringDraftStore _authoring = authoring ?? throw new ArgumentNullException(nameof(authoring));
+    private readonly ProviderRegistry _providers = providers ?? throw new ArgumentNullException(nameof(providers));
+    private readonly MaxTokensCeiling? _ceiling = ceiling;
     private readonly string _tenant = string.IsNullOrWhiteSpace(tenant)
         ? throw new ArgumentException("The deployment's tenant must be named.", nameof(tenant))
         : tenant;
@@ -448,6 +463,10 @@ public sealed class MunariumOperations(
             Model = _modelId,
             System = AssistSystem,
             Prompt = AssistPrompt(request, yaml, set.Todos),
+
+            // The guided-authoring assist is the largest paid call this port makes, so it is the ceiling the deployment
+            // names rather than one compiled in here.
+            MaxTokens = (await EffectiveCeilingAsync(cancellationToken).ConfigureAwait(false)).Budgets.AuthoringAssist,
         };
 
         try
@@ -1991,6 +2010,10 @@ public sealed class MunariumOperations(
             Model = _modelId,
             System = AssistSystem,
             Prompt = $"This runbook is up for review:\n\n{yaml}\n",
+
+            // An advisory pass is opinion rather than authority, and its cost is bounded by the ceiling the deployment
+            // names for it.
+            MaxTokens = (await EffectiveCeilingAsync(cancellationToken).ConfigureAwait(false)).Budgets.RunbookAdvisory,
         };
 
         try
@@ -4246,4 +4269,307 @@ public sealed class MunariumOperations(
         WireProvenances.CoverageRepair => Provenance.CoverageRepair,
         _ => Provenance.Witnessed,
     };
+
+    /// <summary>Applies a provider configuration: a declaration, never a secret.</summary>
+    /// <remarks>
+    /// The document is read here rather than by each transport, because the JSON surface receives YAML text and the gRPC
+    /// surface receives the same text in a message: one reader means one answer to a malformed document, whichever door
+    /// it came through. What is stored is the dialect, the endpoint, the models and where the credential lives; the
+    /// credential itself is never read here, only pointed at.
+    /// </remarks>
+    /// <param name="yaml">The configuration document.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The name the configuration is held under, or why it was refused.</returns>
+    public async ValueTask<WireProviderApplyResult> ApplyProviderAsync(
+        string yaml,
+        CancellationToken cancellationToken = default)
+    {
+        return ProviderConfigReader.Read(yaml ?? string.Empty) switch
+        {
+            ProviderConfigRefused refused => new WireProblem(
+                InvalidRequestProblem, refused.Reason, Status: 400, ExpectedHead: 0, ActualHead: 0),
+            ProviderDeclaration declaration => AppliedProvider(
+                await _providers.ApplyAsync(_tenant, declaration, cancellationToken).ConfigureAwait(false)),
+        };
+    }
+
+    /// <summary>Lists the provider plane: what this deployment holds, then the defaults behind it.</summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>One summary per configuration, applied first.</returns>
+    public async ValueTask<WireProviderList> ListProvidersAsync(CancellationToken cancellationToken = default)
+    {
+        var held = await _providers.ListAsync(_tenant, cancellationToken).ConfigureAwait(false);
+
+        return new WireProviderList([.. held.Select(Provider)]);
+    }
+
+    /// <summary>Probes one provider configuration through the adapter this deployment holds for its family.</summary>
+    /// <param name="name">The name the configuration was applied under, or <c>default-&lt;family&gt;</c>.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What was observed, or why nothing is held under that name.</returns>
+    public async ValueTask<WireProviderHealthResult> ProviderHealthAsync(
+        string name,
+        CancellationToken cancellationToken = default)
+    {
+        return await _providers
+            .HealthAsync(_tenant, name ?? string.Empty, cancellationToken)
+            .ConfigureAwait(false) switch
+        {
+            ProviderProbe probe => new WireProviderHealth(
+                probe.Healthy, probe.Family, probe.EndpointFingerprint, probe.Detail),
+            UnknownProviderConfig unknown => new WireProblem(
+                UnknownProviderConfigProblem,
+                $"No provider config named '{unknown.Name}' is held by this deployment.",
+                Status: 404,
+                ExpectedHead: 0,
+                ActualHead: 0),
+        };
+    }
+
+    /// <summary>Probes the built-in tier models, so what a deployment can reach is observed rather than assumed.</summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What each probe observed, and whether the plane counts as healthy.</returns>
+    public async ValueTask<WireHealthAi> HealthAiAsync(CancellationToken cancellationToken = default)
+    {
+        var checks = await _providers.ProbeAllAsync(_tenant, cancellationToken).ConfigureAwait(false);
+
+        return new WireHealthAi(
+            ProviderRegistry.PlaneHealthy(checks),
+            [
+                .. checks.Select(check => new WireHealthAiCheck(
+                    check.Family,
+                    check.Tier,
+                    check.Model,
+                    check.Ok,
+                    check.Skipped,
+                    check.LatencyMs,
+                    check.Detail)),
+            ]);
+    }
+
+    /// <summary>Reads what applying a configuration produced as the shape the contract carries.</summary>
+    /// <param name="outcome">The outcome.</param>
+    /// <returns>The wire result.</returns>
+    private static WireProviderApplyResult AppliedProvider(ProviderDeclarationOutcome outcome) => outcome switch
+    {
+        ProviderDeclaration applied => new WireProviderApplied(applied.Name),
+        ProviderConfigRefused refused => new WireProblem(
+            InvalidRequestProblem, refused.Reason, Status: 400, ExpectedHead: 0, ActualHead: 0),
+    };
+
+    /// <summary>Reads a configuration as an operator reads it.</summary>
+    /// <param name="summary">The kernel's summary.</param>
+    /// <returns>The wire shape.</returns>
+    private static WireProviderSummary Provider(ProviderSummary summary) => new(
+        summary.Name,
+        summary.Provider,
+        summary.Source,
+        summary.CredentialOk,
+        summary.Fast,
+        summary.Capable,
+        summary.Frontier);
+
+    /// <summary>Reads the ceilings this deployment's paid calls are held to.</summary>
+    /// <remarks>
+    /// Read where the calls are made, so what an operator sees here is what a turn, an assist, an advisory and a probe
+    /// are actually held to - a ceiling reported from one place and enforced from another is a number nobody can trust.
+    /// </remarks>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The effective ceilings, and where they come from.</returns>
+    public async ValueTask<WireMaxTokens> MaxTokensAsync(CancellationToken cancellationToken = default)
+    {
+        var effective = await EffectiveCeilingAsync(cancellationToken).ConfigureAwait(false);
+
+        return new WireMaxTokens(effective.Source, effective.UpdatedAt, Budget(effective.Budgets));
+    }
+
+    /// <summary>Replaces this deployment's ceilings, refusing a set that could not be honoured.</summary>
+    /// <param name="budgets">The ceilings that should apply.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The ceilings in force afterwards, or why the replacement was refused.</returns>
+    public async ValueTask<WireMaxTokensResult> ReplaceMaxTokensAsync(
+        WireMaxTokensBudget budgets,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(budgets);
+
+        var asked = Budget(budgets);
+        var reason = budgets is null ? "the ceilings are required" : MaxTokensBudget.Refusal(asked);
+
+        if (reason is not null)
+        {
+            return new WireProblem(InvalidRequestProblem, reason, Status: 400, ExpectedHead: 0, ActualHead: 0);
+        }
+
+        if (_ceiling is null)
+        {
+            return new WireProblem(
+                InvalidRequestProblem,
+                "this deployment was composed without a ceiling to replace, so nothing would read a new one.",
+                Status: 400,
+                ExpectedHead: 0,
+                ActualHead: 0);
+        }
+
+        var replaced = await _ceiling
+            .ReplaceAsync(_tenant, asked, DateTimeOffset.UtcNow, cancellationToken)
+            .ConfigureAwait(false);
+
+        return new WireMaxTokens(replaced.Source, replaced.UpdatedAt, Budget(replaced.Budgets));
+    }
+
+    /// <summary>Relays a completion through a configuration this deployment holds.</summary>
+    /// <remarks>
+    /// The gate is not here but in front of here: both transports resolve the caller's capability before this is
+    /// reached, because these routes make a deployment spend its own credential on somebody else's behalf. What this
+    /// does is the order the provider plane owns - resolve, then the model, then the ceiling, then the budget, then the
+    /// call - and the answer is not turn evidence and is recorded nowhere.
+    /// </remarks>
+    /// <param name="name">The configuration's name, or <c>default</c> for the default-provider rule.</param>
+    /// <param name="query">What to ask for.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The completion, or why it was refused.</returns>
+    public async ValueTask<WireCompletionResult> CompleteAsync(
+        string name,
+        WireCompletionQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        ModelTier? tier = null;
+
+        if (!string.IsNullOrEmpty(query.Tier))
+        {
+            if (!ModelTiers.TryParse(query.Tier, out var asked))
+            {
+                return new WireProblem(
+                    InvalidRequestProblem,
+                    $"unknown tier '{query.Tier}' (fast|capable|frontier)",
+                    Status: 400,
+                    ExpectedHead: 0,
+                    ActualHead: 0);
+            }
+
+            tier = asked;
+        }
+
+        var outcome = await _providers
+            .CompleteAsync(
+                _tenant,
+                name ?? string.Empty,
+                new ProviderCompletionQuery
+                {
+                    Prompt = query.Prompt ?? string.Empty,
+                    Model = query.Model,
+                    Tier = tier,
+                    System = query.System,
+                    MaxTokens = query.MaxTokens,
+                    Temperature = query.Temperature,
+                    Provider = query.Provider,
+                    VersionId = query.VersionId,
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return outcome switch
+        {
+            ProviderCompletion completion => new WireCompletion(
+                completion.Text,
+                completion.Model,
+                completion.StopReason,
+                completion.InputTokens,
+                completion.OutputTokens,
+                completion.Provider,
+                InvocationEventId: null),
+            ProviderCallRefused refused => Refused(refused),
+        };
+    }
+
+    /// <summary>Relays an embedding through a configuration this deployment holds.</summary>
+    /// <param name="name">The configuration's name, or <c>default</c> for the default-provider rule.</param>
+    /// <param name="query">What to embed.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The vectors, or why they could not be produced.</returns>
+    public async ValueTask<WireEmbeddingResult> EmbedAsync(
+        string name,
+        WireEmbeddingQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var outcome = await _providers
+            .EmbedAsync(
+                _tenant,
+                name ?? string.Empty,
+                new ProviderEmbeddingQuery
+                {
+                    Inputs = query.Inputs ?? [],
+                    Model = query.Model,
+                    Provider = query.Provider,
+                    VersionId = query.VersionId,
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return outcome switch
+        {
+            ProviderEmbedding embedding => new WireEmbedding(
+                embedding.Vectors,
+                embedding.Dimensions,
+                embedding.CacheHit,
+                embedding.Provider,
+                embedding.Model,
+                InvocationEventId: null),
+            ProviderCallRefused refused => Refused(refused),
+        };
+    }
+
+    /// <summary>Reads a refused provider call as the problem the contract carries.</summary>
+    /// <param name="refused">The refusal.</param>
+    /// <returns>The problem, with the status and the identifier that belong to it.</returns>
+    private static WireProblem Refused(ProviderCallRefused refused) => refused.Status switch
+    {
+        ProviderCallRefused.UnknownConfiguration => new WireProblem(
+            UnknownProviderConfigProblem, refused.Reason, Status: 404, ExpectedHead: 0, ActualHead: 0),
+        ProviderCallRefused.RateLimited => new WireProblem(
+            RateLimitedProblem, refused.Reason, Status: 429, ExpectedHead: 0, ActualHead: 0),
+        ProviderCallRefused.Unavailable => new WireProblem(
+            ProviderUnavailableProblem, refused.Reason, Status: 502, ExpectedHead: 0, ActualHead: 0),
+        _ => new WireProblem(
+            InvalidRequestProblem, refused.Reason, Status: 400, ExpectedHead: 0, ActualHead: 0),
+    };
+
+    /// <summary>Reads the ceilings that apply to this deployment right now.</summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The effective ceilings, or the built-ins when no ceiling was composed.</returns>
+    private async ValueTask<MaxTokensResolution> EffectiveCeilingAsync(CancellationToken cancellationToken) =>
+        _ceiling is null
+            ? new MaxTokensResolution(MaxTokensBudget.Builtin, MaxTokensCeiling.EnvironmentSource, UpdatedAt: null)
+            : await _ceiling.EffectiveAsync(_tenant, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>Reads the contract's ceilings as the kernel's.</summary>
+    /// <param name="budgets">The wire shape.</param>
+    /// <returns>The kernel's shape.</returns>
+    private static MaxTokensBudget Budget(WireMaxTokensBudget budgets) => new(
+        budgets.TurnCompletion,
+        budgets.QueryExpansion,
+        budgets.CompleteDefault,
+        budgets.HealthAiProbe,
+        budgets.HierarchyClassifier,
+        budgets.HierarchyIntent,
+        budgets.RunbookAdvisory,
+        budgets.AuthoringAssist);
+
+    /// <summary>Reads the kernel's ceilings as the contract's.</summary>
+    /// <param name="budgets">The kernel's shape.</param>
+    /// <returns>The wire shape.</returns>
+    private static WireMaxTokensBudget Budget(MaxTokensBudget budgets) => new(
+        budgets.TurnCompletion,
+        budgets.QueryExpansion,
+        budgets.CompleteDefault,
+        budgets.HealthAiProbe,
+        budgets.HierarchyClassifier,
+        budgets.HierarchyIntent,
+        budgets.RunbookAdvisory,
+        budgets.AuthoringAssist);
 }

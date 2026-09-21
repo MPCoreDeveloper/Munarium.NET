@@ -33,7 +33,15 @@ internal sealed class SourceStoreFixture : IAsyncDisposable
         Audit = new SharpCoreDbAccessTokenAudit(database);
         Chunks = new SharpCoreDbIndexChunkStore(database);
         Drafts = new SharpCoreDbAuthoringDraftStore(database);
+        ProviderDeclarations = new SharpCoreDbProviderDeclarations(database);
+        MaxTokens = new SharpCoreDbMaxTokens(database);
     }
+
+    /// <summary>Gets the ceilings store under test.</summary>
+    public SharpCoreDbMaxTokens MaxTokens { get; }
+
+    /// <summary>Gets the provider declarations store under test.</summary>
+    public SharpCoreDbProviderDeclarations ProviderDeclarations { get; }
 
     /// <summary>Gets the index-chunk store under test.</summary>
     public SharpCoreDbIndexChunkStore Chunks { get; }

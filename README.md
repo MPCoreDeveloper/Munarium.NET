@@ -63,6 +63,10 @@ Munarium.NET is dogfooded end to end on the author's own .NET 11 libraries:
   shipping code, and code style is enforced during the build.
 - Package versions live in one place (Central Package Management), and the whole stack is dogfooded
   rather than merely described.
+- **A release is packed and read back before it is pushed** — the set of packages, and the licence,
+  notice, credits, readme, icon and symbols inside each one, are checked by
+  [tools/release-packages.ps1](tools/release-packages.ps1) on every push and again in the release
+  workflow: [docs/release.md](docs/release.md).
 - **The original is the specification, and a claim about it gets read before it gets written** — four
   "capabilities this port lacks" turned out to be unmeasured assumptions, and each is on record with
   what the source actually says: [docs/method.md](docs/method.md).
@@ -97,7 +101,7 @@ without touching a table cell on the far side of a screen.
 | **Turns** | `TurnPipeline` is the kernel's half of a turn, and it resolves nothing: the plan, the template, the model and the budget all arrive already chosen, because which model, which keys and which tenant are a deployment's business. [More](docs/sessions-and-runbooks.md#turns) |
 | **Sessions** | A session is a conversation with a memory of what it may see. [More](docs/sessions-and-runbooks.md#sessions) |
 | **Applied runbooks** | A runbook is applied as YAML and kept as one row per version, because the reference is `name@version`: a session pins one, and a pin whose own document could be outlived by a newer one would not be a pin. [More](docs/sessions-and-runbooks.md#applied-runbooks) |
-| **Providers** | The model-provider seam, with a deterministic in-process embedding provider for tests and smoke runs; and the evidence hierarchy's two real planes. [More](docs/providers-and-wire.md#providers) |
+| **Providers** | The model-provider seam, with a deterministic in-process embedding provider for tests and smoke runs; the provider plane, which keeps applied declarations (a dialect, an endpoint, the models it serves, where the credential lives — never the credential — and the budgets it declares), probes them per family and tier, and relays a completion behind the access gate under the deployment's own ceiling; and the evidence hierarchy's two real planes. [More](docs/providers-and-wire.md#providers) |
 | **Wire** | One OpenAPI specification as the contract, one transport-agnostic operation surface behind it, and both surfaces served from it: JSON/HTTP by `Munarium.Server`, and gRPC/protobuf by the service base SharpPortico generates from that same spe... [More](docs/providers-and-wire.md#wire) |
 
 `src/Munarium.Store.SharpCoreDb` is the storage and retrieval adapter over SharpCoreDB, and
@@ -189,31 +193,39 @@ in the order it is planned:
   this process never built, because it cannot answer from chunks it does not have), `GET /v1/indexes/active` and
   `GET /v1/indexes/{id}` read the state, `GET /v1/indexes?collection_id=` lists a collection's versions - superseded
   ones included, since cutting back to one is a cutover rather than a restore - and `POST /v1/indexes/resolve` takes an
-  answer's envelope and says whether the bytes it cites were in the version it names. What is not there is a persisted
-  index: the chunks live in the process that built them, so a deployment that restarts rebuilds every live version from
-  the rows before the first question arrives - which is why a version records the prefix it was built from - and a very
-  large corpus pays for that rebuild at every start rather than reading its vectors back from disk.
+  answer's envelope and says whether the bytes it cites were in the version it names. What a restart does with that is
+  measured rather than assumed: the chunks of a version are persisted - one table per version, named from a digest of it
+  - so a deployment that comes back **loads** a version instead of reading the corpus again, and the recovery reports
+  which corpus could not come back rather than answering that it is empty. `IndexBuilder.LoadAsync` hands back the
+  served instance straight from the persisted rows, and only the lexical leg is rebuilt from the persisted chunk text,
+  because the engine's `FullTextIndex` is an in-process class and no persisted full-text index was found (measured). A
+  version whose chunks were never persisted is built again instead, which is what a deployment does once. Verification
+  follows the original's stance rather than its shape: `IndexArtifactVerification` opens the persisted rows and checks
+  them against the manifest - every vector has the width the manifest records, every chunk obeys the maximum the build
+  cut to, every source the manifest names is represented and nothing else is, and a document's ordinals are contiguous,
+  because a gap is the one failure a count cannot see.
 
-The engine can do better, and the route is measured rather than guessed: SharpCoreDB has a native `Vector` column type, a
+The route the engine offers was measured too, and is not taken yet: SharpCoreDB has a native `Vector` column type, a
 `CREATE VECTOR INDEX ... USING FLAT|HNSW|DISKANN` whose definition the engine keeps in the table's own metadata, and a
-vector index that persists under its `vector_index:` storage prefix - so chunks and embeddings belong in a table per index
-version with the vector index declared over them, and a restart then **loads** rather than re-reading and re-embedding the
-corpus. The lexical leg is rebuilt from the persisted chunk text, because the engine's `FullTextIndex` is an in-process
-class and no persisted full-text index was found (measured). That slice is next, and it needs no change to SharpCoreDB. Whether a fleet is in scope at all is a deployment-shape decision, and it is recorded in
-docs/decisions.md together with what was measured for it.
+vector index that persists under its `vector_index:` storage prefix. This port writes each embedding into that native
+column and reads it back, and the table is declared per version - but the search still runs over the rows loaded into
+the in-process index, because this port's fusion is its own (a BM25 score and a cosine distance do not share a scale) and
+the envelope has to record the ranking that decided the answer. Adopting the engine's index is therefore a way to move
+one leg rather than the corpus: it can be adopted without giving up this port's fusion, since the module supplies the
+candidates and the envelope still records the ranking this port computed. Whether a fleet is in scope at all is a
+deployment-shape decision, and it is recorded in docs/decisions.md together with what was measured for it.
 
 The two-stage
-  collection selection a wide runbook may ask for is half there, and the half that is missing is written here rather than
-  left to be discovered: the ranking is in the kernel - `CollectionSelection`, with the original's own measured
-  thresholds as its tests, so a pool that is 85% phrase counts 3.55× and one that is 6% counts 1.18× - but the probe it
-  ranks cannot run yet, because a probe searches each permitted collection separately and this port's host serves **one**
-  instance: the whole deployment answers from one version, so there is no per-collection pool to probe. The store is
-  already per collection - `IIndexVersionStore` reads a collection's live version and a cutover moves exactly one
-  collection - so what was missing was the host and the fan-out, and both are in now: `IIndexHost.ReaderFor` hands back
-  the reader of a version the deployment did not cut over to, `CollectionIndexes` resolves a collection's *name* to that
-  reader through the live version, and a turn probes every permitted collection with the question as asked, deepens the
-  strongest with the widened one, and merges the rest's probe pools anyway - selection spends the deep search rather than
-  narrowing the answer. Two things about it are this port's rather than the original's and are said here because of that:
+  collection selection a wide runbook may ask for is in, and how it behaves is written here rather than left to be
+  discovered: the ranking is in the kernel - `CollectionSelection`, with the original's own measured thresholds as its
+  tests, so a pool that is 85% phrase counts 3.55× and one that is 6% counts 1.18× - and the probe it ranks runs per
+  collection, because a probe searches each permitted collection separately: the store was already per collection
+  (`IIndexVersionStore` reads a collection's live version and a cutover moves exactly one collection), and what was
+  missing was the host and the fan-out, both of which are in - `IIndexHost.ReaderFor` hands back the reader of a version
+  the deployment did not cut over to, `CollectionIndexes` resolves a collection's *name* to that reader through the live
+  version, and a turn probes every permitted collection with the question as asked, deepens the strongest with the
+  widened one, and merges the rest's probe pools anyway - selection spends the deep search rather than narrowing the
+  answer. Two things about it are this port's rather than the original's and are said here because of that:
   the fan-out is sequential where the original bounds it by a concurrency setting, and a deployment with no per-collection
   version at all searches its one serving index for the whole turn, which is the state the original cannot be in and the
   behaviour every turn had before the seam existed. The other retrieval step a runbook may declare is executed too:
@@ -252,6 +264,28 @@ The two-stage
   already holds - the prefix's rows from the registry, then each one's bytes out of the store - rather than taking a
   window of freshly ingested documents, so `POST /v1/indexes` over a prefix somebody ingested last week *is* a rebuild,
   and it derives the same version, because a version's identity is a hash of everything the build would do.
+- **The provider plane keeps declarations, probes them, and relays calls under a ceiling.** `POST /v1/providers` records a
+  declaration - a dialect, an endpoint, the models that dialect serves, where the credential lives (an environment
+  variable's name or a file's path, never the material) and the rate and daily-token budgets it is held to - and never
+  the credential, which is the original's own line and the reason `GET /v1/providers` is free while `/healthai` spends
+  tokens. The reserved name `default` is refused, three environment-backed `default-<family>` declarations stand behind
+  whatever was applied without ever being stored, and each one reports the concrete model its fast, capable and frontier
+  tiers resolve to - a tier override first, then the family's built-in table.
+  <br>`POST /v1/providers/{name}/complete` is the relay, and it is a privilege: the deployment spends its own credential
+  on a caller's behalf, so the gate is in front of the route rather than beside it, and `name` is the reserved `default`
+  only when a caller names a family to reach for. The order is the design - the configuration resolves, then the model
+  (an explicit one, the tier, the configuration's own first model, the family's capable built-in), then the ceiling, then
+  the configuration's declared budget, and only then the call - and what comes back is not turn evidence and is recorded
+  nowhere. A call naming a `version_id` is refused by name, because the invocation-provenance plane that would record it
+  is not ported; over gRPC the same route answers, and `embed` is JSON-only there because an array of numbers inside an
+  array of vectors has no faithful protobuf form. The port keeps no embedding cache, so `cache_hit` is reported false
+  rather than invented.
+  <br>`GET`/`POST /v1/max-tokens` is the ceiling every paid call is held to - one object of eight per-call output-token
+  ceilings, the original's built-ins with the process's `MUNARIUM_MAX_TOKENS_*` variables over them and a tenant's
+  replacement in front of both, read where the calls are made: a turn's answer, its query expansion and its intent
+  classifier, a runbook's advisory pass, the guided-authoring assist, each provider probe and a relayed completion. A
+  budget a configuration declares is enforced by the relay over a rolling minute and a UTC day per tier; that state lives
+  in the process that enforces it, because this deployment is one node by decision.
 - **Idempotency keys on every command that records.** A command can carry an `idempotency_key` (a ULID, the same shape
   this port mints everywhere else), and every route that writes honours it: claims and batches, locks and releases,
   promises and fulfilments, counters, and version creation. The second attempt writes nothing, is judged by nothing, and
@@ -278,11 +312,32 @@ The two-stage
 ## Status
 
 The port is deep rather than wide. The kernel (`src/Munarium.Core`), the SharpCoreDB adapter, the ingest, index and
-session planes, and both transports - JSON/HTTP and gRPC, generated from one contract - are in and tested: 760 tests
-across five suites, with `docs/` carrying the design behind each piece. What is not ported is listed above, item by
-item, and the one thing in flight is the per-collection probe. The design it follows - and the executable
-specification it is held to - is described and proven in the
+session planes, the provider plane, and both transports - JSON/HTTP and gRPC, generated from one contract - are in and
+tested: 956 tests across five suites, with `docs/` carrying the design behind each piece. What is not ported is listed
+above, item by item: 53 of the original's 121 operations are served, measured by `tools/spec-coverage.ps1` and held to a
+floor in `UpstreamContractTests`, and every operation that remains is either absent by decision (`docs/decisions.md`) or
+the next slice in the order that document fixes - none of them a half-built feature. The design it follows - and the
+executable specification it is held to - is described and proven in the
 [original project](https://github.com/iokaio/munarium).
+
+## Releases
+
+Five libraries are published to NuGet, each with a symbol package and the licence, notice, credits, readme
+and icon a consumer is entitled to: **`Munarium.Core`** (the kernel), **`Munarium.Wire`** (the contract and
+its generated surface, with `openapi/munarium.v1.yaml` inside it), **`Munarium.Providers`**,
+**`Munarium.Runbooks`** and **`Munarium.Store.SharpCoreDb`**. Each package carries a source link to the
+commit it was built from, so a debugger steps into this repository rather than into a decompilation.
+
+`Munarium.Server` is not a package: it is the host, and a deployment builds it from source so that its
+transport, storage and provider wiring stay the deployment's decision. The libraries target `net11.0`, so
+building against them needs the .NET 11 SDK.
+
+The packages are preview, and the version is a tag: pushing `v0.1.0-preview.2` publishes
+`0.1.0-preview.2`, while a `workflow_dispatch` can only move the pre-release suffix. Nothing is pushed
+before it has been read back - `tools/release-packages.ps1` runs in CI on every push and again inside the
+release workflow, checking the set of packages and what is inside each one. What a version contains, and
+what a reader should not expect in it, is in [CHANGELOG.md](CHANGELOG.md); how a release is cut, and what
+has to be true before the tag, is in [docs/release.md](docs/release.md).
 
 ## License
 

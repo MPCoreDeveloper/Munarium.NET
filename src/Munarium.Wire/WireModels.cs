@@ -1624,3 +1624,177 @@ public readonly union WireCloseSessionResult(WireSessionClosed, WireProblem);
 /// <param name="Contract">The wire contract version it speaks, which is what shape the answers are.</param>
 /// <param name="Version">The version of the server itself, which is which build produced this answer.</param>
 public sealed record WireDeploymentVersion(string Contract, string Version);
+
+/// <summary>
+/// One provider configuration as an operator reads it.
+/// </summary>
+/// <remarks>
+/// Free introspection: no provider call and no token spent. It carries what the configuration resolves to - the
+/// concrete model behind each tier - and whether its credential resolves right now; never the credential, and never
+/// where it lives.
+/// </remarks>
+/// <param name="Name">The config name, or <c>default-&lt;family&gt;</c> for a synthesized default.</param>
+/// <param name="Provider">The family it speaks for.</param>
+/// <param name="Source">Whether this deployment holds it, or it was synthesized from the conventional variable.</param>
+/// <param name="CredentialOk">Whether its credential resolves - or is unnecessary, for a local endpoint.</param>
+/// <param name="Fast">The model the fast tier resolves to.</param>
+/// <param name="Capable">The model the capable tier resolves to.</param>
+/// <param name="Frontier">The model the frontier tier resolves to.</param>
+public sealed record WireProviderSummary(
+    string Name,
+    string Provider,
+    string Source,
+    bool CredentialOk,
+    string? Fast,
+    string? Capable,
+    string? Frontier);
+
+/// <summary>The provider plane: what this deployment applied, then the environment-backed defaults behind it.</summary>
+/// <param name="Providers">One summary per configuration.</param>
+public sealed record WireProviderList(IReadOnlyList<WireProviderSummary> Providers);
+
+/// <summary>A provider configuration that was applied, named so a caller can address it afterwards.</summary>
+/// <param name="ConfigName">The name the configuration is now held under.</param>
+public sealed record WireProviderApplied(string ConfigName);
+
+/// <summary>The result of applying a provider configuration: the name it is held under, or why it was refused.</summary>
+public readonly union WireProviderApplyResult(WireProviderApplied, WireProblem);
+
+/// <summary>What a live probe of one configuration observed.</summary>
+/// <param name="Healthy">Whether the provider answered.</param>
+/// <param name="Provider">The family that was probed.</param>
+/// <param name="EndpointFingerprint">A fingerprint of the endpoint, never of the credential.</param>
+/// <param name="Detail">What was observed, or why nothing could be.</param>
+public sealed record WireProviderHealth(
+    bool Healthy,
+    string Provider,
+    string EndpointFingerprint,
+    string Detail);
+
+/// <summary>The result of probing one configuration: what was observed, or why nothing could be probed.</summary>
+public readonly union WireProviderHealthResult(WireProviderHealth, WireProblem);
+
+/// <summary>One probe of the provider plane: a small live completion against one family and tier.</summary>
+/// <param name="Provider">The family probed.</param>
+/// <param name="Tier">The tier probed.</param>
+/// <param name="Model">The model id probed.</param>
+/// <param name="Ok">Whether the model answered.</param>
+/// <param name="Skipped">Whether the probe was skipped because no credential resolves.</param>
+/// <param name="LatencyMs">How long the probe took, when it ran.</param>
+/// <param name="Detail">The outcome, in words.</param>
+public sealed record WireHealthAiCheck(
+    string Provider,
+    string Tier,
+    string Model,
+    bool Ok,
+    bool Skipped,
+    long? LatencyMs,
+    string Detail);
+
+/// <summary>What a live probe of the provider plane observed, and whether the plane counts as healthy.</summary>
+/// <param name="Healthy">Whether at least one check ran and every check that ran passed.</param>
+/// <param name="Checks">One check per family and tier.</param>
+public sealed record WireHealthAi(bool Healthy, IReadOnlyList<WireHealthAiCheck> Checks);
+
+/// <summary>The ceilings a deployment's paid calls are held to, as the contract carries them.</summary>
+/// <remarks>
+/// Every field is required because a replacement replaces the whole set: a body missing one is invalid input rather
+/// than a partial update, which is what keeps an operator from changing one ceiling by accident.
+/// </remarks>
+/// <param name="TurnCompletion">A session turn's answer.</param>
+/// <param name="QueryExpansion">The model query-expansion call.</param>
+/// <param name="CompleteDefault">A relayed completion that names no ceiling of its own.</param>
+/// <param name="HealthAiProbe">Each probe the provider plane's health check makes.</param>
+/// <param name="HierarchyClassifier">The evidence hierarchy's question classifier.</param>
+/// <param name="HierarchyIntent">The evidence hierarchy's semantic-intent task.</param>
+/// <param name="RunbookAdvisory">The advisory pass a runbook validation may ask for.</param>
+/// <param name="AuthoringAssist">The guided-authoring assist draft.</param>
+public sealed record WireMaxTokensBudget(
+    int TurnCompletion,
+    int QueryExpansion,
+    int CompleteDefault,
+    int HealthAiProbe,
+    int HierarchyClassifier,
+    int HierarchyIntent,
+    int RunbookAdvisory,
+    int AuthoringAssist);
+
+/// <summary>The ceilings in force, and where they come from.</summary>
+/// <param name="Source">Whether a tenant replaced them, or the process defaults apply.</param>
+/// <param name="UpdatedAt">When a tenant replaced them, absent while the process defaults apply.</param>
+/// <param name="Budgets">The ceilings themselves.</param>
+public sealed record WireMaxTokens(string Source, string? UpdatedAt, WireMaxTokensBudget Budgets);
+
+/// <summary>The result of replacing the ceilings: what now applies, or why the replacement was refused.</summary>
+public readonly union WireMaxTokensResult(WireMaxTokens, WireProblem);
+
+/// <summary>What a relayed completion is asked for.</summary>
+/// <param name="Prompt">The prompt.</param>
+/// <param name="Model">The model to call, which wins over the tier when both are named.</param>
+/// <param name="Tier">The tier whose model to call.</param>
+/// <param name="System">The system instruction, when the caller has one.</param>
+/// <param name="MaxTokens">The output ceiling, or absent for the deployment's own.</param>
+/// <param name="Temperature">The sampling temperature.</param>
+/// <param name="Provider">The family override, which only the reserved <c>default</c> config name honours.</param>
+/// <param name="VersionId">A version to record the invocation against, which this port refuses by name.</param>
+public sealed record WireCompletionQuery(
+    string Prompt,
+    string? Model = null,
+    string? Tier = null,
+    string? System = null,
+    int? MaxTokens = null,
+    double? Temperature = null,
+    string? Provider = null,
+    string? VersionId = null);
+
+/// <summary>What a relayed completion answered.</summary>
+/// <param name="Text">The generated text.</param>
+/// <param name="Model">The model that served it.</param>
+/// <param name="StopReason">The dialect's own stop reason.</param>
+/// <param name="InputTokens">What the request cost.</param>
+/// <param name="OutputTokens">What the answer cost.</param>
+/// <param name="Provider">The family that served it.</param>
+/// <param name="InvocationEventId">
+/// The recorded invocation, always absent here: this port has no invocation-provenance plane, and a caller that asks
+/// for one is refused rather than answered with an event that was never written.
+/// </param>
+public sealed record WireCompletion(
+    string Text,
+    string Model,
+    string StopReason,
+    long InputTokens,
+    long OutputTokens,
+    string Provider,
+    string? InvocationEventId);
+
+/// <summary>What a relayed embedding is asked for.</summary>
+/// <param name="Inputs">The texts to embed, which have to be at least one.</param>
+/// <param name="Model">The embedding model, or absent for the configuration's own.</param>
+/// <param name="Provider">The family override, which only the reserved <c>default</c> config name honours.</param>
+/// <param name="VersionId">A version to record the invocation against, which this port refuses by name.</param>
+public sealed record WireEmbeddingQuery(
+    IReadOnlyList<string> Inputs,
+    string? Model = null,
+    string? Provider = null,
+    string? VersionId = null);
+
+/// <summary>What a relayed embedding answered.</summary>
+/// <param name="Vectors">One vector per input, in the same order.</param>
+/// <param name="Dimensions">How wide the vectors are.</param>
+/// <param name="CacheHit">Whether it was served from a cache - always false here, because this port keeps none.</param>
+/// <param name="Provider">The family that served it.</param>
+/// <param name="Model">The model that served it.</param>
+/// <param name="InvocationEventId">The recorded invocation, always absent here.</param>
+public sealed record WireEmbedding(
+    IReadOnlyList<IReadOnlyList<float>> Vectors,
+    long Dimensions,
+    bool CacheHit,
+    string Provider,
+    string Model,
+    string? InvocationEventId);
+
+/// <summary>The result of relaying a completion: the answer, or why it was refused.</summary>
+public readonly union WireCompletionResult(WireCompletion, WireProblem);
+
+/// <summary>The result of relaying an embedding: the vectors, or why they could not be produced.</summary>
+public readonly union WireEmbeddingResult(WireEmbedding, WireProblem);

@@ -63,34 +63,36 @@ ledger than the index ever reflected.
 
 ## The persisted index, and what the engine already does
 
-This port rebuilds every live index version at startup, and that is a cost rather than a design - the README says so,
-and the reason is measurable. `SharpCoreDbRetriever` holds a `List<IndexedChunk>`, a `FullTextIndex` and an `IVectorIndex`
-(FlatIndex or DiskAnnIndex) in the process, and the host opens every version empty, so the chunks, their text and their
-vectors all have to come back from the source rows.
+This port persists the chunks of a version and loads them at startup, and how that sits on the engine is written down
+here because the route was measured rather than guessed. `SharpCoreDbRetriever` holds a `List<IndexedChunk>`, a
+`FullTextIndex` and an `IVectorIndex` (FlatIndex or DiskAnnIndex) in the process, and the host opens every version empty -
+so what has to come back from disk is the rows: the text, the ordinal, the source and the embedding.
 
 The original does not work that way. Its `munarium-retrieval-pg` writes one row per chunk - `(chunk_id, source_id,
 source_hash, ordinal, text, embedding)` - into Postgres, with pgvector columns and HNSW indexes (GIN for the lexical side),
 cascading per partition. Its index *is* its database, so a restart is a reconnect.
 
-The engine underneath this port can hold that too, and it does not have to be changed for it:
+This port took the same stance without a second stack. `SharpCoreDbIndexChunkStore` writes a table per index version -
+keyed by a derived value rather than by the version's own text, because a predicate here compares an identity and nothing
+else (measured) - with one row per chunk and the embedding in the engine's own `VECTOR` column beside the text:
 
-| What the gap needs | What SharpCoreDB already has |
-|---|---|
-| A column that holds an embedding | `ColumnType.Vector`, documented as a fixed-dimension float32 array for similarity search |
-| An index over it | `CREATE VECTOR INDEX name ON table(column) USING FLAT\|HNSW\|DISKANN[(params)]` |
-| The index definition to survive | That statement stores it in the table own metadata, for the VectorSearch module to consume |
-| The index itself to survive | `VectorStorageFormat.VectorIndexPrefix` - a persisted vector index under the engine storage |
-| A query that uses it | An `IVectorQueryOptimizer`, invoked when a query can be answered by a vector index |
+| What the gap needed | What SharpCoreDB has | What this port does with it |
+|---|---|---|
+| A column that holds an embedding | `ColumnType.Vector`, a fixed-dimension float32 array | The embedding is written into it and read back |
+| An index over it | `CREATE VECTOR INDEX name ON table(column) USING FLAT\|HNSW\|DISKANN[(params)]` | Not declared yet: the vector leg runs in the process, over the loaded rows |
+| The index definition to survive | That statement stores it in the table's own metadata | Nothing to keep while no index is declared |
+| The index itself to survive | `VectorStorageFormat.VectorIndexPrefix`, a persisted vector index | Nothing to keep while no index is declared |
+| A query that uses it | An `IVectorQueryOptimizer`, invoked when a query can be answered by a vector index | The retriever's own `FlatIndex`/`DiskAnnIndex` answers instead |
 
-So the slice is: a chunk table per index version, a `Vector` column holding the embedding, `CREATE VECTOR INDEX` over it,
-the chunk rows written as a build indexes them, and recovery that loads what is there and rebuilds only what is missing.
-The table name carries the version because a predicate can compare an identity and nothing else (measured: caller-supplied
-text does not compare), so the version is keyed by a derived value rather than by its own text.
+Recovery is then a load where it can be and a build where it cannot: `IndexBuilder.LoadAsync` hands back a served
+instance straight from the persisted rows, a version whose chunks were never persisted is built again, and the report
+says which corpus could not come back rather than leaving an empty index to answer.
 
 One thing stays in the process: the lexical leg. `FullTextIndex` is an in-process class and no persisted full-text index
 was found anywhere in the engine (measured, by searching the checkout). The chunk text is in the table, so the lexical
 index is rebuilt from it at startup - no extraction and no embedding, which is where the cost was. If the engine ever grows
 a persisted full-text index, this is the one place that would use it.
+
 ### What the engine split means for this port
 
 Reading the checkout rather than the package documentation sharpened three things.
@@ -104,12 +106,13 @@ registers it, `VectorIndexManager` owns the indexes, `VectorQueryOptimizer` is t
 `VectorTypeProvider`, `VectorFunctionProvider` and `VectorSerializer` carry the type, the functions and the bytes. That is
 not a gap; it is where an optional feature belongs.
 
-So there are two routes and neither needs the engine changed. The first is the one this port takes next: chunks and
-embeddings as rows, loaded into the in-process index at startup, which removes extraction and embedding from a restart -
-the two costs that actually matter - while a flat index rebuild is linear and cheap. The second is to let the module own
-the index through `CREATE VECTOR INDEX` and load the persisted one, which also removes the index build. It can be adopted
-without giving up this port fusion, because the module supplies the vector leg candidates and the envelope still records
-the ranking this port computed.
+So there are two routes and neither needs the engine changed. The first is the one this port took: chunks and embeddings
+as rows, loaded into the in-process index at startup, which removes extraction and embedding from a restart - the two
+costs that actually matter - while a flat index rebuild is linear and cheap. The second is to let the module own the index
+through `CREATE VECTOR INDEX` and load the persisted one, which also removes that rebuild; it can be adopted without
+giving up this port's fusion, because the module supplies the vector leg candidates and the envelope still records the
+ranking this port computed - which is why it is a change to make deliberately rather than a side effect of persisting
+rows.
 
 The module also carries `Fusion/ReciprocalRankFusion.cs` and `Fusion/PoolMerge.cs`. This port fuses by rank itself, for a
 reason that still holds - the envelope records the ranking that decided the answer - so that stays as it is. It is noted

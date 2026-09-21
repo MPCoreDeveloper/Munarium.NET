@@ -116,3 +116,19 @@ the store.
 Registry, list and health first: they are declarations and probes, they need no credential, and they make the plane
 legible. Then complete and embed behind the gate, which is where the work is and where the restraint matters. Then the
 ceiling with the pipeline. `healthai` goes with the probes, and the operations list stops counting it as operational.
+
+### The order, as it was built
+
+Built, on both transports, in the order this document fixed: the declarations and the probes first -
+`POST`/`GET /v1/providers` reading and listing a dialect, an endpoint, the models it serves, where the credential
+lives and the budgets it declares, and `GET /v1/providers/{name}/health` and `GET /healthai` probing them through
+whatever adapters this deployment holds - then the relay behind the gate, `POST /v1/providers/{name}/complete` and
+`embed`, and then the ceiling with the pipeline, `GET`/`POST /v1/max-tokens`, read where a turn, a query expansion,
+an intent classifier, a runbook advisory pass, an authoring assist, a probe and a relayed completion actually spend.
+
+What the order still owes, and why each is a gap rather than an oversight: the invocation-provenance event a
+`version_id` would name is not ported, so a relayed call that asks for one is refused rather than made unrecorded; the
+embedding cache the original keeps is not ported, so `cache_hit` is reported false rather than invented; and the rate
+and daily budgets a configuration declares are enforced in the process that enforces them rather than against a shared
+ledger, which is what a single-node deployment can honestly do - the original divides a configured ceiling across
+replicas for the same reason this one does not have to.

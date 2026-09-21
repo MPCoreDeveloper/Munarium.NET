@@ -1,6 +1,8 @@
 namespace Munarium.Core.Tests.Sessions;
 
 using Munarium.Access;
+using Munarium.Budgets;
+using Munarium.Core.Tests.Support;
 using Munarium.Evidence;
 using Munarium.Ledger;
 using Munarium.Providers;
@@ -725,6 +727,48 @@ public class SessionTurnRunnerTests
 
         Assert.Contains("[doc-1] text of doc-1", sent.Prompt, StringComparison.Ordinal);
         Assert.Contains("Q: how many contracts lapse?", sent.Prompt, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A turn is held to the deployment's ceiling when the runbook names none, which is what makes the number an
+    /// operator reads at <c>GET /v1/max-tokens</c> the number a turn actually spends.
+    /// </summary>
+    [Fact]
+    public async Task ATurnIsHeldToTheDeploymentsCeiling()
+    {
+        var sessions = new MemorySessions();
+        var session = await sessions.CreateAsync(Session());
+        var model = new StubModel("[lookup] The policy holds.");
+
+        var ceiling = new MaxTokensCeiling(
+            new InMemoryMaxTokensStore(),
+            MaxTokensBudget.Builtin with { TurnCompletion = 512, HierarchyClassifier = 48 });
+
+        var runner = new SessionTurnRunner(
+            sessions,
+            new StubIndexHost(),
+            model,
+            model,
+            "test-embedder",
+            [],
+            "acme",
+            collections: null,
+            ceiling);
+
+        Executed(await runner.RunAsync(
+            session,
+            Document(),
+            "how many contracts lapse?",
+            requestedProfile: null,
+            new TurnModels("small-model", "small-model", "big-model"),
+            complete: true,
+            topK: 0));
+
+        // The answer is held to the deployment's turn ceiling. This document pins no intent task, so the classifier is
+        // not asked at all - and a ceiling nothing reads would be a number nobody could trust.
+        var sent = Assert.Single(model.Completed);
+
+        Assert.Equal(512, sent.MaxTokens);
     }
 
     /// <summary>

@@ -2167,4 +2167,232 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         proposal?.Statement ?? string.Empty,
         proposal?.Actor ?? string.Empty,
         proposal?.IdempotencyKey ?? string.Empty);
+
+    /// <inheritdoc />
+    public override async Task<HealthAiResponse> HealthAiAsync(
+        HealthAiRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var health = await _operations.HealthAiAsync(context.CancellationToken).ConfigureAwait(false);
+
+        return new HealthAiResponse { Data = HealthAiMessage(health) };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ListProvidersResponse> ListProvidersAsync(
+        ListProvidersRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var providers = await _operations.ListProvidersAsync(context.CancellationToken).ConfigureAwait(false);
+
+        return new ListProvidersResponse
+        {
+            Data = new ProviderList
+            {
+                Providers = { providers.Providers.Select(ProviderSummaryMessage) },
+            },
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ApplyProviderResponse> ApplyProviderAsync(
+        ApplyProviderRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // The document crosses the wire as the text it is, exactly as the JSON surface receives it: one reader, one
+        // answer to a malformed configuration, whichever door it came through.
+        var result = await _operations
+            .ApplyProviderAsync(request.Body?.Value ?? string.Empty, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireProviderApplied applied => new ApplyProviderResponse
+            {
+                Data = new ProviderApplied { ConfigName = applied.ConfigName },
+            },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ProviderHealthResponse> ProviderHealthAsync(
+        ProviderHealthRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var result = await _operations
+            .ProviderHealthAsync(request.Name ?? string.Empty, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireProviderHealth health => new ProviderHealthResponse { Data = ProviderHealthMessage(health) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    private static ProviderSummary ProviderSummaryMessage(WireProviderSummary summary) => new()
+    {
+        Name = summary.Name,
+        Provider = summary.Provider,
+        Source = summary.Source,
+        CredentialOk = summary.CredentialOk,
+        Fast = summary.Fast ?? string.Empty,
+        Capable = summary.Capable ?? string.Empty,
+        Frontier = summary.Frontier ?? string.Empty,
+    };
+
+    private static ProviderHealth ProviderHealthMessage(WireProviderHealth health) => new()
+    {
+        Healthy = health.Healthy,
+        Provider = health.Provider,
+        EndpointFingerprint = health.EndpointFingerprint,
+        Detail = health.Detail,
+    };
+
+    private static HealthAi HealthAiMessage(WireHealthAi health) => new()
+    {
+        Healthy = health.Healthy,
+        Checks =
+        {
+            health.Checks.Select(check => new HealthAiCheck
+            {
+                Provider = check.Provider,
+                Tier = check.Tier,
+                Model = check.Model,
+                Ok = check.Ok,
+                Skipped = check.Skipped,
+                LatencyMs = check.LatencyMs ?? 0,
+                Detail = check.Detail,
+            }),
+        },
+    };
+
+    /// <inheritdoc />
+    public override async Task<GetMaxTokensResponse> GetMaxTokensAsync(
+        GetMaxTokensRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var ceilings = await _operations.MaxTokensAsync(context.CancellationToken).ConfigureAwait(false);
+
+        return new GetMaxTokensResponse { Data = MaxTokensMessage(ceilings) };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ReplaceMaxTokensResponse> ReplaceMaxTokensAsync(
+        ReplaceMaxTokensRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var result = await _operations
+            .ReplaceMaxTokensAsync(BudgetOf(request.Body), context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireMaxTokens ceilings => new ReplaceMaxTokensResponse { Data = MaxTokensMessage(ceilings) },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override async Task<ProviderCompleteResponse> ProviderCompleteAsync(
+        ProviderCompleteRequest request,
+        ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // The gate first, exactly as the JSON surface resolves it: these routes spend this deployment's own credential,
+        // and a caller who may not spend it is refused before a configuration is resolved - let alone called.
+        await PrincipalAsync(context, AccessScope.Access).ConfigureAwait(false);
+
+        var result = await _operations
+            .CompleteAsync(
+                request.Name ?? string.Empty,
+                new WireCompletionQuery(
+                    request.Body?.Prompt ?? string.Empty,
+                    Optional(request.Body?.Model),
+                    Optional(request.Body?.Tier),
+                    Optional(request.Body?.System),
+                    request.Body?.MaxTokens,
+                    request.Body?.Temperature,
+                    Optional(request.Body?.Provider),
+                    Optional(request.Body?.VersionId)),
+                context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireCompletion completion => new ProviderCompleteResponse
+            {
+                Data = new Completion
+                {
+                    Text = completion.Text,
+                    Model = completion.Model,
+                    StopReason = completion.StopReason,
+                    InputTokens = completion.InputTokens,
+                    OutputTokens = completion.OutputTokens,
+                    Provider = completion.Provider,
+                    InvocationEventId = completion.InvocationEventId ?? string.Empty,
+                },
+            },
+            WireProblem problem => throw Problem(problem),
+        };
+    }
+
+    /// <inheritdoc />
+    public override Task<ProviderEmbedResponse> ProviderEmbedAsync(
+        ProviderEmbedRequest request,
+        ServerCallContext context) =>
+        throw new RpcException(new Status(
+            StatusCode.Unimplemented,
+            "the vectors a relayed embedding produces are JSON-only: an array of numbers inside an array of vectors "
+            + "has no faithful protobuf form, and flattening it into strings would be a different contract. Relay it "
+            + "over HTTP at POST /v1/providers/{name}/embed."));
+
+    /// <summary>Reads a protobuf string as the absence it is: a field nobody set arrives as an empty string.</summary>
+    /// <param name="value">The field's value.</param>
+    /// <returns>The value, or <see langword="null"/> when nothing was set.</returns>
+    private static string? Optional(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    /// <summary>Reads the ceilings the contract carries as the message the generated service declares.</summary>
+    /// <param name="ceilings">The ceilings.</param>
+    /// <returns>The message.</returns>
+    private static MaxTokens MaxTokensMessage(WireMaxTokens ceilings) => new()
+    {
+        TurnCompletion = ceilings.Budgets.TurnCompletion,
+        QueryExpansion = ceilings.Budgets.QueryExpansion,
+        CompleteDefault = ceilings.Budgets.CompleteDefault,
+        HealthaiProbe = ceilings.Budgets.HealthAiProbe,
+        HierarchyClassifier = ceilings.Budgets.HierarchyClassifier,
+        HierarchyIntent = ceilings.Budgets.HierarchyIntent,
+        RunbookAdvisory = ceilings.Budgets.RunbookAdvisory,
+        AuthoringAssist = ceilings.Budgets.AuthoringAssist,
+        Source = ceilings.Source,
+        UpdatedAt = ceilings.UpdatedAt ?? string.Empty,
+    };
+
+    /// <summary>Reads a replacement request's body as the ceilings the contract defines.</summary>
+    /// <param name="body">The message, or <see langword="null"/> when the call carried none.</param>
+    /// <returns>The ceilings.</returns>
+    private static WireMaxTokensBudget BudgetOf(MaxTokensBudget? body) => new(
+        body?.TurnCompletion ?? 0,
+        body?.QueryExpansion ?? 0,
+        body?.CompleteDefault ?? 0,
+        body?.HealthaiProbe ?? 0,
+        body?.HierarchyClassifier ?? 0,
+        body?.HierarchyIntent ?? 0,
+        body?.RunbookAdvisory ?? 0,
+        body?.AuthoringAssist ?? 0);
 }

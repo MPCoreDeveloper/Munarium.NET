@@ -77,4 +77,12 @@ public sealed record EmbeddingResponse(
 /// </summary>
 /// <param name="Healthy">Whether the provider answered.</param>
 /// <param name="Detail">What was observed - key validity, endpoint reachability, or the failure.</param>
-public readonly record struct ProviderHealth(bool Healthy, string Detail);
+/// <param name="EndpointFingerprint">
+/// A fingerprint of the endpoint that answered, when the adapter has one. The provider plane reports it so that two
+/// configurations pointing at two endpoints are distinguishable without either of them disclosing the endpoint or the
+/// key; an adapter that has nothing to say leaves it empty and the registry derives one from the declaration.
+/// </param>
+public readonly record struct ProviderHealth(
+    bool Healthy,
+    string Detail,
+    string EndpointFingerprint = "");

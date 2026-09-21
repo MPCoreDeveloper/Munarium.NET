@@ -9,7 +9,7 @@ appears there; the README keeps a one-line summary and the link.
 
 `TurnPipeline` is the kernel's half of a turn, and it resolves nothing: the plan, the template, the model and
 the budget all arrive already chosen, because which model, which keys and which tenant are a deployment's
-business. What it owns is the order, and the order is the design. Evidence first — a required layer that
+business. Where the budget comes from is the deployment's ceiling unless the runbook names its own: a turn's answer, its query expansion and its intent classification each read their ceiling from GET /v1/max-tokens, so what an operator sees there is what a turn is actually held to. What it owns is the order, and the order is the design. Evidence first — a required layer that
 cannot answer stops the turn **before** a model is paid for, which is the whole point of `required`. Then one
 completion, then the checks over the answer, and the checks are pure string work over data the turn already
 holds, so a violation is a fact rather than an opinion. A quoted span shorter than fifteen characters is not a

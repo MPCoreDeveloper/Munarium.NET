@@ -16,14 +16,31 @@
     <!-- NuGet package metadata: the Munarium.NET icon and the repository README. -->
     <PackageIcon>icon.png</PackageIcon>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!--
+      Symbols and source links ship with every package. A NuGet release is a debugging surface as
+      much as a binary one: without symbols a stack trace from a consumer's process names the
+      Munarium methods and nothing else, and without source links a debugger cannot step into them.
+      SourceLink writes the repository URL and commit into the PDB, which is what makes that
+      possible from a package nobody built locally.
+    -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
   </PropertyGroup>
 
-  <!-- Apache-2.0: the LICENSE and NOTICE travel in every shipped package. NOTICE carries
-       the original Munarium / Ioka LLC attribution and Tyler Jensen's authorship, so the
-       credit ships with the artifacts and not only with the repository. -->
+  <ItemGroup>
+    <!-- SourceLink over GitHub: the repository this release is cut from. -->
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Apache-2.0: the LICENSE and NOTICE travel in every shipped package, and so does CREDITS,
+       because this port is a derivative work. NOTICE carries the original Munarium / Ioka LLC
+       attribution and Tyler Jensen's authorship, so the credit ships with the artifacts and not
+       only with the repository. -->
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)..\LICENSE" Pack="true" PackagePath="" Visible="false" />
     <None Include="$(MSBuildThisFileDirectory)..\NOTICE" Pack="true" PackagePath="" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)..\CREDITS.md" Pack="true" PackagePath="" Visible="false" />
     <None Include="$(MSBuildThisFileDirectory)..\README.md" Pack="true" PackagePath="" Visible="false" />
     <None Include="$(MSBuildThisFileDirectory)..\assets\icon.png" Pack="true" PackagePath="" Visible="false" />
   </ItemGroup>

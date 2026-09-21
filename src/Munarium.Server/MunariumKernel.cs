@@ -1,6 +1,7 @@
 namespace Munarium.Server;
 
 using Microsoft.Extensions.DependencyInjection;
+using Munarium.Budgets;
 using Munarium.Claims;
 using Munarium.Context;
 using Munarium.Counters;
@@ -233,6 +234,21 @@ public sealed class MunariumKernel : IAsyncDisposable
         // read, so a later apply cannot change what the turns in flight were answered from.
         var runbooks = new SharpCoreDbRunbookStore(database);
 
+        // The provider plane's declarations: a dialect, an endpoint, the models it serves and where the credential
+        // lives - never the credential. A table, because a declaration a restart forgets is a plane nobody can rely on.
+        // The adapters are deliberately absent here: a dialect is served by an adapter a deployment composes, and this
+        // one composes none, so a cloud declaration probes unhealthy by name rather than pretending to reach a vendor.
+        //
+        // The ceilings ride with it: the paid-call budgets a deployment is composed with - the built-ins with its own
+        // MUNARIUM_MAX_TOKENS_* variables over them - and a table for a tenant's replacement, which is what a turn, an
+        // assist, an advisory, a probe and a relayed completion all read.
+        var ceiling = MaxTokensCeiling.Process(new SharpCoreDbMaxTokens(database));
+
+        var providers = new ProviderRegistry(
+            new SharpCoreDbProviderDeclarations(database),
+            ProviderCredentials.Process(),
+            ceiling: ceiling);
+
         // The conversations: sessions with the clearance they snapshotted, and the turns they recorded with the ordinal
         // the store allocated and the decision recorded beside them.
         var sessions = new SharpCoreDbSessionStore(database);
@@ -276,7 +292,9 @@ public sealed class MunariumKernel : IAsyncDisposable
             audit,
             draftStore,
             shapeStore,
-            Tenant);
+            Tenant,
+            providers,
+            ceiling: ceiling);
 
 
         return new MunariumKernel(provider, database, host, builder, catalogue, facts, operations, shapes, audit, chunkStore);

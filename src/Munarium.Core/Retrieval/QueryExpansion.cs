@@ -169,6 +169,7 @@ public static class QueryExpansion
     /// <param name="query">The question as asked.</param>
     /// <param name="model">The model to ask, when the step runs.</param>
     /// <param name="modelId">The model to ask for, as the provider names it.</param>
+    /// <param name="maxTokens">The ceiling a runbook that names none gets, which is the deployment's own.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>What it added, or why it added nothing; <see langword="null"/> when the runbook declares no step.</returns>
     public static async ValueTask<QueryExpansionResult?> ResolveAsync(
@@ -176,6 +177,7 @@ public static class QueryExpansion
         string query,
         IModelProvider model,
         string modelId,
+        int maxTokens = DefaultMaxTokens,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(document);
@@ -195,7 +197,7 @@ public static class QueryExpansion
                     {
                         Model = modelId,
                         Prompt = Prompt(query, spec.MaxTerms),
-                        MaxTokens = spec.MaxTokens ?? DefaultMaxTokens,
+                        MaxTokens = spec.MaxTokens ?? maxTokens,
 
                         // Widening is not composing: the same question has to widen the same way on two turns, or the
                         // candidates a turn considered stop being a function of the question.

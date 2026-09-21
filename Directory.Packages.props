@@ -14,6 +14,15 @@
     <PackageVersion Include="SonarAnalyzer.CSharp" Version="10.34.0.3385" />
   </ItemGroup>
 
+  <ItemGroup Label="Packaging">
+    <!--
+      SourceLink: the repository URL and the commit go into the PDB of every shipped package, so a
+      consumer's debugger can step into Munarium with the source it was built from. The version
+      tracks the toolchain this repository pins (see global.json).
+    -->
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="11.0.100-rc.1.26425.128" />
+  </ItemGroup>
+
   <ItemGroup Label="Testing">
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.11.2" />

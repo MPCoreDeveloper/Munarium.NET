@@ -30,8 +30,16 @@
     <DebugType>portable</DebugType>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
 
-    <!-- Package metadata (Apache-2.0, same license as the original Munarium) -->
-    <Version Condition="'$(Version)' == ''">0.1.0-preview.1</Version>
+    <!-- Package metadata (Apache-2.0, same license as the original Munarium).
+
+         The version is split into a prefix and a suffix on purpose. A single Version property would
+         make -p:VersionSuffix=rc.1 a no-op - Version wins over VersionSuffix - so a release dispatched
+         with a suffix would repack the version already published, and NuGet's skip-duplicate switch
+         would then report a release that published nothing. Split, all three paths move: the prefix
+         and suffix here give 0.1.0-preview.1 for a local build, -p:VersionSuffix=rc.1 gives
+         0.1.0-rc.1, and -p:Version=0.1.0-preview.2 (what a tag passes) still wins over both. -->
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <VersionSuffix>preview.1</VersionSuffix>
     <Authors>MPCoreDeveloper</Authors>
     <Company>MPCoreDeveloper</Company>
     <Product>Munarium</Product>
