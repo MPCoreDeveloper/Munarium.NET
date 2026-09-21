@@ -74,6 +74,29 @@ jobs:
       - name: Test
         run: dotnet test Munarium.slnx -c $CONFIGURATION --no-build
 
+      # A failing suite has to say which test failed. The reporter prints a summary and points at the
+      # platform log, which lives under the test output - so a red build says "1 of 159 failed" and
+      # nothing more, and the runner takes the reason with it. The log is printed here, and uploaded,
+      # because a log line needs no download. Measured: --output Detailed is accepted by this
+      # configuration and still prints only the summary, so the log is where the detail lives.
+      - name: Show what failed
+        if: failure()
+        shell: bash
+        run: |
+          find tests -path '*/TestResults/*.log' -print0 | while IFS= read -r -d '' log; do
+            echo "=== $log"
+            tail -n 300 "$log"
+          done
+
+      - name: Keep the test results when the suite fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: tests/**/TestResults/**
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: SonarScanner end
         if: env.SONAR_TOKEN != ''
         run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
