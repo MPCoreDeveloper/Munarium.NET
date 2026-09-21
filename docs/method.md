@@ -49,6 +49,40 @@ of a warning-free build.** `dotnet test -c Release` on a developer's machine is 
 to quote. The lesson is the one the five corrections above taught, one layer up: the pipeline had been treated as the
 measurement, and what it measures had not been read.
 
+## A test that asserts state is asserting an order
+
+The first build of this version failed on the runner and nowhere else: `Failed: 1, Passed: 158`, with the reason in a
+platform log the runner took with it. Every run of that code failed the same way - the build, its re-run, and a run of the
+same tests from a branch - which ruled out a flake, and the local runs ruled out the change being wrong: the same commit
+on Windows, and on Linux in WSL, the suite and the whole solution, repeatedly, pinned to one core and to two. The log was
+dragged out of the test results only after the pipeline was taught to upload them, and it said:
+
+```
+failed ProviderRelayApiTests.TheCeilingsAreReadAndReplacedAsOneSet (19ms)
+  Assert.Equal() Failure: Strings differ
+  Expected: "environment"
+  Actual:   "tenant"
+```
+
+The claim was that a deployment which has replaced nothing reports the ceilings of the process it was composed in. It
+was true, and it was made in the class that also replaces those ceilings forty lines below it - so what the test
+actually asserted was the order the tests happened to run in, which is not part of any contract. Two machines, one
+commit, two orders, and a build that was green on one of them: that is what an ordering assumption looks like from the
+outside.
+
+What changed:
+
+- The claim moved to a class with a database of its own, which never replaces anything, so "nothing has been replaced"
+  is true by construction rather than by luck.
+- It stopped comparing against the built-ins and computes the process composition instead, so it holds the endpoint to
+  what it promised rather than to what the machine happens to set in `MUNARIUM_MAX_TOKENS_*`.
+- A failing suite now prints the platform log and uploads it. That is the part that generalizes: the missing evidence
+  cost more than the bug, because a red build reporting "1 of 160 failed" cannot be acted on by anyone who did not
+  write it.
+
+The lesson is the one this document keeps arriving at, one layer further in: state and order are both claims, and a test
+that reads a pristine value out of a shared deployment is testing neither.
+
 ## Never anchor an insert on a doc comment
 
 A text anchor that sits on, or immediately after, a line of documentation splits the block it belongs to. The symptom is

@@ -63,7 +63,7 @@ The order the workflow runs is the checklist; most of it is already done by CI o
 | Step | Where it runs | What it proves |
 |---|---|---|
 | `dotnet build Munarium.slnx -c Release` | CI, every push | Compiles with analyzers and warnings as errors |
-| `dotnet test Munarium.slnx -c Release` | CI, every push | 956 tests across five suites |
+| `dotnet test Munarium.slnx -c Release` | CI, every push | 957 tests across five suites; a failing suite prints the platform log and uploads it, so a red build names the test |
 | SonarScanner begin/end | CI, when `SONAR_TOKEN` is set | The analysis the repository is held to |
 | `pwsh tools/release-packages.ps1` | CI, every push; the release workflow, before pushing | The packages, read back |
 | NativeAOT smoke, three RIDs | CI, every push | The kernel publishes and runs as a native binary on linux-x64, win-x64 and osx-arm64 |

@@ -313,7 +313,7 @@ The two-stage
 
 The port is deep rather than wide. The kernel (`src/Munarium.Core`), the SharpCoreDB adapter, the ingest, index and
 session planes, the provider plane, and both transports - JSON/HTTP and gRPC, generated from one contract - are in and
-tested: 956 tests across five suites, with `docs/` carrying the design behind each piece. What is not ported is listed
+tested: 957 tests across five suites, with `docs/` carrying the design behind each piece. What is not ported is listed
 above, item by item: 53 of the original's 121 operations are served, measured by `tools/spec-coverage.ps1` and held to a
 floor in `UpstreamContractTests`, and every operation that remains is either absent by decision (`docs/decisions.md`) or
 the next slice in the order that document fixes - none of them a half-built feature. The design it follows - and the
