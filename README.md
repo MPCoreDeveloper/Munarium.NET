@@ -89,7 +89,7 @@ without touching a table cell on the far side of a screen.
 | **The gate vocabulary** | All six rule families, as pure functions of a pinned snapshot and a candidate unit: `anchor-consistency`, `ledger-conflict`, `orphaned-reference`, `meta-leakage` and `lexical-similarity` always run together (with the anchor finding subsumin... [More](docs/ledger.md#the-gate-vocabulary) |
 | **Sources** | A document's identity is its logical path and not its content hash, so the same bytes at two paths are two sources and a path prefix can bind a collection; the hash stays as integrity, recorded and surfaced in provenance. [More](docs/sources-and-retrieval.md#sources) |
 | **Identities** | The ledger's identities are ULIDs, so one value is three things: what a claim *is*, *when* it happened (a 48-bit millisecond count inside the first ten characters), and *how it sorts* against its neighbours (Crockford Base32 preserves order... [More](docs/ledger.md#identities) |
-| **Claims and resolution** | The semantic model the gates reason over: `subject.key=value` with the scope it was written in, its provenance, and the claim it supersedes. [More](docs/ledger.md#claims-and-resolution) |
+| **Claims and resolution** | The semantic model the gates reason over: `subject.key=value` with the scope it was written in, its provenance, and the claim it supersedes — and the point read that asks the same question about one claim by identity, which is what `GET /v1/claims/{claim_id}` serves. [More](docs/ledger.md#claims-and-resolution) |
 | **Anchors, promises and counters** | A locked detail may not drift (`anchor-consistency`); a promise made in one scope is owed to a later one, and one fulfilled after the pin reads back *open*; a counter is a whole-document frequency with an optional ceiling, and the writer is... [More](docs/ledger.md#anchors-promises-and-counters) |
 | **Digest ladder** | Deterministic, model-free compression rungs: tier 0 per scope, tier 1 per scope-prefix group with the values elided, tier 2 the whole-lineage rollup. [More](docs/ledger.md#digest-ladder) |
 | **Chronology** | A closed calendar grammar (ISO dates, `YYYY-MM`, `YYYY`, month names, ranges, seasons, and `circa`/`approx`/`~` hedges) and the certainty algebra on top of it: `DefinitelyBefore` is true only when the comparison is certain given both precis... [More](docs/ledger.md#chronology) |
@@ -105,7 +105,7 @@ without touching a table cell on the far side of a screen.
 | **Sessions** | A session is a conversation with a memory of what it may see. [More](docs/sessions-and-runbooks.md#sessions) |
 | **Applied runbooks** | A runbook is applied as YAML and kept as one row per version, because the reference is `name@version`: a session pins one, and a pin whose own document could be outlived by a newer one would not be a pin. [More](docs/sessions-and-runbooks.md#applied-runbooks) |
 | **Providers** | The model-provider seam, with a deterministic in-process embedding provider for tests and smoke runs; the provider plane, which keeps applied declarations (a dialect, an endpoint, the models it serves, where the credential lives — never the credential — and the budgets it declares), probes them per family and tier, and relays a completion behind the access gate under the deployment's own ceiling; and the evidence hierarchy's two real planes. [More](docs/providers-and-wire.md#providers) |
-| **Wire** | One OpenAPI specification as the contract, one transport-agnostic operation surface behind it, and both surfaces served from it: JSON/HTTP by `Munarium.Server`, and gRPC/protobuf by the service base SharpPortico generates from that same spe... [More](docs/providers-and-wire.md#wire) |
+| **Wire** | One OpenAPI specification as the contract, one transport-agnostic operation surface behind it, and both surfaces served from it: JSON/HTTP by `Munarium.Server`, and gRPC/protobuf by the service base SharpPortico generates from that same specification — so the two cannot drift on names, shapes or enum values — and the deployment answers for itself from that surface: `/healthz` because the process answers, `/readyz` only when the store the process serves from answered a bounded probe, and `/openapi.json` with this build's own contract. [More](docs/providers-and-wire.md#wire) |
 
 `src/Munarium.Store.SharpCoreDb` is the storage and retrieval adapter over SharpCoreDB, and
 `src/Munarium.Providers` holds the providers. `src/Munarium.Server` serves the wire surface over both
@@ -316,8 +316,8 @@ The two-stage
 
 The port is deep rather than wide. The kernel (`src/Munarium.Core`), the SharpCoreDB adapter, the ingest, index and
 session planes, the provider plane, and both transports - JSON/HTTP and gRPC, generated from one contract - are in and
-tested: 957 tests across five suites, with `docs/` carrying the design behind each piece. What is not ported is listed
-above, item by item: 53 of the original's 121 operations are served, measured by `tools/spec-coverage.ps1` and held to a
+tested: 966 tests across five suites, with `docs/` carrying the design behind each piece. What is not ported is listed
+above, item by item: 56 of the original's 135 operations are served, measured by `tools/spec-coverage.ps1` and held to a
 floor in `UpstreamContractTests`, and every operation that remains is either absent by decision (`docs/decisions.md`) or
 the next slice in the order that document fixes - none of them a half-built feature. The design it follows - and the
 executable specification it is held to - is described and proven in the

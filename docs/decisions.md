@@ -132,3 +132,33 @@ embedding cache the original keeps is not ported, so `cache_hit` is reported fal
 and daily budgets a configuration declares are enforced in the process that enforces them rather than against a shared
 ledger, which is what a single-node deployment can honestly do - the original divides a configured ceiling across
 replicas for the same reason this one does not have to.
+
+## The claim read: superseded means the ledger's own resolution
+
+### What was being decided
+
+`GET /v1/claims/{claim_id}` answers with `claim`, `superseded` and `superseded_by`. What *superseded* means
+there, and whether this port answers the original's question or a question of its own.
+
+### What was read first
+
+The original asks its store for the earliest claim that names this one as the fact it supersedes - a
+backward-looking lookup over the declared `supersedes` relation, which is what makes a correction chain
+readable. This port's ledger already means something else by it, and that meaning is written down: facts
+sharing a lineage supersede one another by the position they settled at, and `ClaimResolution` is the
+reference implementation of that resolution for a slice.
+
+### The decision
+
+The ledger's own resolution is served. `superseded` is true exactly when a later fact on this claim's lineage
+is what the ledger would serve in its place, and `superseded_by` names that fact. The two answers agree
+wherever a correction declares what it corrects; where they do not, this one is the answer that is true of
+this ledger - a claim this port reports as superseded is one the kernel would no longer serve, which is what a
+caller holding the identity out of a report, a snapshot or a finding is actually asking.
+
+Three smaller things follow from it and are part of the same decision. The read resolves from the feed rather
+than keeping a flag beside it, so it cannot disagree with what a slice answers. The claim comes back in the
+shape a snapshot lists, so one claim read on its own and the same claim read inside a snapshot cannot be
+described two ways. And a claim nobody wrote is a 404 rather than a state, because "this claim says nothing"
+and "there is no such claim" are different answers and a caller has to be told which one it got.
+

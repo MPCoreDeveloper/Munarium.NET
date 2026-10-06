@@ -2,9 +2,11 @@ namespace Munarium.Server;
 
 using Munarium.Access;
 
+using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Munarium.Wire;
 using Munarium.Wire.Generated;
+using System.Text.Json;
 
 // The generated "Version" message and System.Version are both in scope, so the message gets a name of its
 // own here rather than an ambiguity at every use.
@@ -499,6 +501,30 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         Task.FromResult(new GetHealthResponse { Data = ToMessage(MunariumOperations.Health()) });
 
     /// <inheritdoc />
+    public override async Task<GetReadyResponse> GetReadyAsync(GetReadyRequest request, ServerCallContext context)
+    {
+        var readiness = await _operations.ReadinessAsync(context.CancellationToken).ConfigureAwait(false);
+
+        // Not ready travels as an error rather than as a message. The status is where a caller that routes traffic
+        // reads readiness, gRPC's own word for it is UNAVAILABLE, and an error has no room for a body beside it - so
+        // nothing is lost by throwing, and a client that knows nothing of this contract still sees the answer.
+        return readiness.Status == WireStatuses.Ok
+            ? new GetReadyResponse { Data = ToMessage(readiness) }
+            : throw new RpcException(new Status(
+                StatusCode.Unavailable, "the store did not answer the readiness probe."));
+    }
+
+    /// <inheritdoc />
+    public override Task<GetOpenApiResponse> GetOpenApiAsync(GetOpenApiRequest request, ServerCallContext context)
+    {
+        // The contract is handed over as protobuf's free-form object, one field at a time: a message generated from
+        // the contract cannot describe the contract, because the contract is what generation starts from.
+        using var document = JsonDocument.Parse(MunariumOperations.OpenApi());
+
+        return Task.FromResult(new GetOpenApiResponse { Data = ToStruct(document.RootElement) });
+    }
+
+    /// <inheritdoc />
     public override async Task<CreateVersionResponse> CreateVersionAsync(
         CreateVersionRequest request,
         ServerCallContext context)
@@ -811,6 +837,20 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
             .ConfigureAwait(false);
 
         return new SliceFactsResponse { Data = ToMessage(slice) };
+    }
+
+    /// <inheritdoc />
+    public override async Task<GetClaimResponse> GetClaimAsync(GetClaimRequest request, ServerCallContext context)
+    {
+        var result = await _operations
+            .GetClaimAsync(request.ClaimId, context.CancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            WireClaimState state => new GetClaimResponse { Data = ToMessage(state) },
+            WireProblem problem => throw Problem(problem),
+        };
     }
 
     /// <inheritdoc />
@@ -1687,6 +1727,12 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         Contract = health.Contract,
     };
 
+    private static Readiness ToMessage(WireReadiness readiness) => new()
+    {
+        Status = readiness.Status,
+        Contract = readiness.Contract,
+    };
+
     private static GeneratedVersion ToMessage(WireVersion version) => new()
     {
         VersionId = version.VersionId,
@@ -1805,6 +1851,13 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         Status = ClaimStatusOf(claim.Status),
         Provenance = ProvenanceOf(claim.Provenance),
         SupersedesId = claim.SupersedesId,
+    };
+
+    private static ClaimState ToMessage(WireClaimState state) => new()
+    {
+        Claim = ToMessage(state.Claim),
+        Superseded = state.Superseded,
+        SupersededBy = state.SupersededBy,
     };
 
     private static Anchor ToMessage(WireAnchor anchor) => new()
@@ -2051,6 +2104,53 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
             var item = new Shape { Name = shape.Name, Version = shape.Version, Schema = shape.Schema };
             item.Identity.AddRange(shape.Identity);
             message.Shapes.Add(item);
+        }
+
+        return message;
+    }
+
+    /// <summary>Reads a JSON document as protobuf's free-form object.</summary>
+    /// <param name="element">The document.</param>
+    /// <returns>The message.</returns>
+    private static Struct ToStruct(JsonElement element)
+    {
+        var message = new Struct();
+
+        foreach (var field in element.EnumerateObject())
+        {
+            message.Fields[field.Name] = ToValue(field.Value);
+        }
+
+        return message;
+    }
+
+    /// <summary>Reads one JSON value as protobuf's free-form value.</summary>
+    /// <param name="element">The value.</param>
+    /// <returns>The message.</returns>
+    private static Value ToValue(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.True => new Value { BoolValue = true },
+        JsonValueKind.False => new Value { BoolValue = false },
+        JsonValueKind.Number => new Value { NumberValue = element.GetDouble() },
+        JsonValueKind.String => new Value { StringValue = element.GetString() ?? string.Empty },
+        JsonValueKind.Array => new Value { ListValue = ToList(element) },
+        JsonValueKind.Object => new Value { StructValue = ToStruct(element) },
+
+        // What is left is JSON's null, and the two kinds a value that is not there reports - neither of which a field
+        // of a document ever is, because a document writes the fields it has.
+        _ => new Value { NullValue = NullValue.NullValue },
+    };
+
+    /// <summary>Reads a JSON array as protobuf's free-form list.</summary>
+    /// <param name="element">The array.</param>
+    /// <returns>The message.</returns>
+    private static ListValue ToList(JsonElement element)
+    {
+        var message = new ListValue();
+
+        foreach (var item in element.EnumerateArray())
+        {
+            message.Values.Add(ToValue(item));
         }
 
         return message;

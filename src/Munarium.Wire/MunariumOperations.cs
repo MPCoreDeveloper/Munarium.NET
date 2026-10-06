@@ -74,6 +74,15 @@ public sealed class MunariumOperations(
     /// <summary>The wire contract version this implementation speaks.</summary>
     public const string Contract = "mmp.v1";
 
+    /// <summary>How long the readiness probe waits for the store before calling the deployment not ready.</summary>
+    /// <remarks>
+    /// Bounded on purpose. A probe that waits for an unreachable store is a probe that never answers, and an
+    /// orchestrator reading an answer that never comes cannot tell a slow deployment from a dead one - it only knows
+    /// not to route there, which is why the original makes the bound part of the operation. Two seconds is long
+    /// enough for a store that is answering and short enough that a caller's own timeout still means something.
+    /// </remarks>
+    public static readonly TimeSpan ProbeDeadline = TimeSpan.FromSeconds(2);
+
     /// <summary>What the contract says to return when the caller does not say how many chunks it wants.</summary>
     public const int DefaultTopK = 10;
 
@@ -102,6 +111,9 @@ public sealed class MunariumOperations(
 
     /// <summary>The problem identifier a source that was never ingested answers with.</summary>
     public const string UnknownSourceProblem = "https://munarium.dev/problems/unknown-source";
+
+    /// <summary>The problem identifier a claim that is not in the ledger answers with.</summary>
+    public const string UnknownClaimProblem = "https://munarium.dev/problems/unknown-claim";
 
     /// <summary>The problem identifier a build that could not be made answers with.</summary>
     public const string IndexBuildRefusedProblem = "https://munarium.dev/problems/index-build-refused";
@@ -1054,7 +1066,56 @@ public sealed class MunariumOperations(
 
     /// <summary>Liveness.</summary>
     /// <returns>Healthy, and which contract is answering.</returns>
-    public static WireHealth Health() => new("ok", Contract);
+    public static WireHealth Health() => new(WireStatuses.Ok, Contract);
+
+    /// <summary>Readiness: whether the store this deployment serves from answers at all.</summary>
+    /// <remarks>
+    /// Liveness is not readiness. <see cref="Health"/> answers because the process answers; this answers only when
+    /// the store answers too, so a caller routing traffic reads this one and a supervisor deciding whether to restart
+    /// the process reads the other. The probe is one bounded read of the feed: nothing is written, nothing is cached,
+    /// so the answer is about the store now rather than about the last time somebody asked.
+    /// <para>
+    /// A store that fails to answer is not this operation failing - it is the answer, which is why it comes back as a
+    /// status rather than as an error. A cancellation the <em>caller</em> asked for is not caught here, because a
+    /// caller that gave up did not thereby learn anything about the store.
+    /// </para>
+    /// </remarks>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// The deployment's readiness: <see cref="WireStatuses.Unavailable"/> rather than an exception when the store did
+    /// not answer within <see cref="ProbeDeadline"/>.
+    /// </returns>
+    public async ValueTask<WireReadiness> ReadinessAsync(CancellationToken cancellationToken = default)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(ProbeDeadline);
+
+        try
+        {
+            await _facts.CurrentPinAsync(deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            // Unreachable, or too slow to be useful, or the answer could not be read: whichever it was, this
+            // deployment cannot serve from that store, and that is the whole of what readiness reports.
+            return new WireReadiness(WireStatuses.Unavailable, Contract);
+        }
+
+        return new WireReadiness(WireStatuses.Ok, Contract);
+    }
+
+    /// <summary>This contract, as the JSON document the deployment serves.</summary>
+    /// <remarks>
+    /// The specification a caller generates from is the one this build was generated from, so the answer says which
+    /// contract this instance is speaking as well as what it says. It is never a 404: the document is embedded in the
+    /// assembly that implements it.
+    /// </remarks>
+    /// <returns>The contract document.</returns>
+    public static string OpenApi() => ContractDocument.AsJson();
 
     /// <summary>What this deployment is: the contract it speaks and the version answering.</summary>
     /// <remarks>
@@ -1883,6 +1944,37 @@ public sealed class MunariumOperations(
             .ConfigureAwait(false);
 
         return new WireFactSlice(slice.Pin.Value, slice.Digest, [.. slice.Facts.Select(ToWire)]);
+    }
+
+    /// <summary>One claim, by identity, with whether a later fact holds its lineage in its place now.</summary>
+    /// <remarks>
+    /// The point read of the ledger, and the same resolution the slice read makes: a lineage is held by the last fact
+    /// written to it, so <c>superseded_by</c> names the fact this one would be served instead of. The claim itself is
+    /// projected and mapped exactly as a snapshot maps it, so a claim read on its own and the same claim read inside a
+    /// snapshot cannot describe it two ways.
+    /// </remarks>
+    /// <param name="claimId">The claim to read.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The claim and its standing, or the problem that says there is no such claim.</returns>
+    public async ValueTask<WireClaimStateResult> GetClaimAsync(
+        string claimId,
+        CancellationToken cancellationToken = default)
+    {
+        var read = await _facts.ReadClaimAsync(claimId, cancellationToken).ConfigureAwait(false);
+
+        // A claim nobody wrote is a 404 rather than a state: "this claim says nothing" and "there is no such claim"
+        // are different answers, and a caller holding an identity out of a report needs to be told which one it got.
+        return read is null
+            ? new WireProblem(
+                UnknownClaimProblem,
+                $"no claim '{claimId}' has been recorded.",
+                Status: 404,
+                0,
+                0)
+            : new WireClaimState(
+                ClaimOf(ClaimProjection.Of(read.Claim.Fact, read.Claim.GlobalSequence)),
+                read.SupersededBy is not null,
+                read.SupersededBy?.Fact.ClaimId ?? string.Empty);
     }
 
     /// <summary>The path from a lineage root down to a version, inclusive.</summary>

@@ -36,6 +36,65 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
             Assert.Equal(MunariumOperations.Contract, response.Data.Contract);
         });
 
+    /// <summary>Readiness travels with the same two facts the JSON surface answers: whether the store answered, and which contract.</summary>
+    [Fact]
+    public async Task TheReadinessProbeAnswersOverGrpc() =>
+        await WithClient(async client =>
+        {
+            var ready = await client.GetReadyAsync(new GetReadyRequest());
+
+            Assert.Equal("ok", ready.Data.Status);
+            Assert.Equal(MunariumOperations.Contract, ready.Data.Contract);
+        });
+
+    /// <summary>
+    /// The contract travels as protobuf's free-form object rather than as a message of its own: a message
+    /// generated from the contract cannot describe the contract, because the contract is what generation starts
+    /// from.
+    /// </summary>
+    [Fact]
+    public async Task TheContractTravelsOverGrpc() =>
+        await WithClient(async client =>
+        {
+            var contract = await client.GetOpenApiAsync(new GetOpenApiRequest());
+            var fields = contract.Data.Fields;
+
+            Assert.Equal("3.0.3", fields["openapi"].StringValue);
+            Assert.Equal("Munarium", fields["info"].StructValue.Fields["title"].StringValue);
+            Assert.True(fields["paths"].StructValue.Fields.ContainsKey("/v1/claims/{claim_id}"));
+        });
+
+    /// <summary>One claim by identity over the other transport, and NOT_FOUND where the JSON surface answers a 404.</summary>
+    [Fact]
+    public async Task AClaimIsReadableByItsIdentityOverGrpc() =>
+        await WithClient(async client =>
+        {
+            await client.ProposeClaimAsync(new ProposeClaimRequest
+            {
+                VersionId = "grpc-claim-read",
+                Body = Proposal("grpc-claim-read-1", """{"vendor_id":"g-read","status":"approved"}"""),
+            });
+
+            var slice = await client.SliceFactsAsync(new SliceFactsRequest { AsOf = 0, VersionId = "grpc-claim-read" });
+            var listed = Assert.Single(slice.Data.Facts, fact => fact.ClaimId == "grpc-claim-read-1");
+            var state = await client.GetClaimAsync(new GetClaimRequest { ClaimId = "grpc-claim-read-1" });
+
+            // The point read and the slice agree on the row, position included, exactly as they do over JSON.
+            Assert.Equal("grpc-claim-read-1", state.Data.Claim.ClaimId);
+            Assert.Equal("grpc-claim-read", state.Data.Claim.VersionId);
+            Assert.Equal(ClaimType.Fact, state.Data.Claim.ClaimType);
+            Assert.Equal(ClaimStatus.Accepted, state.Data.Claim.Status);
+            Assert.Equal(listed.Sequence, state.Data.Claim.Sequence);
+            Assert.False(state.Data.Superseded);
+            Assert.Equal(string.Empty, state.Data.SupersededBy);
+
+            // A claim nobody wrote is an error rather than an empty state: gRPC's NOT_FOUND is HTTP's 404.
+            var unknown = await Assert.ThrowsAsync<RpcException>(async () =>
+                await client.GetClaimAsync(new GetClaimRequest { ClaimId = "grpc-claim-nobody-wrote" }));
+
+            Assert.Equal(StatusCode.NotFound, unknown.StatusCode);
+        });
+
     /// <summary>A gRPC call is resolved through the same gate the JSON surface uses.</summary>
     /// <remarks>
     /// The measurement behind a claim both transports make: the evidence and session calls here used to resolve the

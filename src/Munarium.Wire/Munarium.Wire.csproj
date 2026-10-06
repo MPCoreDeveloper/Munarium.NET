@@ -37,6 +37,9 @@
     <PackageReference Include="Grpc.Net.Client" />
     <!-- Version identities are ULIDs: sortable, spec-compliant, and the same library the rest of the stack uses. -->
     <PackageReference Include="Posseth.UlidFactory" />
+    <!-- The contract is YAML and the surface that serves it answers JSON, so the document is read with the same
+         reader the runbook catalog uses rather than a second one written here. -->
+    <PackageReference Include="YamlDotNet" />
   </ItemGroup>
 
   <!--
@@ -49,6 +52,12 @@
           Pack="true"
           PackagePath="contract/"
           Visible="false" />
+    <!-- The same file, embedded as well: /openapi.json serves this deployment's contract by the deployment, and the
+         document it serves has to be the one this build was generated from. The logical name is set because the
+         file lives outside the project directory, where the default name would be derived from the path. -->
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)..\..\openapi\munarium.v1.yaml"
+                      LogicalName="Munarium.Wire.munarium.v1.yaml"
+                      Visible="false" />
   </ItemGroup>
 
 </Project>

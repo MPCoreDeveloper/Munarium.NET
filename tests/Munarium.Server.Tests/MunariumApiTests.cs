@@ -36,6 +36,32 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     }
 
     [Fact]
+    public async Task TheReadinessProbeAnswersWithTheContractItSpeaks()
+    {
+        // Readiness is the store's answer rather than the process's: this deployment has a store behind it, so
+        // this is the ready half - 200 and "ok". A store that did not answer inside the probe's deadline is the
+        // other half, and it says so on the status line rather than in the body.
+        var readiness = await GetAsync("/readyz", WireJson.Default.WireReadiness);
+
+        Assert.Equal(WireStatuses.Ok, readiness.Status);
+        Assert.Equal(MunariumOperations.Contract, readiness.Contract);
+    }
+
+    [Fact]
+    public async Task TheDeploymentServesTheContractItImplements()
+    {
+        using var response = await _client.GetAsync(new Uri("/openapi.json", UriKind.Relative));
+
+        response.EnsureSuccessStatusCode();
+
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+
+        // Not a summary of the contract and not a re-serialization of it: the document this build was
+        // generated from, which is the one a client generates from.
+        Assert.Equal(MunariumOperations.OpenApi(), await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
     public async Task AVersionThatHasNotBeenWrittenToHasHeadZero()
     {
         var head = await GetAsync("/v1/versions/empty-version/head", WireJson.Default.WireVersionHead);
@@ -106,6 +132,68 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         Assert.Equal("claim-pin-1", Assert.Single(atPin.Facts, fact => fact.Lineage == "vendor@1|vendor_id=v-7").ClaimId);
         Assert.Equal("claim-pin-2", Assert.Single(now.Facts, fact => fact.Lineage == "vendor@1|vendor_id=v-7").ClaimId);
         Assert.Equal(2, corrected);
+    }
+
+    [Fact]
+    public async Task AClaimIsReadableByItsIdentity()
+    {
+        await ProposeAsync("version-claim-read", "claim-read-1", Vendor("v-read"));
+
+        var state = await GetAsync("/v1/claims/claim-read-1", WireJson.Default.WireClaimState);
+        var slice = await GetAsync("/v1/facts?version_id=version-claim-read", WireJson.Default.WireFactSlice);
+        var listed = Assert.Single(slice.Facts, fact => fact.ClaimId == "claim-read-1");
+
+        // The point read and the slice are two views of one row, so they cannot describe it two ways: the
+        // identity, the version, the outcome and the position the ledger put it at all agree.
+        Assert.Equal("claim-read-1", state.Claim.ClaimId);
+        Assert.Equal("version-claim-read", state.Claim.VersionId);
+        Assert.Equal(WireClaimStatus.Accepted, state.Claim.Status);
+        Assert.Equal(listed.Status, state.Claim.Status);
+        Assert.Equal(listed.Sequence, state.Claim.Sequence);
+
+        // Nothing later wrote to the lineage, so this claim still holds it and there is nobody to name.
+        Assert.False(state.Superseded);
+        Assert.Equal(string.Empty, state.SupersededBy);
+    }
+
+    [Fact]
+    public async Task ASupersededClaimNamesTheFactThatHoldsItsLineage()
+    {
+        await ProposeAsync("version-claim-superseded", "claim-supersede-1", Vendor("v-sup"));
+        await ProposeAsync(
+            "version-claim-superseded", "claim-supersede-2", Vendor("v-sup", "pending"), WireClaimTypes.Update);
+
+        var earlier = await GetAsync("/v1/claims/claim-supersede-1", WireJson.Default.WireClaimState);
+        var holder = await GetAsync("/v1/claims/claim-supersede-2", WireJson.Default.WireClaimState);
+        var slice = await GetAsync("/v1/facts?version_id=version-claim-superseded", WireJson.Default.WireFactSlice);
+
+        // The earlier claim is still itself - a correction does not rewrite it - and the answer adds what
+        // holds its lineage now, which is the fact the present slice serves.
+        Assert.Equal("claim-supersede-1", earlier.Claim.ClaimId);
+        Assert.True(earlier.Superseded);
+        Assert.Equal("claim-supersede-2", earlier.SupersededBy);
+        Assert.Equal(
+            "claim-supersede-2",
+            Assert.Single(slice.Facts, fact => fact.Lineage == "vendor@1|vendor_id=v-sup").ClaimId);
+
+        // And the claim that took the lineage names nobody.
+        Assert.False(holder.Superseded);
+        Assert.Equal(string.Empty, holder.SupersededBy);
+    }
+
+    [Fact]
+    public async Task AClaimNobodyRecordedIsNotFound()
+    {
+        using var response = await _client.GetAsync(new Uri("/v1/claims/claim-nobody-wrote", UriKind.Relative));
+
+        // No such claim and a claim that says nothing are different answers, so this is a 404 carrying the
+        // problem rather than an empty state.
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+        var problem = (await response.Content.ReadFromJsonAsync(WireJson.Default.WireProblem))!;
+
+        Assert.Equal(MunariumOperations.UnknownClaimProblem, problem.Type);
+        Assert.Contains("claim-nobody-wrote", problem.Detail, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -79,6 +79,62 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+  /readyz:
+    get:
+      operationId: GetReady
+      tags: [kernel]
+      summary: Readiness.
+      description: |
+        Liveness is not readiness. /healthz answers because the process answers; this answers only when the store
+        the process serves from answers too, so a caller that routes traffic reads this one and a supervisor
+        deciding whether to restart the process reads the other.
+
+        The probe is a read of the store, made once per call and bounded, so a store that is unreachable, or slow
+        enough to be useless, is reported rather than waited for: an unbounded probe turns one unreachable database
+        into a fleet that neither serves nor says why.
+
+        The answer is the shape /healthz answers - a status and the contract - so the two are read the same way, and
+        what separates them is the status: "ok" when the store answered, and "unavailable" when it did not, with 503
+        saying the same thing on the status line for a caller that only reads that. The original answers a bare
+        {ok}; this port has no such envelope, because /healthz already answers a status and a contract here, and a
+        readiness answer that borrowed different words for the same two facts would be one deployment describing
+        itself two ways.
+      responses:
+        "200":
+          description: The store answered the probe; the deployment is ready to serve.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "503":
+          description: The store did not answer, or did not answer in time; the deployment is not ready to serve.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+  /openapi.json:
+    get:
+      operationId: GetOpenApi
+      tags: [kernel]
+      summary: This contract, as a JSON document.
+      description: |
+        The specification this deployment implements, served by the deployment itself. A caller that generates from
+        it reads what the instance it is talking to actually answers, rather than a copy that could be a release
+        behind - and it is the same document both transports are built from, so the answer also says which contract
+        this instance is speaking.
+
+        Declared free-form on purpose. The document is an OpenAPI one, and describing its own schema inside itself
+        is a self-reference that would have to be read before it could be trusted; a caller that wants it typed has
+        the versioned copy this repository ships. Over gRPC it travels as google.protobuf.Struct, which is
+        protobuf's own answer for "any JSON object".
+      responses:
+        "200":
+          description: The contract document.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
 
   /v1/versions:
     post:
@@ -755,6 +811,45 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FactSlice"
+
+  /v1/claims/{claim_id}:
+    get:
+      operationId: GetClaim
+      tags: [ledger]
+      summary: One claim, by identity, with whether it is still the one that holds.
+      description: |
+        The point read of the ledger: a caller that holds a claim's identity - out of a report, a snapshot, a
+        finding - asks what that claim says now, and whether something later holds its lineage in its place.
+
+        Superseded means what the ledger means by it: facts sharing a lineage supersede one another by position, so
+        a claim is superseded exactly when a later fact on its lineage is what the ledger would serve instead of it,
+        and superseded_by names that fact. The original asks its store for the earliest claim that names this one as
+        the fact it supersedes. The two answers agree wherever a correction declares what it corrects; where they do
+        not, this one is the ledger's own resolution - a claim this port reports as superseded is one the kernel
+        would no longer serve, which is the fact a caller asking the question needs.
+
+        The claim comes back in the shape a snapshot lists, so a claim read on its own and the same claim read
+        inside a snapshot cannot describe it two ways.
+      parameters:
+        - name: claim_id
+          in: path
+          required: true
+          description: The claim to read.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The claim, and whether a later fact holds its lineage now.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimState"
+        "404":
+          description: No claim with that identity has been recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /v1/context:
     post:
@@ -2657,6 +2752,19 @@ components:
           type: string
           description: The wire contract version this server speaks, "mmp.v1".
 
+    Readiness:
+      type: object
+      required: [status, contract]
+      properties:
+        status:
+          type: string
+          description: |
+            "ok" when the backing store answered the readiness probe, and "unavailable" when it did not - which is
+            the one thing a liveness answer can never say.
+        contract:
+          type: string
+          description: The wire contract version this server speaks, "mmp.v1".
+
     VersionHead:
       type: object
       required: [version_id, head]
@@ -2996,6 +3104,22 @@ components:
         supersedes_id:
           type: string
           description: The claim it says it supersedes, or empty.
+
+    ClaimState:
+      type: object
+      description: |-
+        One claim, read by identity: the claim, and whether a later fact holds its lineage in its place now. The
+        claim is the shape a snapshot lists, because a claim is the same claim wherever it is read.
+      required: [claim, superseded, superseded_by]
+      properties:
+        claim:
+          $ref: "#/components/schemas/ResolvedClaim"
+        superseded:
+          type: boolean
+          description: Whether a later fact on this claim's lineage is what the ledger serves in its place now.
+        superseded_by:
+          type: string
+          description: The claim that holds the lineage now, or empty when this one still does.
 
     Anchor:
       type: object

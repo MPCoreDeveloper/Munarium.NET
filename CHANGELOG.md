@@ -31,8 +31,9 @@ packages carry source links, so a debugger steps into the exact commit a package
 
 ### Kernel
 
-- **Ledger** over `IStorageBackend`: a head read, an optimistic-concurrency append, a stream read
-  and a global read. Identities are ULIDs, so a claim's identity also says when it happened and
+- **Ledger** over `IStorageBackend`: a head read, an optimistic-concurrency append, a stream read, a
+  global read, and a point read that answers one claim by identity - whether a later fact holds its
+  lineage in its place. Identities are ULIDs, so a claim's identity also says when it happened and
   how it sorts.
 - **Governance in the write path**: a gate returns permitted or blocked, and a blocked claim is
   recorded as *disputed* rather than dropped.
@@ -66,8 +67,14 @@ packages carry source links, so a debugger steps into the exact commit a package
 
 - One contract, `openapi/munarium.v1.yaml`, is the source of both transports: JSON over HTTP and
   a generated gRPC surface, with the gRPC-only operations refused by name rather than approximated.
-- **53 of the original's 121 operations** are served, measured by `tools/spec-coverage.ps1` and
+- **56 of the original's 135 operations** are served, measured by `tools/spec-coverage.ps1` and
   held to a floor in `UpstreamContractTests`, so the number cannot quietly regress.
+- **Liveness and readiness are two answers, and the deployment hands out its own contract**: `/healthz`
+  answers because the process answers, `/readyz` only when the store the process serves from answered a
+  probe - a bounded read, made once per call, so an unreachable store is reported as `unavailable` rather
+  than waited for - and `/openapi.json` serves the specification embedded in the assembly it was generated
+  from, walked node by node into JSON, so the document a caller generates from is the document this build
+  was generated from.
 
 ### Build and quality
 
@@ -75,7 +82,7 @@ packages carry source links, so a debugger steps into the exact commit a package
   reference types, and central package management.
 - The .NET analyzers and `SonarAnalyzer.CSharp` on every build with warnings as errors in
   shipping code, plus a SonarCloud job in CI.
-- **957 tests** across five suites, a **NativeAOT smoke test** published and run on linux-x64, win-x64
+- **966 tests** across five suites, a **NativeAOT smoke test** published and run on linux-x64, win-x64
   and osx-arm64, and a **packaging gate** (`tools/release-packages.ps1`) that reads the packages back
   before a release may push them.
 - A failing suite says which test failed: the platform's log is printed and uploaded, because a red
@@ -92,5 +99,5 @@ Named here so a reader is not left to infer it, each with its reason in
   call refuses `version_id`: refusing is better than making the call unrecorded.
 - An embedding cache, which is why `cache_hit` is always false on the relay.
 - The reports plane (`/v1/reports/*`), collections, runs, and ingest bulk.
-- `index-build-jobs`, and the management-plane operations `/readyz` and `/openapi.json`.
+- `index-build-jobs`.
 - `index-artifacts` and `retrieval-rollout`: **absent by decision**, not pending.

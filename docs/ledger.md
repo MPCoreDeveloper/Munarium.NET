@@ -46,6 +46,12 @@ provenance, and the claim it supersedes. `ClaimResolution` is the reference impl
 read semantics — the superseded set is itself filtered by the pin, so a claim superseded only *after* the pin
 still reads as current at the pin. Every storage backend's query has to agree with it.
 
+The point read asks the same question about one claim: `GET /v1/claims/{claim_id}` answers the claim and
+whether a later fact on its lineage is what the ledger would serve in its place, which is what *superseded*
+means here. It is resolved from the feed rather than kept as a flag beside it, so the answer cannot disagree
+with what a slice answers, and a claim nobody wrote is a 404 rather than a state — "this claim says nothing"
+and "there is no such claim" are different answers.
+
 ## Anchors, promises and counters
 
 A locked detail may not drift (`anchor-consistency`); a promise made in one scope is owed to a later one, and

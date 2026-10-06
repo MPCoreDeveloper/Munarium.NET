@@ -33,6 +33,27 @@ public static class MunariumEndpoints
             "/version",
             () => TypedResults.Json(MunariumOperations.Version(), WireJson.Default.WireDeploymentVersion));
 
+        // Readiness, which is not liveness: this one answers only when the store answers, and says so on the status
+        // line for a caller that routes on that alone. The body carries the same status and the contract, so a caller
+        // that reads it reads the shape /healthz answers.
+        app.MapGet(
+            "/readyz",
+            async (MunariumOperations operations, CancellationToken cancellationToken) =>
+            {
+                var readiness = await operations.ReadinessAsync(cancellationToken).ConfigureAwait(false);
+
+                var status = readiness.Status == WireStatuses.Ok
+                    ? StatusCodes.Status200OK
+                    : StatusCodes.Status503ServiceUnavailable;
+
+                return TypedResults.Json(readiness, WireJson.Default.WireReadiness, statusCode: status);
+            });
+
+        // The contract itself, which is what a caller generates a client from. Served as text rather than through a
+        // serializer: it is already a JSON document, and what it describes is this deployment rather than any type of
+        // this deployment's.
+        app.MapGet("/openapi.json", () => TypedResults.Text(MunariumOperations.OpenApi(), "application/json"));
+
         // The provider plane: declarations and probes. Applying records a dialect, an endpoint, the models it serves and
         // where the credential lives - never the credential - and a probe answers over whatever adapter this deployment
         // holds for that family, naming the absence when it holds none.
@@ -530,6 +551,28 @@ public static class MunariumEndpoints
                 await operations
                     .SliceFactsAsync(asOf ?? 0, versionId ?? string.Empty, cancellationToken)
                     .ConfigureAwait(false));
+
+        // The ledger's point read. A caller holding a claim's identity - out of a snapshot, a finding, a report -
+        // asks what that claim says now and whether something later holds its lineage in its place; a claim nobody
+        // recorded is a 404 rather than an empty state, because those are two different answers.
+        app.MapGet(
+            "/v1/claims/{claim_id}",
+            async (
+                [FromRoute(Name = "claim_id")] string claimId,
+                MunariumOperations operations,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await operations.GetClaimAsync(claimId, cancellationToken).ConfigureAwait(false);
+
+                IResult answer = result switch
+                {
+                    WireClaimState state => TypedResults.Json(state, WireJson.Default.WireClaimState),
+                    WireProblem problem => TypedResults.Json(
+                        problem, WireJson.Default.WireProblem, statusCode: problem.Status),
+                };
+
+                return answer;
+            });
 
         app.MapPost(
             "/v1/context",

@@ -43,10 +43,35 @@ public static class WireClaimTypes
     public const string Correction = "correction";
 }
 
+/// <summary>The words the contract uses for how a deployment is answering.</summary>
+/// <remarks>
+/// One vocabulary for <see cref="WireHealth"/> and <see cref="WireReadiness"/> both, because a deployment that said
+/// <c>ok</c> in one answer and something else in the other would be describing itself two ways.
+/// </remarks>
+public static class WireStatuses
+{
+    /// <summary>The process answered - and, for readiness, so did the store it serves from.</summary>
+    public const string Ok = "ok";
+
+    /// <summary>The store did not answer the readiness probe, or did not answer in time.</summary>
+    public const string Unavailable = "unavailable";
+}
+
 /// <summary>Liveness.</summary>
 /// <param name="Status">Always <c>ok</c> - a health check that answers at all is healthy.</param>
 /// <param name="Contract">The wire contract version this server speaks.</param>
 public sealed record WireHealth(string Status, string Contract);
+
+/// <summary>Readiness: whether the store this deployment serves from answers at all.</summary>
+/// <remarks>
+/// The same two fields as <see cref="WireHealth"/>, because one deployment describing liveness in one vocabulary and
+/// readiness in another would be describing itself two ways - which is why the original's bare <c>{ok}</c> is not
+/// borrowed here. What separates the two answers is the status: a liveness answer can only ever say <c>ok</c>, while
+/// this one says <c>unavailable</c> when the store did not answer, which is the one thing liveness can never say.
+/// </remarks>
+/// <param name="Status"><c>ok</c> when the store answered the probe, <c>unavailable</c> when it did not.</param>
+/// <param name="Contract">The wire contract version this server speaks.</param>
+public sealed record WireReadiness(string Status, string Contract);
 
 /// <summary>The head of a version's stream.</summary>
 /// <param name="VersionId">The version that was read.</param>
@@ -636,6 +661,15 @@ public sealed record WireResolvedClaim(
     string Status,
     string Provenance,
     string SupersedesId);
+
+/// <summary>One claim, read by identity, with whether a later fact holds its lineage in its place now.</summary>
+/// <param name="Claim">The claim, in the same shape a snapshot lists.</param>
+/// <param name="Superseded">Whether a later fact on its lineage is what the ledger serves in its place now.</param>
+/// <param name="SupersededBy">The claim that holds the lineage now, or empty when this one still does.</param>
+public sealed record WireClaimState(WireResolvedClaim Claim, bool Superseded, string SupersededBy);
+
+/// <summary>The result of reading one claim: the claim as it stands, or why there is none.</summary>
+public readonly union WireClaimStateResult(WireClaimState, WireProblem);
 
 /// <summary>One rung of the digest ladder.</summary>
 /// <param name="VersionId">The version the rung was built for.</param>

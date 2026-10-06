@@ -95,3 +95,19 @@ holds — and they are deliberately the smallest pair that does: the apply is th
 its own, the refusal's status comes from the problem so both transports answer the same failure the same way,
 and the status enumeration crosses member by member rather than by a cast, because a cast would follow
 whichever numbering each side happens to use.
+
+The deployment also answers for itself from that surface, and those answers are two: `/healthz` because the
+process answers, and `/readyz` only when the store the process serves from answered a probe - a read of the
+store, made once per call and bounded, so a store that is unreachable, or slow enough to be useless, is
+reported rather than waited for. An orchestrator reading an answer that never comes cannot tell a slow
+deployment from a dead one, so the bound is part of the operation rather than a caller's choice. The status
+vocabulary is the liveness answer's own (`ok`, `unavailable`), because a deployment describing itself two ways
+would be describing itself wrong, and it travels on the status line as well as in the body - 503 when the store
+did not answer - so a caller that routes on the status alone reads it without parsing one. Over gRPC the two
+cases are a message and an error respectively, which is where the status is what a routing caller is given. The
+same surface hands out the contract: `/openapi.json` serves
+`openapi/munarium.v1.yaml` out of the assembly it was embedded in, read with the same YAML reader the runbook
+catalog uses and walked into JSON one node at a time - quoted scalars stay text and unquoted ones become what
+the YAML core schema reads them as - so the document a caller generates from is the contract this build was
+generated from rather than a copy that could be a release behind.
+
