@@ -37,13 +37,13 @@ public class AuthoringDraftTests
                     ["public"] = new WireAuthoringValue(null, 0L, null, null, null),
                     ["incidents"] = new WireAuthoringValue(null, 3L, null, null, null),
                 }),
-                ["prefix.areas"] = new WireAuthoringValue(null, null, null, new List<WireAuthoringValue>
-                {
+                ["prefix.areas"] = new WireAuthoringValue(null, null, null,
+                [
                     new(null, null, null, null, new Dictionary<string, WireAuthoringValue>(StringComparer.Ordinal)
                     {
                         ["path"] = new WireAuthoringValue("public/", null, null, null, null),
                     }),
-                }, null),
+                ], null),
             })));
 
         Assert.Equal("Vendor security reviews.", answered.Answers["identity.description"].Text);

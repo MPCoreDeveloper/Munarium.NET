@@ -1,7 +1,7 @@
 namespace Munarium.Governance;
 
-using Munarium.Claims;
 using Munarium.Chronology;
+using Munarium.Claims;
 using Munarium.Facts;
 using Munarium.Governance.Gates;
 using Munarium.Ledger;
@@ -23,44 +23,35 @@ using Munarium.Ledger;
 /// longer describe.
 /// </para>
 /// </remarks>
-public sealed class CandidateLedger
+/// <remarks>
+/// Initializes a new instance of the <see cref="CandidateLedger"/> class.
+/// </remarks>
+/// <param name="storage">The ledger's storage seam.</param>
+/// <param name="snapshots">Where the pinned view the gates read is assembled.</param>
+/// <param name="chronology">The armed chronology rules, or <see langword="null"/> to leave the family off.</param>
+/// <param name="armAbsenceCheck">
+/// Whether the deadline-absence check runs. It is off by default, which is what the original's server
+/// does - it has no as-of clock. This port can arm it because a snapshot's identities carry the instant
+/// it was written at, so the answer stays reproducible from the snapshot alone.
+/// </param>
+/// <param name="maxReGateAttempts">How many times a contended batch is re-gated and re-appended.</param>
+public sealed class CandidateLedger(
+    IStorageBackend storage,
+    MeshSnapshotBuilder snapshots,
+    ChronologyRules? chronology = null,
+    bool armAbsenceCheck = false,
+    int maxReGateAttempts = 3)
 {
-    private readonly IStorageBackend _storage;
-    private readonly MeshSnapshotBuilder _snapshots;
-    private readonly ChronologyRules? _chronology;
-    private readonly bool _armAbsenceCheck;
-    private readonly int _maxReGateAttempts;
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="CandidateLedger"/> class.
-    /// </summary>
-    /// <param name="storage">The ledger's storage seam.</param>
-    /// <param name="snapshots">Where the pinned view the gates read is assembled.</param>
-    /// <param name="chronology">The armed chronology rules, or <see langword="null"/> to leave the family off.</param>
-    /// <param name="armAbsenceCheck">
-    /// Whether the deadline-absence check runs. It is off by default, which is what the original's server
-    /// does - it has no as-of clock. This port can arm it because a snapshot's identities carry the instant
-    /// it was written at, so the answer stays reproducible from the snapshot alone.
-    /// </param>
-    /// <param name="maxReGateAttempts">How many times a contended batch is re-gated and re-appended.</param>
-    public CandidateLedger(
-        IStorageBackend storage,
-        MeshSnapshotBuilder snapshots,
-        ChronologyRules? chronology = null,
-        bool armAbsenceCheck = false,
-        int maxReGateAttempts = 3)
-    {
-        _storage = storage ?? throw new ArgumentNullException(nameof(storage));
-        _snapshots = snapshots ?? throw new ArgumentNullException(nameof(snapshots));
-        _chronology = chronology;
-        _armAbsenceCheck = armAbsenceCheck;
-        _maxReGateAttempts = maxReGateAttempts > 0
+    private readonly IStorageBackend _storage = storage ?? throw new ArgumentNullException(nameof(storage));
+    private readonly MeshSnapshotBuilder _snapshots = snapshots ?? throw new ArgumentNullException(nameof(snapshots));
+    private readonly ChronologyRules? _chronology = chronology;
+    private readonly bool _armAbsenceCheck = armAbsenceCheck;
+    private readonly int _maxReGateAttempts = maxReGateAttempts > 0
             ? maxReGateAttempts
             : throw new ArgumentOutOfRangeException(
                 nameof(maxReGateAttempts),
                 maxReGateAttempts,
                 "Must be positive.");
-    }
 
     /// <summary>
     /// Judges a candidate and records it.

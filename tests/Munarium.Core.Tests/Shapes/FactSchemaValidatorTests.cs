@@ -102,10 +102,7 @@ public class FactSchemaValidatorTests
     }
 
     [Fact]
-    public void ANullBodyIsValidatedRatherThanAssumedValid()
-    {
-        Assert.Equal(["$: expected object, found null."], Validate(null).Errors);
-    }
+    public void ANullBodyIsValidatedRatherThanAssumedValid() => Assert.Equal(["$: expected object, found null."], Validate(null).Errors);
 
     [Fact]
     public void KeywordsOutsideTheSubsetAreIgnoredRatherThanFailingTheBody()

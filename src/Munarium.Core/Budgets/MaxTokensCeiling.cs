@@ -21,8 +21,6 @@ public sealed class MaxTokensCeiling(IMaxTokensStore store, MaxTokensBudget proc
     public const string EnvironmentSource = "environment";
 
     private readonly IMaxTokensStore _store = store ?? throw new ArgumentNullException(nameof(store));
-    private readonly MaxTokensBudget _processDefaults =
-        processDefaults ?? throw new ArgumentNullException(nameof(processDefaults));
 
     /// <summary>The ceilings this process was composed with: its built-ins with its own variables over them.</summary>
     /// <param name="store">Where a tenant's replacement is kept.</param>
@@ -31,7 +29,7 @@ public sealed class MaxTokensCeiling(IMaxTokensStore store, MaxTokensBudget proc
         new(store, MaxTokensBudget.Between(MaxTokensBudget.Builtin, Environment.GetEnvironmentVariable));
 
     /// <summary>Gets the ceilings that apply while no tenant has replaced them.</summary>
-    public MaxTokensBudget ProcessDefaults => _processDefaults;
+    public MaxTokensBudget ProcessDefaults { get; } = processDefaults ?? throw new ArgumentNullException(nameof(processDefaults));
 
     /// <summary>Reads what applies to one tenant right now.</summary>
     /// <param name="tenant">The tenant.</param>
@@ -44,7 +42,7 @@ public sealed class MaxTokensCeiling(IMaxTokensStore store, MaxTokensBudget proc
         var stored = await _store.FindAsync(tenant, cancellationToken).ConfigureAwait(false);
 
         return stored is null
-            ? new MaxTokensResolution(_processDefaults, EnvironmentSource, UpdatedAt: null)
+            ? new MaxTokensResolution(ProcessDefaults, EnvironmentSource, UpdatedAt: null)
             : new MaxTokensResolution(stored.Budgets, TenantSource, stored.UpdatedAt);
     }
 

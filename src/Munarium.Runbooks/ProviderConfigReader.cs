@@ -21,6 +21,13 @@ using YamlDotNet.RepresentationModel;
 /// </remarks>
 public static class ProviderConfigReader
 {
+    /// <summary>The keys a provider document is read by.</summary>
+    private const string MetadataKey = "metadata";
+
+    /// <summary>The two slots a declaration may name by tier rather than by model.</summary>
+    private const string CapableKey = "capable";
+    private const string FrontierKey = "frontier";
+
     /// <summary>
     /// Reads a provider configuration.
     /// </summary>
@@ -59,7 +66,7 @@ public static class ProviderConfigReader
 
         var root = RunbookYaml.AsMapping(stream.Documents[0].RootNode, "provider config");
 
-        RunbookYaml.DenyUnknown(root, "provider config", "apiVersion", "kind", "metadata", "spec");
+        RunbookYaml.DenyUnknown(root, "provider config", "apiVersion", "kind", MetadataKey, "spec");
 
         if (RunbookYaml.OptionalText(root, "apiVersion", "apiVersion") is null or { Length: 0 })
         {
@@ -74,10 +81,10 @@ public static class ProviderConfigReader
         }
 
         var metadata = RunbookYaml.AsMapping(
-            RunbookYaml.Member(root, "metadata") ?? throw new FormatException("metadata is required"),
-            "metadata");
+            RunbookYaml.Member(root, MetadataKey) ?? throw new FormatException("metadata is required"),
+            MetadataKey);
 
-        RunbookYaml.DenyUnknown(metadata, "metadata", "name");
+        RunbookYaml.DenyUnknown(metadata, MetadataKey, "name");
 
         var name = (RunbookYaml.OptionalText(metadata, "name", "metadata.name") ?? string.Empty).Trim();
 
@@ -145,15 +152,15 @@ public static class ProviderConfigReader
 
         var models = RunbookYaml.AsMapping(node, "spec.models");
 
-        RunbookYaml.DenyUnknown(models, "spec.models", "complete", "embed", "fast", "capable", "frontier");
+        RunbookYaml.DenyUnknown(models, "spec.models", "complete", "embed", "fast", CapableKey, FrontierKey);
 
         return new ProviderModels
         {
             Complete = RunbookYaml.Strings(models, "complete", "spec.models.complete"),
             Embed = RunbookYaml.Strings(models, "embed", "spec.models.embed"),
             Fast = RunbookYaml.OptionalText(models, "fast", "spec.models.fast"),
-            Capable = RunbookYaml.OptionalText(models, "capable", "spec.models.capable"),
-            Frontier = RunbookYaml.OptionalText(models, "frontier", "spec.models.frontier"),
+            Capable = RunbookYaml.OptionalText(models, CapableKey, "spec.models.capable"),
+            Frontier = RunbookYaml.OptionalText(models, FrontierKey, "spec.models.frontier"),
         };
     }
 
@@ -176,8 +183,8 @@ public static class ProviderConfigReader
             RequestsPerMinute = Whole(budgets, "rpm"),
             TokensPerMinute = Whole(budgets, "tpm"),
             Fast = DailyToken(budgets, "fast"),
-            Capable = DailyToken(budgets, "capable"),
-            Frontier = DailyToken(budgets, "frontier"),
+            Capable = DailyToken(budgets, CapableKey),
+            Frontier = DailyToken(budgets, FrontierKey),
         };
     }
 
@@ -208,7 +215,7 @@ public static class ProviderConfigReader
             return null;
         }
 
-        RunbookYaml.DenyUnknown(daily, "spec.budgets.dailyTokens", "fast", "capable", "frontier");
+        RunbookYaml.DenyUnknown(daily, "spec.budgets.dailyTokens", "fast", CapableKey, FrontierKey);
 
         var declared = RunbookYaml.Integer(daily, tier, $"spec.budgets.dailyTokens.{tier}");
 

@@ -1,21 +1,19 @@
 namespace Munarium.Server;
 
-using Munarium.Access;
-
+using System.Text.Json;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
+using Munarium.Access;
 using Munarium.Wire;
 using Munarium.Wire.Generated;
-using System.Text.Json;
-
-// The generated "Version" message and System.Version are both in scope, so the message gets a name of its
-// own here rather than an ambiguity at every use.
-using GeneratedVersion = Munarium.Wire.Generated.Version;
-
 // The kernel's evidence types and the generated evidence messages share several names - a manifest, a schema, a
 // column - so the kernel's namespace is aliased and the generated names stay unqualified everywhere below. The
 // generated side is where the messages are referenced, which is where the shorter name earns its keep.
 using Evidence = Munarium.Evidence;
+
+// The generated "Version" message and System.Version are both in scope, so the message gets a name of its
+// own here rather than an ambiguity at every use.
+using GeneratedVersion = Munarium.Wire.Generated.Version;
 
 
 /// <summary>
@@ -481,7 +479,7 @@ internal sealed class MunariumGrpcService(MunariumOperations operations, Munariu
         }
 
         List<WireAuthoringValue>? items = value.Items.Count == 0 ? null : [.. value.Items.Select(WireValue)];
-        Dictionary<string, WireAuthoringValue>? fields = value.Fields.Count == 0
+        var fields = value.Fields.Count == 0
             ? null
             : new Dictionary<string, WireAuthoringValue>(
                 value.Fields.Select(field => new KeyValuePair<string, WireAuthoringValue>(

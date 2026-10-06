@@ -1,6 +1,5 @@
 namespace Munarium.Providers.Tests;
 
-using System.Net;
 using System.Text.Json;
 using Munarium.Evidence;
 

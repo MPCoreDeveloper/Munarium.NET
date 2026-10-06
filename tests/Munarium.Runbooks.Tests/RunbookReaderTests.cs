@@ -1,7 +1,5 @@
 namespace Munarium.Runbooks.Tests;
 
-using Munarium.Evidence;
-
 /// <summary>
 /// Reading the YAML an operator applies.
 /// </summary>

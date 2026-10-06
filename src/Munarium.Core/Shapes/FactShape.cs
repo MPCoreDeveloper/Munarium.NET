@@ -1,7 +1,7 @@
+namespace Munarium.Shapes;
+
 using System.Text;
 using System.Text.Json;
-
-namespace Munarium.Shapes;
 
 /// <summary>
 /// A versioned, declarative description of what a claim looks like.

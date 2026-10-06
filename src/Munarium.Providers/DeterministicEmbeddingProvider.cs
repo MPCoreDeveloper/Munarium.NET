@@ -13,7 +13,11 @@ using System.Text;
 /// stays stable across machines; and it needs nothing external, so the retrieval path can be
 /// exercised end to end - including under NativeAOT - without a cloud account or a local model.
 /// </remarks>
-public sealed class DeterministicEmbeddingProvider : IModelProvider
+/// <remarks>
+/// Initializes a new instance of the <see cref="DeterministicEmbeddingProvider"/> class.
+/// </remarks>
+/// <param name="dimensions">The vector width.</param>
+public sealed class DeterministicEmbeddingProvider(int dimensions = DeterministicEmbeddingProvider.DefaultDimensions) : IModelProvider
 {
     /// <summary>The model name this provider reports.</summary>
     public const string ModelName = "munarium-deterministic-v1";
@@ -22,24 +26,13 @@ public sealed class DeterministicEmbeddingProvider : IModelProvider
     private const uint FnvOffsetBasis = 2166136261;
     private const uint FnvPrime = 16777619;
 
-    private readonly int _dimensions;
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="DeterministicEmbeddingProvider"/> class.
-    /// </summary>
-    /// <param name="dimensions">The vector width.</param>
-    public DeterministicEmbeddingProvider(int dimensions = DefaultDimensions)
-    {
-        _dimensions = dimensions > 0
-            ? dimensions
-            : throw new ArgumentOutOfRangeException(nameof(dimensions), dimensions, "Must be positive.");
-    }
-
     /// <inheritdoc />
     public ProviderId Id => ProviderId.Local;
 
     /// <summary>Gets the vector width this provider produces.</summary>
-    public int Dimensions => _dimensions;
+    public int Dimensions { get; } = dimensions > 0
+            ? dimensions
+            : throw new ArgumentOutOfRangeException(nameof(dimensions), dimensions, "Must be positive.");
 
     /// <inheritdoc />
     public ValueTask<CompletionResponse> CompleteAsync(
@@ -68,7 +61,7 @@ public sealed class DeterministicEmbeddingProvider : IModelProvider
 
     /// <inheritdoc />
     public ValueTask<ProviderHealth> HealthAsync(CancellationToken cancellationToken = default) =>
-        ValueTask.FromResult(new ProviderHealth(true, $"in-process deterministic embedder ({_dimensions} dimensions)"));
+        ValueTask.FromResult(new ProviderHealth(true, $"in-process deterministic embedder ({Dimensions} dimensions)"));
 
     /// <summary>
     /// Embeds one text into a unit-length vector.
@@ -79,12 +72,12 @@ public sealed class DeterministicEmbeddingProvider : IModelProvider
     {
         ArgumentNullException.ThrowIfNull(text);
 
-        var vector = new float[_dimensions];
+        var vector = new float[Dimensions];
 
         foreach (var token in Tokenize(text))
         {
             var hash = Fnv1a(token);
-            var bucket = (int)(hash % (uint)_dimensions);
+            var bucket = (int)(hash % (uint)Dimensions);
             vector[bucket] += (hash & 1) == 0 ? 1f : -1f;
         }
 

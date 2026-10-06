@@ -24,6 +24,13 @@ using Munarium.Ledger;
 /// </remarks>
 public static class EvidenceManifestCodec
 {
+    /// <summary>The key a source's identity is written under, named once for both directions of the codec.</summary>
+    private const string SourceIdKey = "source_id";
+
+    /// <summary>The keys a marker's or an execution's window is written under.</summary>
+    private const string StartedAtKey = "started_at";
+    private const string EndedAtKey = "ended_at";
+
     /// <summary>Writes a manifest as JSON text.</summary>
     /// <param name="manifest">The manifest.</param>
     /// <returns>The JSON text.</returns>
@@ -66,7 +73,7 @@ public static class EvidenceManifestCodec
     private static void WriteSource(Utf8JsonWriter writer, SourceRef source)
     {
         writer.WriteStartObject("source");
-        writer.WriteString("source_id", source.SourceId);
+        writer.WriteString(SourceIdKey, source.SourceId);
         writer.WriteNumber("source_version", source.SourceVersion);
         writer.WriteString("adapter", source.Adapter);
         PayloadJson.Optional(writer, "adapter_version", source.AdapterVersion);
@@ -166,11 +173,11 @@ public static class EvidenceManifestCodec
         foreach (var marker in markers)
         {
             writer.WriteStartObject();
-            writer.WriteString("source_id", marker.SourceId);
+            writer.WriteString(SourceIdKey, marker.SourceId);
             PayloadJson.Optional(writer, "marker", marker.Marker);
             PayloadJson.Optional(writer, "isolation", marker.Isolation);
-            PayloadJson.Optional(writer, "started_at", marker.StartedAt);
-            PayloadJson.Optional(writer, "ended_at", marker.EndedAt);
+            PayloadJson.Optional(writer, StartedAtKey, marker.StartedAt);
+            PayloadJson.Optional(writer, EndedAtKey, marker.EndedAt);
             writer.WriteString("replay_level", marker.ReplayLevel);
             PayloadJson.Optional(writer, "replay_expires_at", marker.ReplayExpiresAt);
             writer.WriteEndObject();
@@ -197,8 +204,8 @@ public static class EvidenceManifestCodec
     private static void WriteExecution(Utf8JsonWriter writer, Execution execution)
     {
         writer.WriteStartObject("execution");
-        writer.WriteString("started_at", execution.StartedAt);
-        writer.WriteString("ended_at", execution.EndedAt);
+        writer.WriteString(StartedAtKey, execution.StartedAt);
+        writer.WriteString(EndedAtKey, execution.EndedAt);
         PayloadJson.Optional(writer, "effective_principal", execution.EffectivePrincipal);
         PayloadJson.Optional(writer, "statement_id", execution.StatementId);
         writer.WriteEndObject();
@@ -270,7 +277,7 @@ public static class EvidenceManifestCodec
     }
 
     private static SourceRef Source(JsonElement element, string what) => new(
-        PayloadJson.RequiredText(element, "source_id", what),
+        PayloadJson.RequiredText(element, SourceIdKey, what),
         PayloadJson.RequiredNumber(element, "source_version", what),
         PayloadJson.RequiredText(element, "adapter", what))
     {
@@ -376,11 +383,11 @@ public static class EvidenceManifestCodec
 
     private static SnapshotMarker Marker(JsonElement element, string what) => new()
     {
-        SourceId = PayloadJson.RequiredText(element, "source_id", what),
+        SourceId = PayloadJson.RequiredText(element, SourceIdKey, what),
         Marker = PayloadJson.Text(element, "marker"),
         Isolation = PayloadJson.Text(element, "isolation"),
-        StartedAt = PayloadJson.Text(element, "started_at"),
-        EndedAt = PayloadJson.Text(element, "ended_at"),
+        StartedAt = PayloadJson.Text(element, StartedAtKey),
+        EndedAt = PayloadJson.Text(element, EndedAtKey),
         ReplayLevel = PayloadJson.RequiredText(element, "replay_level", what),
         ReplayExpiresAt = PayloadJson.Text(element, "replay_expires_at"),
     };
@@ -396,8 +403,8 @@ public static class EvidenceManifestCodec
 
     private static Execution Execution(JsonElement element, string what) => new()
     {
-        StartedAt = PayloadJson.RequiredText(element, "started_at", what),
-        EndedAt = PayloadJson.RequiredText(element, "ended_at", what),
+        StartedAt = PayloadJson.RequiredText(element, StartedAtKey, what),
+        EndedAt = PayloadJson.RequiredText(element, EndedAtKey, what),
         EffectivePrincipal = PayloadJson.Text(element, "effective_principal"),
         StatementId = PayloadJson.Text(element, "statement_id"),
     };

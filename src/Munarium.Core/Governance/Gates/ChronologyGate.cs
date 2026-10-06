@@ -1,8 +1,8 @@
 namespace Munarium.Governance.Gates;
 
 using System.Text.Json.Nodes;
-using Munarium.Claims;
 using Munarium.Chronology;
+using Munarium.Claims;
 
 /// <summary>
 /// The chronology family: calendar and ordering governance, armed by a declaration rather than always

@@ -3,7 +3,6 @@ namespace Munarium.Server.Tests;
 using System.Reflection;
 using System.Text;
 using Grpc.Core;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Munarium.Wire.Generated;

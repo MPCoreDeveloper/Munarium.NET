@@ -512,7 +512,7 @@ public sealed class ProviderRegistry(
                 ProviderCallRefused.InvalidInput));
         }
 
-        IReadOnlyList<string> families = family is null ? ProviderFamilies.DefaultPriority : [family];
+        var families = family is null ? ProviderFamilies.DefaultPriority : [family];
         var applied = await _declarations.ListAsync(tenant, cancellationToken).ConfigureAwait(false);
 
         foreach (var candidate in families)

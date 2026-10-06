@@ -187,12 +187,11 @@ internal static class EvidenceGrpcMapping
             Completeness = ToMessage(manifest.Completeness),
             Execution = ToMessage(manifest.Execution),
             AuthorizationClass = ToMessage(manifest.AuthorizationClass),
+            Plan = manifest.Plan is { } plan ? ToMessage(plan) : null!,
+            Redaction = manifest.Redaction is { } redaction ? ToMessage(redaction) : null!,
+            Freshness = manifest.Freshness is { } freshness ? ToMessage(freshness) : null!,
+            Retention = manifest.Retention is { } retention ? ToMessage(retention) : null!
         };
-
-        message.Plan = manifest.Plan is { } plan ? ToMessage(plan) : null!;
-        message.Redaction = manifest.Redaction is { } redaction ? ToMessage(redaction) : null!;
-        message.Freshness = manifest.Freshness is { } freshness ? ToMessage(freshness) : null!;
-        message.Retention = manifest.Retention is { } retention ? ToMessage(retention) : null!;
         message.SnapshotVector.AddRange(manifest.SnapshotVector.Select(ToMessage));
 
         return message;

@@ -19,7 +19,6 @@ public sealed class ShapeRegistry
 {
     private readonly Dictionary<string, FactShape> _shapes = [];
     private readonly Lock _publish = new();
-    private IReadOnlyList<FactShape> _ordered;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ShapeRegistry"/> class.
@@ -41,14 +40,14 @@ public sealed class ShapeRegistry
         }
 
         // Ordered once, here: a list of shapes has to be deterministic to be usable as an answer.
-        _ordered = [.. _shapes.Values.OrderBy(shape => shape.Name, StringComparer.Ordinal)];
+        Shapes = [.. _shapes.Values.OrderBy(shape => shape.Name, StringComparer.Ordinal)];
     }
 
     /// <summary>Gets the number of registered shapes.</summary>
     public int Count => _shapes.Count;
 
     /// <summary>Gets the registered shapes, ordered by name.</summary>
-    public IReadOnlyList<FactShape> Shapes => _ordered;
+    public IReadOnlyList<FactShape> Shapes { get; private set; }
 
     /// <summary>
     /// Resolves a shape by name.
@@ -83,7 +82,7 @@ public sealed class ShapeRegistry
 
             // One reference assignment, so a reader sees the set before or the set after and never a half-published one:
             // a caller listing shapes gets a consistent answer without taking a lock to read one.
-            _ordered = [.. _shapes.Values.OrderBy(shape => shape.Name, StringComparer.Ordinal)];
+            Shapes = [.. _shapes.Values.OrderBy(shape => shape.Name, StringComparer.Ordinal)];
 
             return existed;
         }

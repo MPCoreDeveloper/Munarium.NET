@@ -287,7 +287,10 @@ public sealed class SessionTurnRunner(
         // returned, it does not retrieve once per layer.
         async ValueTask<SessionTurnSearch> SearchOnceAsync(CancellationToken token)
         {
-            if (hits is { } already) return already;
+            if (hits is { } already)
+            {
+                return already;
+            }
 
             var widened = await WidenAsync(document, question, models.Expansion, budgets.QueryExpansion, onProgress, token)
                 .ConfigureAwait(false);

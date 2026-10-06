@@ -35,6 +35,9 @@ public sealed class SharpCoreDbIndexVersionStore(
         "tenant TEXT, index_version_id TEXT, collection_id TEXT, shape_ref TEXT, watermark LONG, active LONG, "
         + "activated_at TEXT, deactivated_at TEXT, manifest TEXT, path_prefix TEXT";
 
+    /// <summary>The column an index version is looked up by.</summary>
+    private const string IndexVersionIdColumn = "index_version_id";
+
     private readonly Lock _gate = new();
     private readonly IDatabase _database = database ?? throw new ArgumentNullException(nameof(database));
     private readonly string _tableName = TableValues.ValidateTableName(tableName);
@@ -82,7 +85,7 @@ public sealed class SharpCoreDbIndexVersionStore(
         string indexVersionId,
         CancellationToken cancellationToken = default) =>
         MatchingAsync(
-            issuer: "index_version_id",
+            issuer: IndexVersionIdColumn,
             tenant,
             indexVersionId,
             version => string.Equals(version.Tenant, tenant, StringComparison.Ordinal),
@@ -238,17 +241,17 @@ public sealed class SharpCoreDbIndexVersionStore(
                 && string.Equals(version.CollectionId, collectionId, StringComparison.Ordinal));
 
     private static IndexVersion? Read(ITable table, string tenant, string indexVersionId) =>
-        table.Select(TableValues.Identity("index_version_id", indexVersionId))
+        table.Select(TableValues.Identity(IndexVersionIdColumn, indexVersionId))
             .Select(Map)
             .FirstOrDefault(version => string.Equals(version.Tenant, tenant, StringComparison.Ordinal));
 
     private static void Write(ITable table, IndexVersion version)
     {
-        table.Delete(TableValues.Identity("index_version_id", version.Id));
+        table.Delete(TableValues.Identity(IndexVersionIdColumn, version.Id));
         table.Insert(new Dictionary<string, object>
         {
             ["tenant"] = version.Tenant,
-            ["index_version_id"] = version.Id,
+            [IndexVersionIdColumn] = version.Id,
             ["collection_id"] = version.CollectionId,
             ["shape_ref"] = version.ShapeRef,
             ["watermark"] = version.Watermark.Value,
@@ -262,7 +265,7 @@ public sealed class SharpCoreDbIndexVersionStore(
 
     private static IndexVersion Map(Dictionary<string, object> row) => new()
     {
-        Id = TableValues.StringValue(row, "index_version_id"),
+        Id = TableValues.StringValue(row, IndexVersionIdColumn),
         Tenant = TableValues.StringValue(row, "tenant"),
         CollectionId = TableValues.StringValue(row, "collection_id"),
         ShapeRef = TableValues.StringValue(row, "shape_ref"),

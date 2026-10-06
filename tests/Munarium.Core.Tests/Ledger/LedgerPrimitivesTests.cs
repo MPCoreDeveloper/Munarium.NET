@@ -8,10 +8,7 @@ using Munarium.Ledger;
 public class LedgerPrimitivesTests
 {
     [Fact]
-    public void StreamIdFromBlankValueThrows()
-    {
-        Assert.Throws<ArgumentException>(() => StreamId.From("   "));
-    }
+    public void StreamIdFromBlankValueThrows() => Assert.Throws<ArgumentException>(() => StreamId.From("   "));
 
     [Fact]
     public void StreamIdFromKeepsTheValue()
@@ -23,10 +20,7 @@ public class LedgerPrimitivesTests
     }
 
     [Fact]
-    public void SequenceNumberZeroIsTheEmptyStreamPosition()
-    {
-        Assert.Equal(0, SequenceNumber.Zero.Value);
-    }
+    public void SequenceNumberZeroIsTheEmptyStreamPosition() => Assert.Equal(0, SequenceNumber.Zero.Value);
 
     [Fact]
     public void SequenceNumberNextIncrements()

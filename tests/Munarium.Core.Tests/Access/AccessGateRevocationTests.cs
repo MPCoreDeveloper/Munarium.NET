@@ -42,8 +42,6 @@ public class AccessGateRevocationTests
 
         await audit.RecordAsync(Row("jti-standing"));
 
-        var access = await Gate(audit).ResolveAsync($"Bearer {TokenFor("jti-standing")}", AccessScope.Query, Now);
-
         var principal = await Principal(audit, TokenFor("jti-standing"));
 
         Assert.Equal(Subject, principal.Uid);

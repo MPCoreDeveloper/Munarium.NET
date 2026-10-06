@@ -16,7 +16,10 @@ public class RunbookRemovalTests
             new ShapeRegistry([]),
             MunariumShapeBundles.Store(Path.Combine(Path.GetTempPath(), $"MunariumShapes_{Guid.NewGuid():N}")));
 
-        Draft(await kernel.Operations.OpenDraftAsync(new WireAuthoringDraftRequest("removal-rb", "ask-the-corpus")));
+        var opened = Draft(await kernel.Operations.OpenDraftAsync(new WireAuthoringDraftRequest("removal-rb", "ask-the-corpus")));
+
+        Assert.Equal("removal-rb", opened.Name);
+
         _ = await kernel.Operations.ApplyDraftAsync("removal-rb");
 
         var armed = Removal(await kernel.Operations.RequestRunbookRemovalAsync("removal-rb@1"));

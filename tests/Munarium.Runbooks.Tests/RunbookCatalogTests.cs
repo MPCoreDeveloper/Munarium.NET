@@ -93,7 +93,7 @@ public class RunbookCatalogTests
     /// <summary>The seam in memory: the store's own semantics are covered where the real one lives.</summary>
     private sealed class MemoryRunbooks : IRunbookStore
     {
-        private readonly Dictionary<string, RunbookRecord> _stored = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, RunbookRecord> _stored = [with(StringComparer.Ordinal)];
 
         public List<RunbookRecord> Stored => [.. _stored.Values];
 

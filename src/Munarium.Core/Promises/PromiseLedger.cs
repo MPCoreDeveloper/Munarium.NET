@@ -99,7 +99,7 @@ public sealed class PromiseLedger(IStorageBackend storage, MeshSnapshotBuilder s
             string.Equals(promise.Key, key, StringComparison.Ordinal) &&
             promise.Status is PromiseStatus.Open);
 
-        FulfilOutcome outcome = open is null
+        var outcome = open is null
             ? new PromiseNotOpen(key)
             : await AppendFulfilmentAsync(versionId, open, cancellationToken).ConfigureAwait(false);
 

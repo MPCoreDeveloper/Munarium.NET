@@ -1,7 +1,7 @@
+namespace Munarium.Facts;
+
 using System.Globalization;
 using System.Text;
-
-namespace Munarium.Facts;
 
 /// <summary>
 /// The canonical encoding of a <see cref="FactRecord"/> for the ledger payload.

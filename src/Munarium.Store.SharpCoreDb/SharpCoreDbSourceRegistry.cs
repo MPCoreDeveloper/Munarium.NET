@@ -38,6 +38,9 @@ public sealed class SharpCoreDbSourceRegistry(
         + "bytes_length LONG, blob_uri TEXT, backend_id TEXT, ingested_at TEXT, "
         + "extraction_status TEXT, extraction_method TEXT";
 
+    /// <summary>The column a source row is looked up by: the hash of tenant and path, never the path itself.</summary>
+    private const string SourceIdColumn = "source_id";
+
     private readonly Lock _gate = new();
     private readonly IDatabase _database = database ?? throw new ArgumentNullException(nameof(database));
     private readonly string _tableName = TableValues.ValidateTableName(tableName);
@@ -138,7 +141,7 @@ public sealed class SharpCoreDbSourceRegistry(
 
         lock (_gate)
         {
-            var rows = Table().Select(TableValues.Identity("source_id", sourceId));
+            var rows = Table().Select(TableValues.Identity(SourceIdColumn, sourceId));
 
             if (rows.Count == 0)
             {
@@ -165,7 +168,7 @@ public sealed class SharpCoreDbSourceRegistry(
 
         lock (_gate)
         {
-            var rows = Table().Select(TableValues.Identity("source_id", sourceId));
+            var rows = Table().Select(TableValues.Identity(SourceIdColumn, sourceId));
 
             if (rows.Count == 0)
             {
@@ -198,11 +201,11 @@ public sealed class SharpCoreDbSourceRegistry(
     {
         // A path is a source's identity, so this is an upsert rather than an append: re-ingesting a path is a new version
         // of one source, and a row left behind would be a source that exists twice.
-        table.Delete(TableValues.Identity("source_id", record.SourceId));
+        table.Delete(TableValues.Identity(SourceIdColumn, record.SourceId));
         table.Insert(new Dictionary<string, object>
         {
             ["tenant"] = record.Tenant,
-            ["source_id"] = record.SourceId,
+            [SourceIdColumn] = record.SourceId,
             ["path"] = record.Path,
             ["content_hash"] = record.ContentHash,
             ["media_type"] = record.MediaType,
@@ -217,7 +220,7 @@ public sealed class SharpCoreDbSourceRegistry(
     private static SourceRecord Map(Dictionary<string, object> row) => new()
     {
         Tenant = TableValues.StringValue(row, "tenant"),
-        SourceId = TableValues.StringValue(row, "source_id"),
+        SourceId = TableValues.StringValue(row, SourceIdColumn),
         Path = TableValues.StringValue(row, "path"),
         ContentHash = TableValues.StringValue(row, "content_hash"),
         MediaType = TableValues.StringValue(row, "media_type"),

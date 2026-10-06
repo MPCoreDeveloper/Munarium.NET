@@ -161,7 +161,7 @@ public class SessionApiTests : IClassFixture<MunariumApiFactory>
                 < body.IndexOf("event: done", StringComparison.Ordinal),
             "progress must be reported before the turn's result");
 
-        var turn = JsonSerializer.Deserialize(DataLines(body).Last(), WireJson.Default.WireTurnResponse);
+        var turn = JsonSerializer.Deserialize(DataLines(body)[^1], WireJson.Default.WireTurnResponse);
 
         Assert.NotNull(turn);
         Assert.Equal(1, turn.Ordinal);
@@ -209,7 +209,7 @@ public class SessionApiTests : IClassFixture<MunariumApiFactory>
         Assert.Contains("event: error", body, StringComparison.Ordinal);
         Assert.DoesNotContain("event: done", body, StringComparison.Ordinal);
 
-        var problem = JsonSerializer.Deserialize(DataLines(body).Last(), WireJson.Default.WireProblem);
+        var problem = JsonSerializer.Deserialize(DataLines(body)[^1], WireJson.Default.WireProblem);
 
         Assert.NotNull(problem);
         Assert.Equal(409, problem.Status);

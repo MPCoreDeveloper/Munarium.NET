@@ -22,13 +22,13 @@ public class SharpCoreDbAuthoringDraftStoreTests
         // Read back through the codec rather than compared as boxed values: what matters is that the answer is the
         // number the author gave, not which numeric type a round trip through text happened to produce.
         Assert.Equal(120, Convert.ToInt32(read.Answers["retrieval.candidate_n"], CultureInfo.InvariantCulture));
-        Assert.Equal(false, read.Answers["access.uniform_public"]);
+        Assert.False(Convert.ToBoolean(read.Answers["access.uniform_public"], CultureInfo.InvariantCulture));
         Assert.Equal(saved.CreatedAt, read.CreatedAt);
         Assert.NotNull(read.UpdatedAt);
 
-        var levels = Assert.IsAssignableFrom<IReadOnlyDictionary<string, object?>>(read.Answers["access.area_levels"]);
-        var areas = Assert.IsAssignableFrom<IReadOnlyList<object?>>(read.Answers["prefix.areas"]);
-        var first = Assert.IsAssignableFrom<IReadOnlyDictionary<string, object?>>(areas[0]);
+        var levels = Assert.IsType<IReadOnlyDictionary<string, object?>>(read.Answers["access.area_levels"], exactMatch: false);
+        var areas = Assert.IsType<IReadOnlyList<object?>>(read.Answers["prefix.areas"], exactMatch: false);
+        var first = Assert.IsType<IReadOnlyDictionary<string, object?>>(areas[0], exactMatch: false);
 
         Assert.Equal(3L, levels["incidents"]);
         Assert.Equal("public/", first["path"]);

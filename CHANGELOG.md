@@ -82,7 +82,7 @@ packages carry source links, so a debugger steps into the exact commit a package
   reference types, and central package management.
 - The .NET analyzers and `SonarAnalyzer.CSharp` on every build with warnings as errors in
   shipping code, plus a SonarCloud job in CI.
-- **966 tests** across five suites, a **NativeAOT smoke test** published and run on linux-x64, win-x64
+- **968 tests** across five suites, a **NativeAOT smoke test** published and run on linux-x64, win-x64
   and osx-arm64, and a **packaging gate** (`tools/release-packages.ps1`) that reads the packages back
   before a release may push them.
 - A failing suite says which test failed: the platform's log is printed and uploaded, because a red

@@ -104,7 +104,7 @@ public class FactCodecTests
     [Fact]
     public void APayloadWrittenBeforeAFieldExistedStillDecodes()
     {
-        byte[] older = "claimId=c\nversionId=v\nclaimType=1\nlineage=l\nbody={}\nstatement=s\nactor=a\ngate=\nreason=\n"u8.ToArray();
+        var older = "claimId=c\nversionId=v\nclaimType=1\nlineage=l\nbody={}\nstatement=s\nactor=a\ngate=\nreason=\n"u8.ToArray();
 
         var fact = FactCodec.Decode(older);
 
@@ -157,7 +157,7 @@ public class FactCodecTests
     [Fact]
     public void AnUnknownProvenanceOrConfidenceIsRefusedRatherThanGuessed()
     {
-        byte[] payload = Encoding.UTF8.GetBytes(
+        var payload = Encoding.UTF8.GetBytes(
             "claimId=c\nversionId=v\nclaimType=1\nlineage=l\nprovenance=99\nconfidence=lots\nbody={}\n"
                 + "statement=s\nactor=a\ngate=\nreason=\n");
 
@@ -167,16 +167,13 @@ public class FactCodecTests
     [Fact]
     public void AnUnknownClaimTypeIsRefusedRatherThanGuessed()
     {
-        byte[] payload = "claimId=c\nversionId=v\nclaimType=99\nlineage=l\nbody={}\nstatement=s\nactor=a\ngate=\nreason=\n"u8.ToArray();
+        var payload = "claimId=c\nversionId=v\nclaimType=99\nlineage=l\nbody={}\nstatement=s\nactor=a\ngate=\nreason=\n"u8.ToArray();
 
         Assert.Throws<FormatException>(() => FactCodec.Decode(payload));
     }
 
     [Fact]
-    public void DecodingAMalformedPayloadThrows()
-    {
-        Assert.Throws<FormatException>(() => FactCodec.Decode("not-a-field"u8));
-    }
+    public void DecodingAMalformedPayloadThrows() => Assert.Throws<FormatException>(() => FactCodec.Decode("not-a-field"u8));
 
     [Fact]
     public void OnlyFactEventTypesAreRecognised()

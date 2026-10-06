@@ -50,6 +50,26 @@ public sealed record MaxTokensBudget(
     public readonly record struct Ceiling(string Name, string EnvironmentVariable);
 
     /// <summary>
+    /// The names the contract carries, one per ceiling, written once.
+    /// </summary>
+    /// <remarks>
+    /// Each name is read in four places - the list a deployment iterates, the range rule that refuses an unusable one, the
+    /// read that applies a replacement over the built-ins, and the read that puts a replacement back into names - so a
+    /// literal spelled four times is a name that can be misspelled in one of them and nowhere else.
+    /// </remarks>
+    private static class Names
+    {
+        internal const string TurnCompletion = "turn_completion";
+        internal const string QueryExpansion = "query_expansion";
+        internal const string CompleteDefault = "complete_default";
+        internal const string HealthAiProbe = "healthai_probe";
+        internal const string HierarchyClassifier = "hierarchy_classifier";
+        internal const string HierarchyIntent = "hierarchy_intent";
+        internal const string RunbookAdvisory = "runbook_advisory";
+        internal const string AuthoringAssist = "authoring_assist";
+    }
+
+    /// <summary>
     /// Every ceiling, in the order the contract names them.
     /// </summary>
     /// <remarks>
@@ -58,14 +78,14 @@ public sealed record MaxTokensBudget(
     /// </remarks>
     public static readonly IReadOnlyList<Ceiling> All =
     [
-        new("turn_completion", "MUNARIUM_MAX_TOKENS_TURN_COMPLETION"),
-        new("query_expansion", "MUNARIUM_MAX_TOKENS_QUERY_EXPANSION"),
-        new("complete_default", "MUNARIUM_MAX_TOKENS_COMPLETE_DEFAULT"),
-        new("healthai_probe", "MUNARIUM_MAX_TOKENS_HEALTHAI_PROBE"),
-        new("hierarchy_classifier", "MUNARIUM_MAX_TOKENS_HIERARCHY_CLASSIFIER"),
-        new("hierarchy_intent", "MUNARIUM_MAX_TOKENS_HIERARCHY_INTENT"),
-        new("runbook_advisory", "MUNARIUM_MAX_TOKENS_RUNBOOK_ADVISORY"),
-        new("authoring_assist", "MUNARIUM_MAX_TOKENS_AUTHORING_ASSIST"),
+        new(Names.TurnCompletion, "MUNARIUM_MAX_TOKENS_TURN_COMPLETION"),
+        new(Names.QueryExpansion, "MUNARIUM_MAX_TOKENS_QUERY_EXPANSION"),
+        new(Names.CompleteDefault, "MUNARIUM_MAX_TOKENS_COMPLETE_DEFAULT"),
+        new(Names.HealthAiProbe, "MUNARIUM_MAX_TOKENS_HEALTHAI_PROBE"),
+        new(Names.HierarchyClassifier, "MUNARIUM_MAX_TOKENS_HIERARCHY_CLASSIFIER"),
+        new(Names.HierarchyIntent, "MUNARIUM_MAX_TOKENS_HIERARCHY_INTENT"),
+        new(Names.RunbookAdvisory, "MUNARIUM_MAX_TOKENS_RUNBOOK_ADVISORY"),
+        new(Names.AuthoringAssist, "MUNARIUM_MAX_TOKENS_AUTHORING_ASSIST"),
     ];
 
     /// <summary>
@@ -90,14 +110,14 @@ public sealed record MaxTokensBudget(
     /// <returns>The reason each rule gives, or nothing when it holds.</returns>
     private static IEnumerable<string?> Refusals(MaxTokensBudget budget) =>
     [
-        Range("turn_completion", budget.TurnCompletion, 256, 16_384),
-        Range("query_expansion", budget.QueryExpansion, 32, 512),
-        Range("complete_default", budget.CompleteDefault, 1, 65_536),
-        Range("healthai_probe", budget.HealthAiProbe, 1, 65_536),
-        Range("hierarchy_classifier", budget.HierarchyClassifier, 1, 65_536),
-        Range("hierarchy_intent", budget.HierarchyIntent, 1, 65_536),
-        Range("runbook_advisory", budget.RunbookAdvisory, 1, 65_536),
-        Range("authoring_assist", budget.AuthoringAssist, 1, 65_536),
+        Range(Names.TurnCompletion, budget.TurnCompletion, 256, 16_384),
+        Range(Names.QueryExpansion, budget.QueryExpansion, 32, 512),
+        Range(Names.CompleteDefault, budget.CompleteDefault, 1, 65_536),
+        Range(Names.HealthAiProbe, budget.HealthAiProbe, 1, 65_536),
+        Range(Names.HierarchyClassifier, budget.HierarchyClassifier, 1, 65_536),
+        Range(Names.HierarchyIntent, budget.HierarchyIntent, 1, 65_536),
+        Range(Names.RunbookAdvisory, budget.RunbookAdvisory, 1, 65_536),
+        Range(Names.AuthoringAssist, budget.AuthoringAssist, 1, 65_536),
     ];
 
     /// <summary>Reads one ceiling against its range.</summary>
@@ -128,14 +148,14 @@ public sealed record MaxTokensBudget(
 
         var named = new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            ["turn_completion"] = baseBudget.TurnCompletion,
-            ["query_expansion"] = baseBudget.QueryExpansion,
-            ["complete_default"] = baseBudget.CompleteDefault,
-            ["healthai_probe"] = baseBudget.HealthAiProbe,
-            ["hierarchy_classifier"] = baseBudget.HierarchyClassifier,
-            ["hierarchy_intent"] = baseBudget.HierarchyIntent,
-            ["runbook_advisory"] = baseBudget.RunbookAdvisory,
-            ["authoring_assist"] = baseBudget.AuthoringAssist,
+            [Names.TurnCompletion] = baseBudget.TurnCompletion,
+            [Names.QueryExpansion] = baseBudget.QueryExpansion,
+            [Names.CompleteDefault] = baseBudget.CompleteDefault,
+            [Names.HealthAiProbe] = baseBudget.HealthAiProbe,
+            [Names.HierarchyClassifier] = baseBudget.HierarchyClassifier,
+            [Names.HierarchyIntent] = baseBudget.HierarchyIntent,
+            [Names.RunbookAdvisory] = baseBudget.RunbookAdvisory,
+            [Names.AuthoringAssist] = baseBudget.AuthoringAssist,
         };
 
         foreach (var ceiling in All)
@@ -158,14 +178,14 @@ public sealed record MaxTokensBudget(
         }
 
         var budget = new MaxTokensBudget(
-            named["turn_completion"],
-            named["query_expansion"],
-            named["complete_default"],
-            named["healthai_probe"],
-            named["hierarchy_classifier"],
-            named["hierarchy_intent"],
-            named["runbook_advisory"],
-            named["authoring_assist"]);
+            named[Names.TurnCompletion],
+            named[Names.QueryExpansion],
+            named[Names.CompleteDefault],
+            named[Names.HealthAiProbe],
+            named[Names.HierarchyClassifier],
+            named[Names.HierarchyIntent],
+            named[Names.RunbookAdvisory],
+            named[Names.AuthoringAssist]);
 
         return Refusal(budget) is { } reason
             ? throw new InvalidOperationException($"the ceilings this process is composed with are unusable: {reason}")

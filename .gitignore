@@ -509,3 +509,7 @@ test.txt
 # AOT smoke publish output
 artifacts/aot-*/
 artifacts/nugetout/
+
+# The SonarScanner's working directory: written by a local analysis, holding the engine, the rulesets and the report,
+# none of which is part of this repository.
+.sonarqube/

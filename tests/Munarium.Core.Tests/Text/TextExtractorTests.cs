@@ -1,5 +1,6 @@
 namespace Munarium.Core.Tests.Text;
 
+using System.Globalization;
 using System.IO.Compression;
 using System.Text;
 using Munarium.Text;
@@ -158,10 +159,7 @@ public class TextExtractorTests
     }
 
     [Fact]
-    public void AnEmptyMediaTypeIsRefused()
-    {
-        Assert.ThrowsAny<ArgumentException>(() => TextExtractor.CanExtract("  "));
-    }
+    public void AnEmptyMediaTypeIsRefused() => Assert.ThrowsAny<ArgumentException>(() => TextExtractor.CanExtract("  "));
 
     /// <summary>A DOCX comes out as blank-line-separated paragraphs, with split runs rejoined.</summary>
     /// <remarks>
@@ -284,18 +282,18 @@ public class TextExtractorTests
         for (var index = 0; index < objects.Length; index++)
         {
             offsets.Add(pdf.Length);
-            pdf.Append($"{index + 1} 0 obj\n{objects[index]}\nendobj\n");
+            pdf.Append(CultureInfo.InvariantCulture, $"{index + 1} 0 obj\n{objects[index]}\nendobj\n");
         }
 
         var xrefAt = pdf.Length;
-        pdf.Append($"xref\n0 {objects.Length + 1}\n0000000000 65535 f \n");
+        pdf.Append(CultureInfo.InvariantCulture, $"xref\n0 {objects.Length + 1}\n0000000000 65535 f \n");
 
         foreach (var offset in offsets)
         {
-            pdf.Append($"{offset:0000000000} 00000 n \n");
+            pdf.Append(CultureInfo.InvariantCulture, $"{offset:0000000000} 00000 n \n");
         }
 
-        pdf.Append($"trailer\n<< /Size {objects.Length + 1} /Root 1 0 R >>\nstartxref\n{xrefAt}\n%%EOF\n");
+        pdf.Append(CultureInfo.InvariantCulture, $"trailer\n<< /Size {objects.Length + 1} /Root 1 0 R >>\nstartxref\n{xrefAt}\n%%EOF\n");
 
         return Encoding.ASCII.GetBytes(pdf.ToString());
     }

@@ -56,10 +56,7 @@ public class ReciprocalRankFusionTests
     }
 
     [Fact]
-    public void IdenticalInputsFuseToAnIdenticalAnswerAndEnvelope()
-    {
-        Assert.Equal(Describe(Fuse()), Describe(Fuse()));
-    }
+    public void IdenticalInputsFuseToAnIdenticalAnswerAndEnvelope() => Assert.Equal(Describe(Fuse()), Describe(Fuse()));
 
     private static RetrievalResult Fuse() => ReciprocalRankFusion.Fuse(
         [[Chunk("a"), Chunk("b")], [Chunk("b"), Chunk("c")]],

@@ -46,6 +46,11 @@ public sealed class SharpCoreDbSessionStore(
         "tenant TEXT, session_id TEXT, ordinal LONG, uid TEXT, query TEXT, collections TEXT, hits TEXT, "
         + "envelope TEXT, completion TEXT, hierarchy TEXT, created_at TEXT";
 
+    /// <summary>The columns both tables are read and written by, in the order the schemas declare them.</summary>
+    private const string TenantColumn = "tenant";
+    private const string SessionIdColumn = "session_id";
+    private const string CreatedAtColumn = "created_at";
+
     private readonly Lock _gate = new();
     private readonly IDatabase _database = database ?? throw new ArgumentNullException(nameof(database));
     private readonly string _sessionsTable = TableValues.ValidateTableName(sessionsTable);
@@ -169,7 +174,7 @@ public sealed class SharpCoreDbSessionStore(
             IReadOnlyList<TurnRecord> turns =
             [
                 .. Table((_turnsTable, TurnsSchema))
-                    .Select(TableValues.Identity("session_id", sessionId))
+                    .Select(TableValues.Identity(SessionIdColumn, sessionId))
                     .Select(Turn)
                     .Where(turn => string.Equals(turn.Tenant, tenant, StringComparison.Ordinal))
                     .OrderBy(turn => turn.Ordinal)
@@ -224,7 +229,7 @@ public sealed class SharpCoreDbSessionStore(
 
         return new SessionRecord
         {
-            Tenant = TableValues.StringValue(row, "tenant"),
+            Tenant = TableValues.StringValue(row, TenantColumn),
             Id = id,
             Uid = TableValues.StringValue(row, "uid"),
             RunbookRef = TableValues.StringValue(row, "runbook_ref"),
@@ -236,15 +241,15 @@ public sealed class SharpCoreDbSessionStore(
                 names.Count > 0 ? names : null),
             State = SessionStateNames.ParseState(TableValues.StringValue(row, "state"))
                 ?? throw new FormatException($"session '{id}' is in a state this server does not know"),
-            CreatedAt = Moment(row, "created_at"),
+            CreatedAt = Moment(row, CreatedAtColumn),
             LastTurnAt = Moment(row, "last_turn_at"),
         };
     }
 
     private static TurnRecord Turn(Dictionary<string, object> row) => new()
     {
-        Tenant = TableValues.StringValue(row, "tenant"),
-        SessionId = TableValues.StringValue(row, "session_id"),
+        Tenant = TableValues.StringValue(row, TenantColumn),
+        SessionId = TableValues.StringValue(row, SessionIdColumn),
         Ordinal = (int)TableValues.LongValue(row, "ordinal"),
         Uid = TableValues.StringValue(row, "uid"),
         Query = TableValues.StringValue(row, "query"),
@@ -253,7 +258,7 @@ public sealed class SharpCoreDbSessionStore(
         EnvelopeJson = TableValues.StringValue(row, "envelope"),
         CompletionJson = Moment(row, "completion"),
         HierarchyJson = Moment(row, "hierarchy"),
-        CreatedAt = Moment(row, "created_at"),
+        CreatedAt = Moment(row, CreatedAtColumn),
     };
 
     private SessionRecord? Existing(string tenant, string sessionId) =>
@@ -277,7 +282,7 @@ public sealed class SharpCoreDbSessionStore(
     /// <returns>The ordinal the next turn should take, one-based.</returns>
     private int NextOrdinal(string sessionId) =>
         (int)(Table((_turnsTable, TurnsSchema))
-            .Select(TableValues.Identity("session_id", sessionId))
+            .Select(TableValues.Identity(SessionIdColumn, sessionId))
             .Select(row => TableValues.LongValue(row, "ordinal"))
             .DefaultIfEmpty(0L)
             .Max()
@@ -300,7 +305,7 @@ public sealed class SharpCoreDbSessionStore(
 
     private static Dictionary<string, object> SessionRow(SessionRecord session) => new()
     {
-        ["tenant"] = session.Tenant,
+        [TenantColumn] = session.Tenant,
         ["id"] = session.Id,
         ["uid"] = session.Uid,
         ["runbook_ref"] = session.RunbookRef,
@@ -310,14 +315,14 @@ public sealed class SharpCoreDbSessionStore(
         ["all_compartments"] = session.Access.AllCompartments ? 1L : 0L,
         ["runbooks"] = Joined(session.Access.Runbooks ?? []),
         ["state"] = session.State.ToWireName(),
-        ["created_at"] = session.CreatedAt ?? string.Empty,
+        [CreatedAtColumn] = session.CreatedAt ?? string.Empty,
         ["last_turn_at"] = session.LastTurnAt ?? string.Empty,
     };
 
     private static Dictionary<string, object> TurnRow(TurnRecord turn) => new()
     {
-        ["tenant"] = turn.Tenant,
-        ["session_id"] = turn.SessionId,
+        [TenantColumn] = turn.Tenant,
+        [SessionIdColumn] = turn.SessionId,
         ["ordinal"] = (long)turn.Ordinal,
         ["uid"] = turn.Uid,
         ["query"] = turn.Query,
@@ -326,7 +331,7 @@ public sealed class SharpCoreDbSessionStore(
         ["envelope"] = turn.EnvelopeJson,
         ["completion"] = turn.CompletionJson ?? string.Empty,
         ["hierarchy"] = turn.HierarchyJson ?? string.Empty,
-        ["created_at"] = turn.CreatedAt ?? string.Empty,
+        [CreatedAtColumn] = turn.CreatedAt ?? string.Empty,
     };
 
     private ITable Table((string Name, string Schema) table)

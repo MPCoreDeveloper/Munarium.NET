@@ -36,6 +36,9 @@ public sealed class SharpCoreDbAccessTokenAudit(
         "tenant TEXT, token_id TEXT, subject TEXT, level LONG, compartments TEXT, scopes TEXT, "
         + "runbooks TEXT, runbooks_scoped LONG, issued_at LONG, expires_at LONG, revoked_at LONG";
 
+    /// <summary>The column a capability's row is looked up by: the token id, which is what a withdrawal names.</summary>
+    private const string TokenIdColumn = "token_id";
+
     private readonly Lock _gate = new();
     private readonly IDatabase _database = database ?? throw new ArgumentNullException(nameof(database));
     private readonly string _tableName = TableValues.ValidateTableName(tableName);
@@ -90,7 +93,7 @@ public sealed class SharpCoreDbAccessTokenAudit(
     /// <returns>The row, or <see langword="null"/> when there is none.</returns>
     private static IssuedCapability? Existing(ITable table, string tokenId)
     {
-        var rows = table.Select(TableValues.Identity("token_id", tokenId)).ToList();
+        var rows = table.Select(TableValues.Identity(TokenIdColumn, tokenId)).ToList();
 
         return rows.Count == 0 ? null : Map(rows[0]);
     }
@@ -162,11 +165,11 @@ public sealed class SharpCoreDbAccessTokenAudit(
     {
         // An upsert rather than an append: a capability's identity is its token id, and a second row for one identity would
         // be two answers to whether it stands.
-        table.Delete(TableValues.Identity("token_id", row.TokenId));
+        table.Delete(TableValues.Identity(TokenIdColumn, row.TokenId));
         table.Insert(new Dictionary<string, object>
         {
             ["tenant"] = row.Tenant,
-            ["token_id"] = row.TokenId,
+            [TokenIdColumn] = row.TokenId,
             ["subject"] = row.Subject,
             ["level"] = row.Level,
             ["compartments"] = string.Join(UnitSeparator, row.Compartments),
@@ -191,7 +194,7 @@ public sealed class SharpCoreDbAccessTokenAudit(
     /// <returns>The row.</returns>
     private static IssuedCapability Map(Dictionary<string, object> row) => new()
     {
-        TokenId = TableValues.StringValue(row, "token_id"),
+        TokenId = TableValues.StringValue(row, TokenIdColumn),
         Tenant = TableValues.StringValue(row, "tenant"),
         Subject = TableValues.StringValue(row, "subject"),
         Level = (int)TableValues.LongValue(row, "level"),

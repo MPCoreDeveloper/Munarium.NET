@@ -74,10 +74,7 @@ public class FactLedgerTests
     }
 
     [Fact]
-    public async Task RebuildingTheSameFactsElsewhereProducesTheSameDigest()
-    {
-        Assert.Equal(await DigestOfRebuildAsync(), await DigestOfRebuildAsync());
-    }
+    public async Task RebuildingTheSameFactsElsewhereProducesTheSameDigest() => Assert.Equal(await DigestOfRebuildAsync(), await DigestOfRebuildAsync());
 
     [Fact]
     public async Task ABlockedFactCarriesItsVerdictIntoTheSlice()

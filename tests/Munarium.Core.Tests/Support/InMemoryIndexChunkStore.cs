@@ -9,7 +9,7 @@ using Munarium.Retrieval;
 /// </remarks>
 public sealed class InMemoryIndexChunkStore : IIndexChunkStore
 {
-    private readonly Dictionary<string, List<PersistedChunk>> _versions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<PersistedChunk>> _versions = [with(StringComparer.Ordinal)];
 
     /// <summary>Gets how many times a version was written to.</summary>
     public int Writes { get; private set; }

@@ -39,14 +39,12 @@ internal sealed class RecordingDocumentIntelligence : IDocumentIntelligence
     {
         Asked.Add(mediaType);
 
-        if (Failing)
-        {
-            throw new HttpRequestException("the service is down, which must not fail a build");
-        }
+        var answer = Recovered is { Length: > 0 } text
+            ? new AnalyzedDocument(text, PagesAnalyzed: 3, "recording/scan@1")
+            : AnalyzedDocument.Empty("recording/scan@1");
 
-        return ValueTask.FromResult(
-            Recovered is { Length: > 0 } text
-                ? new AnalyzedDocument(text, PagesAnalyzed: 3, "recording/scan@1")
-                : AnalyzedDocument.Empty("recording/scan@1"));
+        return Failing
+            ? throw new HttpRequestException("the service is down, which must not fail a build")
+            : ValueTask.FromResult(answer);
     }
 }

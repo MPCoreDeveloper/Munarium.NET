@@ -36,7 +36,7 @@ public static class ClaimResolution
                 "A limit cannot be negative; use null for no limit.");
         }
 
-        IReadOnlyList<ClaimStatus> statuses = request.Statuses.Count == 0
+        var statuses = request.Statuses.Count == 0
             ? [ClaimStatus.Accepted]
             : request.Statuses;
 

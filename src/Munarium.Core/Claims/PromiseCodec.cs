@@ -23,6 +23,9 @@ public static class PromiseCodec
     /// <summary>The event type recorded when a promise is fulfilled, expired or violated.</summary>
     public const string FulfilledEventType = "promise.fulfilled";
 
+    /// <summary>What this payload is, for the message a missing field produces.</summary>
+    private const string What = "A promise";
+
     /// <summary>
     /// Determines whether an event type carries a promise.
     /// </summary>
@@ -81,14 +84,14 @@ public static class PromiseCodec
 
         return new Promise
         {
-            Id = PayloadJson.RequiredText(root, "promise_id", "A promise"),
-            VersionId = PayloadJson.RequiredText(root, "version_id", "A promise"),
-            Key = PayloadJson.RequiredText(root, "key", "A promise"),
-            Kind = PayloadJson.RequiredText(root, "kind", "A promise"),
-            Description = PayloadJson.RequiredText(root, "description", "A promise"),
+            Id = PayloadJson.RequiredText(root, "promise_id", What),
+            VersionId = PayloadJson.RequiredText(root, "version_id", What),
+            Key = PayloadJson.RequiredText(root, "key", What),
+            Kind = PayloadJson.RequiredText(root, "kind", What),
+            Description = PayloadJson.RequiredText(root, "description", What),
             OriginScope = PayloadJson.Text(root, "origin_scope"),
             DueScope = PayloadJson.Text(root, "due_scope"),
-            Status = StatusOf(PayloadJson.RequiredNumber(root, "status", "A promise"), fulfilledAt),
+            Status = StatusOf(PayloadJson.RequiredNumber(root, "status", What), fulfilledAt),
             Sequence = position,
             FulfilledSequence = fulfilledAt,
         };

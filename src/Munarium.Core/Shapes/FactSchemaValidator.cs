@@ -1,7 +1,7 @@
+namespace Munarium.Shapes;
+
 using System.Text.Json;
 using System.Text.RegularExpressions;
-
-namespace Munarium.Shapes;
 
 /// <summary>
 /// The result of validating a fact body against a shape's schema.

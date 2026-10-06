@@ -1,5 +1,6 @@
 namespace Munarium.Server.Tests;
 
+using System.Globalization;
 using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Text;
@@ -271,8 +272,8 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     [Fact]
     public void AKeyIsSpelledTheContractsWayInARequestBody()
     {
-        string key = LedgerIds.New();
-        string field = $"\"idempotency_key\":\"{key}\"";
+        var key = LedgerIds.New();
+        var field = $"\"idempotency_key\":\"{key}\"";
 
         Assert.Contains(
             field,
@@ -1319,6 +1320,16 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
 
         return await _client.SendAsync(request);
     }
+
+    /// <summary>
+    /// A document this deployment has no extractor for is refused before anything is stored, and the refusal names the
+    /// media type it could not read.
+    /// </summary>
+    /// <remarks>
+    /// The absence is checked after the refusal rather than assumed: refusing the write and storing it anyway would
+    /// leave a source that can never be retrieved and a row that promises otherwise.
+    /// </remarks>
+    [Fact]
     public async Task ADocumentWithNoExtractorIsRefusedAndNothingIsStored()
     {
         using var put = await _client.PutAsJsonAsync(
@@ -1820,7 +1831,7 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     [Fact]
     public async Task ARetriedCounterUnderOneKeyIsAnsweredWithTheTotalThatLanded()
     {
-        string key = LedgerIds.New();
+        var key = LedgerIds.New();
 
         using var first = await _client.PostAsJsonAsync(
             "/v1/versions/version-counter-keyed/counters",
@@ -1849,7 +1860,7 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     [Fact]
     public async Task ARetriedLockUnderOneKeyIsAnsweredWithTheValueThatWasLocked()
     {
-        string key = LedgerIds.New();
+        var key = LedgerIds.New();
 
         using var locked = await _client.PostAsJsonAsync(
             "/v1/versions/version-anchor-keyed/anchors",
@@ -1879,7 +1890,7 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     [Fact]
     public async Task ARetriedPromiseUnderOneKeyOpensOnePromise()
     {
-        string key = LedgerIds.New();
+        var key = LedgerIds.New();
 
         WirePromiseRegistration registration =
             new("audit-report", "deliverable", "an audit report", "release", "compliance", key);
@@ -1912,9 +1923,9 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     [Fact]
     public async Task ARetriedReleaseUnderOneKeyIsNotAnsweredAsNothingReleased()
     {
-        string locked = LedgerIds.New();
-        string released = LedgerIds.New();
-        string path = "/v1/versions/version-release-keyed/anchors/service.api_version/release";
+        var locked = LedgerIds.New();
+        var released = LedgerIds.New();
+        var path = "/v1/versions/version-release-keyed/anchors/service.api_version/release";
 
         await _client.PostAsJsonAsync(
             "/v1/versions/version-release-keyed/anchors",
@@ -1937,8 +1948,8 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     [Fact]
     public async Task ARetriedFulfilmentUnderOneKeyIsNotSettledTwice()
     {
-        string key = LedgerIds.New();
-        string path = "/v1/versions/version-fulfil-keyed/promises/audit-report/fulfill";
+        var key = LedgerIds.New();
+        var path = "/v1/versions/version-fulfil-keyed/promises/audit-report/fulfill";
 
         await _client.PostAsJsonAsync(
             "/v1/versions/version-fulfil-keyed/promises",
@@ -1961,7 +1972,7 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     [Fact]
     public async Task ARetriedVersionCreationIsAnsweredWithTheVersionItCreated()
     {
-        string key = LedgerIds.New();
+        var key = LedgerIds.New();
 
         using var first = await PostVersionAsync(
             new WireVersionRequest("version-created-keyed", string.Empty, string.Empty, "keyed", "tester", key));
@@ -1982,7 +1993,7 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
     [Fact]
     public async Task AVersionWithAGeneratedIdCanBeRetriedUnderOneKey()
     {
-        string key = LedgerIds.New();
+        var key = LedgerIds.New();
 
         using var first = await PostVersionAsync(
             new WireVersionRequest(string.Empty, string.Empty, string.Empty, "generated", "tester", key));
@@ -2037,7 +2048,7 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
 
         foreach (var paragraph in paragraphs)
         {
-            xml.Append($"<w:p><w:r><w:t>{paragraph}</w:t></w:r></w:p>");
+            xml.Append(CultureInfo.InvariantCulture, $"<w:p><w:r><w:t>{paragraph}</w:t></w:r></w:p>");
         }
 
         xml.Append("</w:body></w:document>");
@@ -2074,18 +2085,19 @@ public class MunariumApiTests(MunariumApiFactory factory) : IClassFixture<Munari
         for (var index = 0; index < objects.Length; index++)
         {
             offsets.Add(pdf.Length);
-            pdf.Append($"{index + 1} 0 obj\n{objects[index]}\nendobj\n");
+            pdf.Append(CultureInfo.InvariantCulture, $"{index + 1} 0 obj\n{objects[index]}\nendobj\n");
         }
 
         var xrefAt = pdf.Length;
-        pdf.Append($"xref\n0 {objects.Length + 1}\n0000000000 65535 f \n");
+        pdf.Append(CultureInfo.InvariantCulture, $"xref\n0 {objects.Length + 1}\n0000000000 65535 f \n");
 
         foreach (var offset in offsets)
         {
-            pdf.Append($"{offset:0000000000} 00000 n \n");
+            pdf.Append(CultureInfo.InvariantCulture, $"{offset:0000000000} 00000 n \n");
         }
 
-        pdf.Append($"trailer\n<< /Size {objects.Length + 1} /Root 1 0 R >>\nstartxref\n{xrefAt}\n%%EOF\n");
+        pdf.Append(CultureInfo.InvariantCulture, $"trailer\n<< /Size {objects.Length + 1} /Root 1 0 R >>\nstartxref\n{xrefAt}\n%%EOF\n");
 
         return Encoding.ASCII.GetBytes(pdf.ToString());
-    }}
+    }
+}

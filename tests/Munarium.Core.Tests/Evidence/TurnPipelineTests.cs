@@ -46,13 +46,15 @@ public class TurnPipelineTests
                 }
             }));
 
-        var reportedAt = At(reported, progress => progress is TurnComposed);
+        var composedAt = At(reported, progress => progress is TurnComposed);
+        var coverageAt = AtCoverage(reported);
 
+        Assert.True(coverageAt >= 0, "the turn reports the hierarchy's coverage");
         Assert.True(
-            reportedAt > At(reported, progress => progress is CoverageReported),
+            composedAt > coverageAt,
             "the layers conclude before their blocks are composed");
         Assert.True(
-            reportedAt < At(reported, progress => progress is TurnCompleted),
+            composedAt < At(reported, progress => progress is TurnCompleted),
             "the context is composed before anything is paid for");
 
         // What the event says: one layer put a context together, and nothing was dropped to do it.
@@ -69,6 +71,18 @@ public class TurnPipelineTests
     /// <returns>The position.</returns>
     private static int At(List<TurnProgress> reported, Predicate<TurnProgress> match) =>
         reported.FindIndex(match);
+
+    /// <summary>Where the hierarchy's coverage event sits, or -1 when the turn reported none.</summary>
+    /// <param name="reported">What the turn reported.</param>
+    /// <returns>The position.</returns>
+    /// <remarks>
+    /// Read through the hierarchy's own union, which is how the wire reads these events too: the hierarchy's stages are a
+    /// union nested inside the turn's, so no case of the turn's <em>is</em> this event - the turn reports a stage of the
+    /// hierarchy, and the stage is the one that says what the layers covered. Asked as one pattern over the turn, the
+    /// compiler refuses it (CS8121), which is the same thing that made the previous form of this assertion vacuous.
+    /// </remarks>
+    private static int AtCoverage(List<TurnProgress> reported) =>
+        reported.FindIndex(progress => progress is HierarchyProgress hierarchy && hierarchy is CoverageReported);
 
     /// <summary>
     /// An answer that quotes what it was served and cites what it was served costs one completion - not two, not

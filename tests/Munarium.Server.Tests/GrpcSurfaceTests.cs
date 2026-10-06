@@ -6,12 +6,10 @@ using Munarium.Ledger;
 using Munarium.Retrieval;
 using Munarium.Wire;
 using Munarium.Wire.Generated;
-
-// The kernel's source ingest type is not the contract's message of the same name; this file only needs the key.
-using SourceKey = Munarium.Sources.SourceKey;
-
 // The kernel's evidence types share names with the generated evidence messages, so the kernel's namespace is aliased.
 using Evidence = Munarium.Evidence;
+// The kernel's source ingest type is not the contract's message of the same name; this file only needs the key.
+using SourceKey = Munarium.Sources.SourceKey;
 
 /// <summary>
 /// The gRPC surface, exercised through the client SharpPortico generated from the same specification
@@ -543,7 +541,7 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
     public async Task AKeyedCommandIsAnsweredRatherThanDoneAgainOverGrpc() =>
         await WithClient(async client =>
         {
-            string released = LedgerIds.New();
+            var released = LedgerIds.New();
 
             await client.LockAnchorAsync(new LockAnchorRequest
             {
@@ -571,7 +569,7 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
 
             Assert.True(retried.Data.Released);
 
-            string counted = LedgerIds.New();
+            var counted = LedgerIds.New();
 
             await client.RecordCounterAsync(new RecordCounterRequest
             {
@@ -688,7 +686,7 @@ public class GrpcSurfaceTests(MunariumApiFactory factory) : IClassFixture<Munari
     [Fact]
     public async Task ARetriedClaimOverGrpcIsAnsweredRatherThanWrittenTwice()
     {
-        string key = LedgerIds.New();
+        var key = LedgerIds.New();
 
         await WithClient(async client =>
         {

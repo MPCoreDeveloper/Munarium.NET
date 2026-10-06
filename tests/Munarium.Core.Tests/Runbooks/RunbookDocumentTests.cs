@@ -42,10 +42,7 @@ public class RunbookDocumentTests
     }
 
     [Fact]
-    public void ADocumentWithNeitherShapeNorCollectionsSpansNothing()
-    {
-        Assert.Empty(new RunbookSpec().EffectiveCollections);
-    }
+    public void ADocumentWithNeitherShapeNorCollectionsSpansNothing() => Assert.Empty(new RunbookSpec().EffectiveCollections);
 
     [Fact]
     public void TheExecutionOrderDefaultsToStepMajor()

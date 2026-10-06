@@ -174,6 +174,14 @@ public class IngestRunnerTests
         Assert.Equal("pdf-text", ingested.Record.ExtractionMethod);
     }
 
+    /// <summary>
+    /// A document at a path that already carries one replaces what was there, and the replacement is indexed.
+    /// </summary>
+    /// <remarks>
+    /// The path is the identity of a source, and what it carries is whatever was stored under it last - so the count
+    /// of rows stays where it was and the index answers with the new text rather than with both.
+    /// </remarks>
+    [Fact]
     public async Task AChangedDocumentAtTheSamePathReplacesTheSourceAndIsIndexed()
     {
         var fixture = Fixture();

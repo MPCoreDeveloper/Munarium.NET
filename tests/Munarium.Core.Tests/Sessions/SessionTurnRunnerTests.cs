@@ -44,22 +44,22 @@ public class SessionTurnRunnerTests
         bool withProfile = false,
         ModelQueryExpansionSpec? expansion = null,
         CollectionSelectionSpec? selection = null) => new()
-    {
-        ApiVersion = "munarium.dev/v2",
-        Kind = "Runbook",
-        Metadata = new RunbookMeta { Name = "northgate", Version = 3 },
-        Spec = new RunbookSpec
         {
-            Collections =
+            ApiVersion = "munarium.dev/v2",
+            Kind = "Runbook",
+            Metadata = new RunbookMeta { Name = "northgate", Version = 3 },
+            Spec = new RunbookSpec
+            {
+                Collections =
             [
                 new CollectionSpec { Name = "contracts", Shape = "cuad-contracts@3", AccessLevel = 2 },
                 new CollectionSpec { Name = "minutes", Shape = "minutes@1", AccessLevel = 4 },
             ],
 
-            // The step runs only when the runbook both declares it and pins the task that widens a query, which is the
-            // original's rule: a declaration without a task level is a profile asking for something no model was named
-            // for.
-            Models = expansion is null
+                // The step runs only when the runbook both declares it and pins the task that widens a query, which is the
+                // original's rule: a declaration without a task level is a profile asking for something no model was named
+                // for.
+                Models = expansion is null
                 ? new ModelsSpec()
                 : new ModelsSpec
                 {
@@ -68,13 +68,13 @@ public class SessionTurnRunnerTests
                         [TaskLevels.QueryExpansion] = new ModelSpec(),
                     },
                 },
-            Retrieval = new RetrievalSpec
-            {
-                TopK = 5,
-                CollectionSelection = selection,
-                ModelQueryExpansion = expansion,
-                DefaultResearchProfile = withProfile ? "register-first" : null,
-                ResearchProfiles = withProfile
+                Retrieval = new RetrievalSpec
+                {
+                    TopK = 5,
+                    CollectionSelection = selection,
+                    ModelQueryExpansion = expansion,
+                    DefaultResearchProfile = withProfile ? "register-first" : null,
+                    ResearchProfiles = withProfile
                     ?
                     [
                         new ResearchProfile
@@ -93,14 +93,14 @@ public class SessionTurnRunnerTests
                         },
                     ]
                     : [],
+                },
+                Completion = new CompletionSpec
+                {
+                    PromptTemplate = "Context:\n{context}\n\nQ: {query}",
+                    Verification = new VerificationSpec { Quotes = true, Citations = true, MaxRetries = 1 },
+                },
             },
-            Completion = new CompletionSpec
-            {
-                PromptTemplate = "Context:\n{context}\n\nQ: {query}",
-                Verification = new VerificationSpec { Quotes = true, Citations = true, MaxRetries = 1 },
-            },
-        },
-    };
+        };
 
     private static SessionTurnRunner Runner(ISessionStore sessions, IModelProvider model) =>
         Runner(sessions, model, new StubIndexHost());
@@ -416,7 +416,7 @@ public class SessionTurnRunnerTests
                 }
             }));
 
-        var expected = new[] { (Collection: "contracts", Hits: 2, Skipped: false), ("minutes", 0, true) };
+        var expected = new[] { ("contracts", 2, false), ("minutes", 0, true) };
 
         Assert.Equal(expected, probed.Select(entry => (entry.Collection, entry.Hits, entry.Skipped)));
 
@@ -613,14 +613,14 @@ public class SessionTurnRunnerTests
     {
         public List<TurnRecord> Turns { get; } = [];
 
-        public SessionRecord? Session { get; private set; }
+        public SessionRecord? Stored { get; private set; }
 
         public ValueTask<SessionRecord> CreateAsync(SessionRecord session, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Session ??= session with { CreatedAt = "2026-09-18T00:00:00Z" };
+            Stored ??= session with { CreatedAt = "2026-09-18T00:00:00Z" };
 
-            return ValueTask.FromResult(Session);
+            return ValueTask.FromResult(Stored);
         }
 
         public ValueTask<SessionRecord?> GetAsync(
@@ -630,7 +630,7 @@ public class SessionTurnRunnerTests
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            return ValueTask.FromResult(Session);
+            return ValueTask.FromResult(Stored);
         }
 
         public ValueTask<int> AppendTurnAsync(TurnRecord turn, CancellationToken cancellationToken = default)
@@ -648,12 +648,12 @@ public class SessionTurnRunnerTests
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (Session is not { State: SessionState.Open } open)
+            if (Stored is not { State: SessionState.Open } open)
             {
                 return ValueTask.FromResult(false);
             }
 
-            Session = open with { State = SessionState.Closed };
+            Stored = open with { State = SessionState.Closed };
 
             return ValueTask.FromResult(true);
         }
@@ -677,7 +677,7 @@ public class SessionTurnRunnerTests
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            return ValueTask.FromResult<IReadOnlyList<SessionRecord>>(Session is null ? [] : [Session]);
+            return ValueTask.FromResult<IReadOnlyList<SessionRecord>>(Stored is null ? [] : [Stored]);
         }
     }
 

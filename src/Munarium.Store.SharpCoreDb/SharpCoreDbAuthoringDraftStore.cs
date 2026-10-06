@@ -29,6 +29,9 @@ public sealed class SharpCoreDbAuthoringDraftStore(
     private const string Schema =
         "draft_key TEXT, name TEXT, pattern_id TEXT, answers TEXT, created_at TEXT, updated_at TEXT";
 
+    /// <summary>The column a draft is looked up by.</summary>
+    private const string DraftKeyColumn = "draft_key";
+
     private readonly Lock _gate = new();
     private readonly IDatabase _database = database ?? throw new ArgumentNullException(nameof(database));
     private readonly string _tableName = TableValues.ValidateTableName(tableName);
@@ -101,7 +104,7 @@ public sealed class SharpCoreDbAuthoringDraftStore(
                 return ValueTask.FromResult(false);
             }
 
-            table.Delete(TableValues.Identity("draft_key", Key(name)));
+            table.Delete(TableValues.Identity(DraftKeyColumn, Key(name)));
             Persist();
 
             return ValueTask.FromResult(true);
@@ -114,7 +117,7 @@ public sealed class SharpCoreDbAuthoringDraftStore(
     /// <returns>The draft, or <see langword="null"/> when there is none or the row is another draft.</returns>
     private static AuthoringDraft? Row(ITable table, string name)
     {
-        var rows = table.Select(TableValues.Identity("draft_key", Key(name))).ToList();
+        var rows = table.Select(TableValues.Identity(DraftKeyColumn, Key(name))).ToList();
 
         if (rows.Count == 0)
         {
@@ -131,10 +134,10 @@ public sealed class SharpCoreDbAuthoringDraftStore(
     /// <param name="draft">The draft to write.</param>
     private static void Write(ITable table, AuthoringDraft draft)
     {
-        table.Delete(TableValues.Identity("draft_key", Key(draft.Name)));
+        table.Delete(TableValues.Identity(DraftKeyColumn, Key(draft.Name)));
         table.Insert(new Dictionary<string, object>
         {
-            ["draft_key"] = Key(draft.Name),
+            [DraftKeyColumn] = Key(draft.Name),
             ["name"] = draft.Name,
             ["pattern_id"] = draft.PatternId ?? string.Empty,
             ["answers"] = AuthoringAnswers.ToJson(draft.Answers),

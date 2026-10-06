@@ -91,7 +91,7 @@ public sealed class AnchorLedger(IStorageBackend storage, MeshSnapshotBuilder sn
             .BuildAsync(versionId, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
-        AnchorReleaseOutcome outcome = snapshot.Anchors.ContainsKey(detailKey)
+        var outcome = snapshot.Anchors.ContainsKey(detailKey)
             ? await AppendReleaseAsync(versionId, detailKey, releasedAtScope, cancellationToken).ConfigureAwait(false)
             : new AnchorNotLocked(detailKey);
 

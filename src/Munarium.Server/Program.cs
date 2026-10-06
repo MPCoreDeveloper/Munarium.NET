@@ -3,9 +3,9 @@
 // The contract itself is openapi/munarium.v1.yaml, and it is the same specification the
 // gRPC/protobuf surface is generated from - so a change to the contract is a change to one file.
 
+using System.Text.Json;
 using Munarium.Server;
 using Munarium.Wire;
-using System.Text.Json;
 
 var builder = WebApplication.CreateSlimBuilder(args);
 

@@ -2,7 +2,7 @@ namespace Munarium.Runbooks.Tests;
 
 using System.Text.Json;
 
-/// <summary>Tests for materialization: answers in, documents out, and a TODO for whatever is missing.</summary>
+/// <summary>Tests for materialization: answers in, documents out, and an open item for whatever is still missing.</summary>
 /// <remarks>
 /// The proof is the one the original makes: every emitted document is read back through the reader a deployment applies
 /// it with. The assertions beyond that are over the chosen model where its names are this port's own, and over the text

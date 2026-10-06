@@ -54,6 +54,11 @@ jobs:
       # The SonarScanner for .NET does not read sonar-project.properties; every
       # property is passed on `begin`. The project key and organization must match
       # the project you created on SonarCloud.
+      #
+      # Two directories are excluded because they are not this repository's code. `.agents/` and `_bmad/` are the BMAD
+      # skill and agent bundle, taken whole from bmad-code-org/BMAD-METHOD - skills-lock.json pins it by hash - and
+      # analysing it reported 432 findings about somebody else's Python, JavaScript and CSS, none of which a change here
+      # could act on. What this repository is, is src/ and tests/, and that is what the analysis reports on.
       - name: SonarScanner begin
         if: env.SONAR_TOKEN != ''
         run: >
@@ -64,7 +69,7 @@ jobs:
           /d:sonar.token="$SONAR_TOKEN"
           /d:sonar.sourceEncoding="UTF-8"
           /d:sonar.scm.provider="git"
-          /d:sonar.exclusions="**/bin/**,**/obj/**,**/artifacts/**,**/*.g.cs,**/*.Designer.cs"
+          /d:sonar.exclusions="**/bin/**,**/obj/**,**/artifacts/**,**/.sonarqube/**,**/*.g.cs,**/*.Designer.cs,**/.agents/**,**/_bmad/**"
           /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml"
           /d:sonar.cs.vstest.reportsPaths="**/TestResults/*.trx"
 

@@ -64,14 +64,20 @@ jobs:
       - name: Test
         run: dotnet test Munarium.slnx -c $CONFIGURATION --no-build
 
+      # The version is read out of the event and never interpolated into the script: `${{ }}` is substituted
+      # before the shell sees the line, so a suffix this workflow accepts from a caller would become code.
+      # An env assignment is data, and "$VERSION_SUFFIX" is a parameter.
       - name: Pack
         shell: bash
+        env:
+          VERSION_VALUE: ${{ steps.version.outputs.value }}
+          VERSION_SUFFIX: ${{ inputs.version-suffix }}
         run: |
           ARGS=(-c "$CONFIGURATION" --no-build -o "$PACKAGE_OUTPUT")
-          if [[ -n "${{ steps.version.outputs.value }}" ]]; then
-            ARGS+=("-p:Version=${{ steps.version.outputs.value }}")
-          elif [[ -n "${{ inputs.version-suffix }}" ]]; then
-            ARGS+=("-p:VersionSuffix=${{ inputs.version-suffix }}")
+          if [[ -n "$VERSION_VALUE" ]]; then
+            ARGS+=("-p:Version=$VERSION_VALUE")
+          elif [[ -n "$VERSION_SUFFIX" ]]; then
+            ARGS+=("-p:VersionSuffix=$VERSION_SUFFIX")
           fi
           dotnet pack Munarium.slnx "${ARGS[@]}"
 
@@ -81,10 +87,12 @@ jobs:
       # moved nothing before NuGet, where it could never be corrected.
       - name: Check the packages
         shell: bash
+        env:
+          VERSION_VALUE: ${{ steps.version.outputs.value }}
         run: |
           RELEASE_ARGS=(-Configuration "$CONFIGURATION" -CheckOnly -Output "$PACKAGE_OUTPUT")
-          if [[ -n "${{ steps.version.outputs.value }}" ]]; then
-            RELEASE_ARGS+=(-Version "${{ steps.version.outputs.value }}")
+          if [[ -n "$VERSION_VALUE" ]]; then
+            RELEASE_ARGS+=(-Version "$VERSION_VALUE")
           fi
           pwsh tools/release-packages.ps1 "${RELEASE_ARGS[@]}"
 

@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Munarium.Access;
+using Munarium.Authoring;
 using Munarium.Budgets;
 using Munarium.Claims;
 using Munarium.Commands;
@@ -14,20 +15,18 @@ using Munarium.Evidence;
 using Munarium.Facts;
 using Munarium.Governance;
 using Munarium.Idempotency;
-using Munarium.Authoring;
 using Munarium.Ledger;
-using Munarium.Providers;
 using Munarium.Promises;
+using Munarium.Providers;
 using Munarium.Retrieval;
 using Munarium.Runbooks;
 using Munarium.Sessions;
-
-// The kernel's runbook namespace and the runbook reader share a name, and both declare a Severity: the wire's findings
-// are the claims plane's, so that one keeps the short name here.
-using Severity = Munarium.Claims.Severity;
 using Munarium.Shapes;
 using Munarium.Sources;
 using Munarium.Versions;
+// The kernel's runbook namespace and the runbook reader share a name, and both declare a Severity: the wire's findings
+// are the claims plane's, so that one keeps the short name here.
+using Severity = Munarium.Claims.Severity;
 
 /// <summary>
 /// The one implementation behind every transport.
@@ -73,6 +72,12 @@ public sealed class MunariumOperations(
 {
     /// <summary>The wire contract version this implementation speaks.</summary>
     public const string Contract = "mmp.v1";
+
+    /// <summary>The date format the contract carries, which is the one a caller can read back.</summary>
+    private const string IsoDate = "yyyy-MM-dd";
+
+    /// <summary>The finding a draft's set answers with when it carries no runbook at all.</summary>
+    private const string NoRunbookInSet = "the materialized set carries no runbook";
 
     /// <summary>How long the readiness probe waits for the store before calling the deployment not ready.</summary>
     /// <remarks>
@@ -437,7 +442,7 @@ public sealed class MunariumOperations(
 
         if (RunbookEntry(set).Yaml is not { } yaml)
         {
-            return InvalidDraft(draft.Name, "the materialized set carries no runbook");
+            return InvalidDraft(draft.Name, NoRunbookInSet);
         }
 
         var (suggestions, note) = await AdviseAsync(request, set, yaml, cancellationToken)
@@ -625,7 +630,7 @@ public sealed class MunariumOperations(
 
         if (RunbookEntry(set).Yaml is not { } yaml)
         {
-            return InvalidDraft(draft.Name, "the materialized set carries no runbook");
+            return InvalidDraft(draft.Name, NoRunbookInSet);
         }
 
         if (RunbookReader.Read(yaml) is not ({ } document, null))
@@ -716,7 +721,7 @@ public sealed class MunariumOperations(
 
         if (RunbookEntry(set) is not ({ } runbookPath, { } yaml))
         {
-            return InvalidDraft(draft.Name, "the materialized set carries no runbook");
+            return InvalidDraft(draft.Name, NoRunbookInSet);
         }
 
         if (RunbookReader.Read(yaml) is not ({ } document, null))
@@ -825,7 +830,7 @@ public sealed class MunariumOperations(
 
         if (Runbook(set) is not { } yaml)
         {
-            return InvalidDraft(draft.Name, "the materialized set carries no runbook");
+            return InvalidDraft(draft.Name, NoRunbookInSet);
         }
 
         var (document, unreadable) = RunbookReader.Read(yaml);
@@ -1410,7 +1415,7 @@ public sealed class MunariumOperations(
             snapshot.AsOfSequence?.Value ?? 0,
             snapshot.AsOfDate ?? string.Empty,
             Timestamp(snapshot.WrittenAt),
-            snapshot.WrittenOn?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty,
+            snapshot.WrittenOn?.ToString(IsoDate, CultureInfo.InvariantCulture) ?? string.Empty,
             [.. snapshot.Facts.Select(ClaimOf)],
             [.. snapshot.Anchors.Values.Select(AnchorOf)],
             [.. snapshot.Digests.Select(DigestOf)],
@@ -1860,7 +1865,7 @@ public sealed class MunariumOperations(
         var label = request.Label.Trim();
 
         if (asOf.Length > 0 &&
-            !DateOnly.TryParseExact(asOf, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+            !DateOnly.TryParseExact(asOf, IsoDate, CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
         {
             return new WireProblem(
                 InvalidRequestProblem, "as_of_date must be a date as YYYY-MM-DD.", Status: 400, 0, 0);
@@ -3988,7 +3993,7 @@ public sealed class MunariumOperations(
         }
 
         if (!DateOnly.TryParseExact(
-                asOfDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+                asOfDate, IsoDate, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
         {
             return (SequenceNumber.Zero, new WireProblem(
                 InvalidRequestProblem, "as_of_date must be a date as YYYY-MM-DD.", Status: 400, 0, 0));
@@ -4019,7 +4024,7 @@ public sealed class MunariumOperations(
         return new WireVersion(
             version.VersionId,
             version.ParentVersionId,
-            version.AsOfDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty,
+            version.AsOfDate?.ToString(IsoDate, CultureInfo.InvariantCulture) ?? string.Empty,
             version.Label,
             head.Value);
     }
@@ -4486,7 +4491,10 @@ public sealed class MunariumOperations(
         ArgumentNullException.ThrowIfNull(budgets);
 
         var asked = Budget(budgets);
-        var reason = budgets is null ? "the ceilings are required" : MaxTokensBudget.Refusal(asked);
+
+        // No null branch here: a caller that sends no ceilings is refused by the guard above rather than by a message
+        // this method could only reach by not being called at all.
+        var reason = MaxTokensBudget.Refusal(asked);
 
         if (reason is not null)
         {

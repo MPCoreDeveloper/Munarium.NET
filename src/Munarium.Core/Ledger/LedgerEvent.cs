@@ -1,6 +1,6 @@
-using System.Text;
-
 namespace Munarium.Ledger;
+
+using System.Text;
 
 /// <summary>
 /// An event to append to a stream: a type discriminator and its serialized body.

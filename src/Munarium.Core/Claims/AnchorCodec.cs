@@ -21,6 +21,9 @@ public static class AnchorCodec
     /// <summary>The event type recorded when a detail is locked.</summary>
     public const string LockedEventType = "anchor.locked";
 
+    /// <summary>What this payload is, for the message a missing field produces.</summary>
+    private const string What = "An anchor";
+
     /// <summary>The event type recorded when a lock is lifted.</summary>
     public const string ReleasedEventType = "anchor.released";
 
@@ -68,12 +71,12 @@ public static class AnchorCodec
 
         return new Anchor
         {
-            Id = PayloadJson.RequiredText(root, "anchor_id", "An anchor"),
-            VersionId = PayloadJson.RequiredText(root, "version_id", "An anchor"),
-            DetailKey = PayloadJson.RequiredText(root, "detail_key", "An anchor"),
-            LockedValue = PayloadJson.RequiredText(root, "locked_value", "An anchor"),
+            Id = PayloadJson.RequiredText(root, "anchor_id", What),
+            VersionId = PayloadJson.RequiredText(root, "version_id", What),
+            DetailKey = PayloadJson.RequiredText(root, "detail_key", What),
+            LockedValue = PayloadJson.RequiredText(root, "locked_value", What),
             LockedAtScope = PayloadJson.Text(root, "locked_at_scope"),
-            Status = StatusOf(PayloadJson.RequiredNumber(root, "status", "An anchor")),
+            Status = StatusOf(PayloadJson.RequiredNumber(root, "status", What)),
             Sequence = position,
             EvidenceJson = PayloadJson.Text(root, "evidence"),
         };

@@ -39,11 +39,14 @@ public sealed record Materialized(IReadOnlyDictionary<string, string> Documents,
 /// </remarks>
 public static class AuthoringMaterializer
 {
-    /// <summary>The container documents are stored in.</summary>
     /// <summary>The directory a materialized shape lands under, which is what makes the apply order decidable.</summary>
     public const string ShapeDirectory = "shapes/";
 
+    /// <summary>The container documents are stored in.</summary>
     private const string Container = "sources";
+
+    /// <summary>A field name the generated shapes carry, written once for the four places that name it.</summary>
+    private const string SubjectField = "subject";
 
     /// <summary>Builds a draft's runbook from interview answers.</summary>
     /// <param name="name">The draft name, which is the runbook name.</param>
@@ -334,7 +337,7 @@ public static class AuthoringMaterializer
     /// <returns>The shape as JSON.</returns>
     private static string Shape(string shapeName, IReadOnlyDictionary<string, object?> answers, List<string> todos)
     {
-        var required = new List<string> { "subject", "key", "value" };
+        var required = new List<string> { SubjectField, "key", "value" };
         var declared = Fields(answers, todos);
         using var buffer = new MemoryStream();
 
@@ -344,7 +347,7 @@ public static class AuthoringMaterializer
             writer.WriteString("name", shapeName);
             writer.WriteNumber("version", 1);
             writer.WriteStartArray("identity");
-            writer.WriteStringValue("subject");
+            writer.WriteStringValue(SubjectField);
             writer.WriteStringValue("key");
             writer.WriteEndArray();
             writer.WritePropertyName("schema");
@@ -352,7 +355,7 @@ public static class AuthoringMaterializer
             writer.WriteString("type", "object");
             writer.WritePropertyName("properties");
             writer.WriteStartObject();
-            StringField(writer, "subject", "^[a-z][a-z0-9_]{0,63}$", 0, 0);
+            StringField(writer, SubjectField, "^[a-z][a-z0-9_]{0,63}$", 0, 0);
             StringField(writer, "key", "^[a-z][a-z0-9_:-]{0,63}$", 0, 0);
             StringField(writer, "value", string.Empty, 1, 512);
 
@@ -453,7 +456,7 @@ public static class AuthoringMaterializer
                 continue;
             }
 
-            if (name is "subject" or "key" or "value")
+            if (name is SubjectField or "key" or "value")
             {
                 todos.Add($"extraction.fact_fields: '{name}' is the core vocabulary and was skipped");
                 continue;

@@ -43,6 +43,9 @@ public sealed record ValidationFinding(Severity Severity, string Code, string Me
 /// </remarks>
 public static class RunbookValidation
 {
+    /// <summary>The path the retrieval checks report under, written once for the four methods that read it.</summary>
+    private const string RetrievalPath = "spec.retrieval";
+
     /// <summary>
     /// Checks a runbook.
     /// </summary>
@@ -380,9 +383,9 @@ public static class RunbookValidation
             return;
         }
 
-        const string Path = "spec.retrieval";
+        const string Path = RetrievalPath;
 
-        if (retrieval.TopK == 0 || retrieval.TopK > 100)
+        if (retrieval.TopK is 0 or > 100)
         {
             findings.Add(Error("retrieval.top-k-range", $"topK {retrieval.TopK} outside 1..=100", $"{Path}.topK"));
         }
@@ -573,7 +576,7 @@ public static class RunbookValidation
     /// </summary>
     private static void ValidateRoutes(RunbookSpec spec, RetrievalSpec retrieval, List<ValidationFinding> findings)
     {
-        const string Path = "spec.retrieval";
+        const string Path = RetrievalPath;
 
         if (retrieval.CollectionRoutes.Count > 32)
         {
@@ -637,7 +640,7 @@ public static class RunbookValidation
     /// </summary>
     private static void ValidateExpansions(RetrievalSpec retrieval, List<ValidationFinding> findings)
     {
-        const string Path = "spec.retrieval";
+        const string Path = RetrievalPath;
 
         if (retrieval.QueryExpansions.Count > 32)
         {
@@ -701,7 +704,7 @@ public static class RunbookValidation
     /// </summary>
     private static void ValidateDemotions(RunbookSpec spec, RetrievalSpec retrieval, List<ValidationFinding> findings)
     {
-        const string Path = "spec.retrieval";
+        const string Path = RetrievalPath;
 
         if (retrieval.ContentDemotions.Count > 32)
         {

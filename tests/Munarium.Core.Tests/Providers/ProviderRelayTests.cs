@@ -387,13 +387,13 @@ public class ProviderRelayTests
     private static ProviderDeclaration Declaration(
         ProviderModels? models = null,
         ProviderBudgets? budgets = null) => new()
-    {
-        Name = "office",
-        Provider = ProviderId.Anthropic,
-        Models = models ?? new ProviderModels { Complete = ["office-model"] },
-        Credential = CredentialReference.ForEnvironment("MUNARIUM_SECRET_ANTHROPIC"),
-        Budgets = budgets ?? ProviderBudgets.None,
-    };
+        {
+            Name = "office",
+            Provider = ProviderId.Anthropic,
+            Models = models ?? new ProviderModels { Complete = ["office-model"] },
+            Credential = CredentialReference.ForEnvironment("MUNARIUM_SECRET_ANTHROPIC"),
+            Budgets = budgets ?? ProviderBudgets.None,
+        };
 
     /// <summary>A clock a test moves by hand, so a window is a rule rather than a wait.</summary>
     private sealed class Clock

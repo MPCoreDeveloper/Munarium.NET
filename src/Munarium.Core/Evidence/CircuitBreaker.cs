@@ -19,7 +19,12 @@ using System.Diagnostics;
 /// concurrent fetch and a trip never has to take a lock to be seen.
 /// </para>
 /// </remarks>
-public sealed class CircuitBreaker
+/// <remarks>
+/// Initializes a new instance of the <see cref="CircuitBreaker"/> class.
+/// </remarks>
+/// <param name="threshold">How many consecutive failures trip it.</param>
+/// <param name="coolOff">How long it stays open before a call is allowed to probe.</param>
+public sealed class CircuitBreaker(long threshold = CircuitBreaker.DefaultThreshold, TimeSpan? coolOff = null)
 {
     /// <summary>The default consecutive-failure threshold.</summary>
     public const long DefaultThreshold = 5;
@@ -29,25 +34,13 @@ public sealed class CircuitBreaker
 
     private static readonly long Origin = Stopwatch.GetTimestamp();
 
-    private readonly long _threshold;
-    private readonly TimeSpan _coolOff;
+    private readonly long _threshold = threshold > 0
+            ? threshold
+            : throw new ArgumentOutOfRangeException(nameof(threshold), threshold, "Must be positive.");
+    private readonly TimeSpan _coolOff = coolOff ?? DefaultCoolOff;
 
     private long _consecutiveFailures;
     private long _openUntilMilliseconds;
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="CircuitBreaker"/> class.
-    /// </summary>
-    /// <param name="threshold">How many consecutive failures trip it.</param>
-    /// <param name="coolOff">How long it stays open before a call is allowed to probe.</param>
-    public CircuitBreaker(long threshold = DefaultThreshold, TimeSpan? coolOff = null)
-    {
-        _threshold = threshold > 0
-            ? threshold
-            : throw new ArgumentOutOfRangeException(nameof(threshold), threshold, "Must be positive.");
-
-        _coolOff = coolOff ?? DefaultCoolOff;
-    }
 
     /// <summary>
     /// Gets a value indicating whether calls must be refused without being attempted.

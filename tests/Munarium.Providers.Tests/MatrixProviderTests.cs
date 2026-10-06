@@ -2,7 +2,6 @@ namespace Munarium.Providers.Tests;
 
 using System.Net;
 using System.Text;
-using System.Text.Json;
 using Munarium.Evidence;
 
 /// <summary>
@@ -135,7 +134,7 @@ public class MatrixProviderTests
     {
         var handler = Answering(
             HttpStatusCode.OK,
-            File.ReadAllText(Path.Combine(Examples(), "evidence-block.complete-table.json")));
+            await File.ReadAllTextAsync(Path.Combine(Examples(), "evidence-block.complete-table.json")));
 
         var provider = Provider(handler);
 
@@ -144,16 +143,16 @@ public class MatrixProviderTests
         Assert.Equal(["AMER", "APAC", "EMEA"], table.RowIds);
         Assert.Equal("1180250.50", table.Rows[1][1]);
 
-        var call = Assert.Single(handler.Calls);
+        var (url, body, uid) = Assert.Single(handler.Calls);
 
         // The contract and not the view: the view-to-contract mapping is the profile's, and what reaches the wire is
         // the contract it resolved to.
-        Assert.Equal("http://matrix.test/v1/contracts/open-pipeline-by-region@2/execute", call.Url);
-        Assert.Equal("u-1", call.Uid);
+        Assert.Equal("http://matrix.test/v1/contracts/open-pipeline-by-region@2/execute", url);
+        Assert.Equal("u-1", uid);
 
         // The turn's question is never part of the request. A contract is executed with typed parameters, which is what
         // makes an injection structurally impossible here rather than merely defended against.
-        Assert.DoesNotContain("what do we know", call.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("what do we know", body, StringComparison.Ordinal);
     }
 
     private static MatrixProvider Provider(StubHandler handler, CircuitBreaker? breaker = null) =>

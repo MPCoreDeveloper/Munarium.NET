@@ -59,22 +59,28 @@ public class AccessGateTests
         var gate = new AccessGate(Secret, authorized: true, EvidencePrincipal.ForDeployment("acme"));
         var ingestOnly = "Bearer " + Token("uploader", 9, [], [AccessScope.Ingest]);
 
-        Refused(await gate.ResolveAsync(ingestOnly, AccessScope.Query, Now));
-        Granted(await gate.ResolveAsync(ingestOnly, AccessScope.Ingest, Now));
+        var refused = Refused(await gate.ResolveAsync(ingestOnly, AccessScope.Query, Now));
+        var granted = Granted(await gate.ResolveAsync(ingestOnly, AccessScope.Ingest, Now));
+
+        // Refused for the scope and not for the identity: the same capability serves the plane it was issued for, which
+        // is what makes a scope a boundary rather than a second password.
+        Assert.Equal($"this capability does not carry the {AccessScope.Query} scope", refused.Reason);
+        Assert.Equal("uploader", granted.Uid);
     }
 
     /// <summary>What does not verify is refused, whatever it claims - and the header itself is read strictly.</summary>
     /// <param name="header">The header presented.</param>
+    /// <param name="reason">Why it is refused, which is part of the answer rather than inside knowledge.</param>
     [Theory]
-    [InlineData("Bearer not-a-capability")]
-    [InlineData("Bearer a.b.c")]
-    [InlineData("Basic dHlsZXI6c2VjcmV0")]
-    [InlineData("Bearer ")]
-    public async Task WhatDoesNotPresentACapabilityIsRefused(string header)
+    [InlineData("Bearer not-a-capability", "a capability is three segments separated by dots")]
+    [InlineData("Bearer a.b.c", "the capability signature is not base64url")]
+    [InlineData("Basic dHlsZXI6c2VjcmV0", AccessGate.MissingReason)]
+    [InlineData("Bearer ", AccessGate.MissingReason)]
+    public async Task WhatDoesNotPresentACapabilityIsRefused(string header, string reason)
     {
         var gate = new AccessGate(Secret, authorized: true, EvidencePrincipal.ForDeployment("acme"));
 
-        Refused(await gate.ResolveAsync(header, AccessScope.Query, Now));
+        Assert.Equal(reason, Refused(await gate.ResolveAsync(header, AccessScope.Query, Now)).Reason);
     }
 
     /// <summary>An expired capability is refused at the gate, and the leeway is the original's.</summary>
@@ -98,8 +104,11 @@ public class AccessGateTests
 
         var token = AccessTokens.Mint(Secret, claims);
 
-        Granted(await gate.ResolveAsync("Bearer " + token, AccessScope.Query, Now.AddSeconds(89)));
-        Refused(await gate.ResolveAsync("Bearer " + token, AccessScope.Query, Now.AddSeconds(91)));
+        var withinLeeway = Granted(await gate.ResolveAsync("Bearer " + token, AccessScope.Query, Now.AddSeconds(89)));
+        var afterLeeway = Refused(await gate.ResolveAsync("Bearer " + token, AccessScope.Query, Now.AddSeconds(91)));
+
+        Assert.Equal("tyler@example.com", withinLeeway.Uid);
+        Assert.Equal("the capability has expired", afterLeeway.Reason);
     }
 
     /// <summary>Mints a capability for a test.</summary>

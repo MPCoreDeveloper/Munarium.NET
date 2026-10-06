@@ -17,7 +17,7 @@ public class RunbookValidationTests
 
         // A document that does not read answers with one finding naming the parse, and a 200: an author editing a runbook
         // wants to read what is wrong with it, and a document that does not parse has one thing wrong with it.
-        var truncated = string.Join((char)10, ["kind: Runbook", "metadata:", "  name: broken-without-a-spec"]);
+        var truncated = string.Join((char)10, "kind: Runbook", "metadata:", "  name: broken-without-a-spec");
         var refused = await kernel.Operations.ValidateRunbookAsync(new WireRunbookValidationRequest(truncated));
 
         Assert.False(refused.Valid);

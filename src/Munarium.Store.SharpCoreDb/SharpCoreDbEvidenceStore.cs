@@ -81,6 +81,11 @@ public sealed class SharpCoreDbEvidenceStore(
     /// </remarks>
     private const string UnitSeparator = "\u001f";
 
+    /// <summary>The columns the three tables are read and written by.</summary>
+    private const string TenantIdColumn = "tenant_id";
+    private const string EvidenceIdColumn = "evidence_id";
+    private const string ExpiresAtColumn = "expires_at";
+
     private readonly Lock _gate = new();
     private readonly IDatabase _database = database ?? throw new ArgumentNullException(nameof(database));
     private readonly (string Name, string Schema) _artifacts =
@@ -227,8 +232,8 @@ public sealed class SharpCoreDbEvidenceStore(
             var row = grants
                 .Select(TableValues.Identity("grant_id", grantId))
                 .FirstOrDefault(found =>
-                    string.Equals(TableValues.StringValue(found, "tenant_id"), tenant, StringComparison.Ordinal)
-                    && string.Equals(TableValues.StringValue(found, "evidence_id"), evidenceId, StringComparison.Ordinal));
+                    string.Equals(TableValues.StringValue(found, TenantIdColumn), tenant, StringComparison.Ordinal)
+                    && string.Equals(TableValues.StringValue(found, EvidenceIdColumn), evidenceId, StringComparison.Ordinal));
 
             // Reading the row and spending it are one step under one lock, which is the whole reason this lives in the
             // store rather than in a caller doing both: a single-use check split in two is a check two requests can pass.
@@ -237,7 +242,7 @@ public sealed class SharpCoreDbEvidenceStore(
                 return ValueTask.FromResult<EvidenceGrant?>(null);
             }
 
-            var expiresAt = TableValues.StringValue(row, "expires_at");
+            var expiresAt = TableValues.StringValue(row, ExpiresAtColumn);
 
             // A grant whose expiry cannot be read cannot be shown to be usable, and the clock the caller passes is the
             // only clock there is - the plane does not keep one of its own to disagree with it.
@@ -277,8 +282,8 @@ public sealed class SharpCoreDbEvidenceStore(
             {
                 // What was read, never the rows: an audit table holding the regulated data it audits would be a second
                 // copy of the problem the audit exists to describe.
-                ["tenant_id"] = access.Tenant,
-                ["evidence_id"] = access.EvidenceId,
+                [TenantIdColumn] = access.Tenant,
+                [EvidenceIdColumn] = access.EvidenceId,
                 ["uid"] = access.Uid,
                 ["kind"] = access.Kind,
                 ["row_from"] = access.RowFrom ?? 0L,
@@ -321,9 +326,9 @@ public sealed class SharpCoreDbEvidenceStore(
             ? []
             : [
                 .. Table(_accesses)
-                    .Select(TableValues.Identity("evidence_id", evidenceId))
+                    .Select(TableValues.Identity(EvidenceIdColumn, evidenceId))
                     .Where(row => string.Equals(
-                        TableValues.StringValue(row, "tenant_id"), tenant, StringComparison.Ordinal))
+                        TableValues.StringValue(row, TenantIdColumn), tenant, StringComparison.Ordinal))
                     .OrderByDescending(row => Instant(TableValues.StringValue(row, "at"), out var at)
                         ? at
                         : (DateTimeOffset?)null)
@@ -357,7 +362,7 @@ public sealed class SharpCoreDbEvidenceStore(
                     .Select(row => (Row: row, Due: DueAt(row)))
                     .Where(candidate => candidate.Due is { } expires && clock >= expires)
                     .OrderBy(candidate => candidate.Due)
-                    .ThenBy(candidate => TableValues.StringValue(candidate.Row, "evidence_id"), StringComparer.Ordinal)
+                    .ThenBy(candidate => TableValues.StringValue(candidate.Row, EvidenceIdColumn), StringComparer.Ordinal)
                     .Take(limit)
                     .Select(candidate => MapArtifact(candidate.Row)),
             ]);
@@ -440,7 +445,7 @@ public sealed class SharpCoreDbEvidenceStore(
         string.IsNullOrWhiteSpace(evidenceId)
             ? null
             : table
-                .Select(TableValues.Identity("evidence_id", evidenceId))
+                .Select(TableValues.Identity(EvidenceIdColumn, evidenceId))
                 .Select(MapArtifact)
                 .FirstOrDefault(artifact => string.Equals(artifact.Tenant, tenant, StringComparison.Ordinal));
 
@@ -449,11 +454,11 @@ public sealed class SharpCoreDbEvidenceStore(
         var manifest = artifact.Manifest with { EvidenceId = artifact.EvidenceId };
         var retention = manifest.Retention;
 
-        table.Delete(TableValues.Identity("evidence_id", artifact.EvidenceId));
+        table.Delete(TableValues.Identity(EvidenceIdColumn, artifact.EvidenceId));
         table.Insert(new Dictionary<string, object>
         {
-            ["tenant_id"] = artifact.Tenant,
-            ["evidence_id"] = artifact.EvidenceId,
+            [TenantIdColumn] = artifact.Tenant,
+            [EvidenceIdColumn] = artifact.EvidenceId,
             ["domain_key"] = manifest.ComputeDomainKey(),
             ["state"] = artifact.State.ToWireName(),
             ["kind"] = manifest.Kind.ToWireName(),
@@ -463,7 +468,7 @@ public sealed class SharpCoreDbEvidenceStore(
             ["artifact_hash"] = manifest.ArtifactHash,
             ["access_level"] = (long)manifest.AuthorizationClass.AccessLevel,
             ["compartments"] = string.Join(UnitSeparator, manifest.AuthorizationClass.Compartments),
-            ["expires_at"] = retention?.ExpiresAt ?? string.Empty,
+            [ExpiresAtColumn] = retention?.ExpiresAt ?? string.Empty,
             ["legal_hold"] = retention?.LegalHold == true ? 1L : 0L,
             ["purged_at"] = retention?.PurgedAt ?? string.Empty,
             ["blob_path"] = artifact.BlobPath,
@@ -478,17 +483,17 @@ public sealed class SharpCoreDbEvidenceStore(
         table.Delete(TableValues.Identity("grant_id", grant.GrantId));
         table.Insert(new Dictionary<string, object>
         {
-            ["tenant_id"] = grant.Tenant,
+            [TenantIdColumn] = grant.Tenant,
             ["grant_id"] = grant.GrantId,
-            ["evidence_id"] = grant.EvidenceId,
-            ["expires_at"] = grant.ExpiresAt,
+            [EvidenceIdColumn] = grant.EvidenceId,
+            [ExpiresAtColumn] = grant.ExpiresAt,
             ["used_at"] = grant.UsedAt ?? string.Empty,
         });
     }
 
     private static EvidenceArtifact MapArtifact(Dictionary<string, object> row)
     {
-        var evidenceId = TableValues.StringValue(row, "evidence_id");
+        var evidenceId = TableValues.StringValue(row, EvidenceIdColumn);
         var manifest = EvidenceManifestCodec.FromJson(
             TableValues.StringValue(row, "manifest"),
             $"artifact '{evidenceId}'");
@@ -500,7 +505,7 @@ public sealed class SharpCoreDbEvidenceStore(
         return new EvidenceArtifact
         {
             EvidenceId = evidenceId,
-            Tenant = TableValues.StringValue(row, "tenant_id"),
+            Tenant = TableValues.StringValue(row, TenantIdColumn),
             State = EvidenceStateNames.ParseState(TableValues.StringValue(row, "state"))
                 ?? throw new FormatException($"artifact '{evidenceId}' is in a state this server does not know"),
             Manifest = manifest with
@@ -537,7 +542,7 @@ public sealed class SharpCoreDbEvidenceStore(
     /// <summary>Reads the retention the columns carry, which is the copy a purge is decided on.</summary>
     private static Retention? Retention(Dictionary<string, object> row)
     {
-        var expiresAt = Moment(row, "expires_at");
+        var expiresAt = Moment(row, ExpiresAtColumn);
         var purgedAt = Moment(row, "purged_at");
         var held = TableValues.LongValue(row, "legal_hold") != 0;
 
@@ -548,7 +553,7 @@ public sealed class SharpCoreDbEvidenceStore(
 
     private static EvidenceAccess MapAccess(Dictionary<string, object> row) => new()
     {
-        EvidenceId = TableValues.StringValue(row, "evidence_id"),
+        EvidenceId = TableValues.StringValue(row, EvidenceIdColumn),
         Tenant = TableValues.StringValue(row, "tenant"),
         Uid = TableValues.StringValue(row, "uid"),
         Kind = TableValues.StringValue(row, "kind"),
@@ -585,7 +590,7 @@ public sealed class SharpCoreDbEvidenceStore(
         EvidenceStateNames.ParseState(TableValues.StringValue(row, "state")) is EvidenceState.Committed
         && TableValues.LongValue(row, "legal_hold") == 0
         && TableValues.StringValue(row, "purged_at").Length == 0
-        && Instant(TableValues.StringValue(row, "expires_at"), out var expires)
+        && Instant(TableValues.StringValue(row, ExpiresAtColumn), out var expires)
             ? expires
             : null;
 

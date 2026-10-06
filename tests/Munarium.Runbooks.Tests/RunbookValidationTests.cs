@@ -1,7 +1,5 @@
 namespace Munarium.Runbooks.Tests;
 
-using Munarium.Evidence;
-
 /// <summary>
 /// The findings an operator reads before applying a runbook.
 /// </summary>
