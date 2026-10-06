@@ -70,6 +70,9 @@ Munarium.NET is dogfooded end to end on the author's own .NET 11 libraries:
 - **The original is the specification, and a claim about it gets read before it gets written** — four
   "capabilities this port lacks" turned out to be unmeasured assumptions, and each is on record with
   what the source actually says: [docs/method.md](docs/method.md).
+- **Planning, implementation and review run as project skills, not out of a chat history** — the
+  BMad Method skills in `.agents/skills` are read by Cline and GitHub Copilot alike, so a brief, a
+  change or a review is versioned in this repository: [docs/bmad-workflow.md](docs/bmad-workflow.md).
 
 ## What is in the kernel so far
 

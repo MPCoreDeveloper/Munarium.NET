@@ -16,3 +16,10 @@
 *.jpg binary
 *.ico binary
 *.snk binary
+
+# Tooling: the BMad Method skills and runtime are vendored tooling, not product code. They are 461 files
+# of Markdown, Python and TOML against roughly 420 source and documentation files, so without these
+# marks GitHub's language bar reports the workflow rather than the port. The files stay in the tree.
+.agents/**      linguist-vendored
+_bmad/**        linguist-vendored
+_bmad-output/** linguist-documentation
