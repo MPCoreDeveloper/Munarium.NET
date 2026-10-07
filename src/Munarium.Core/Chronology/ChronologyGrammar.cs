@@ -61,48 +61,27 @@ public static partial class ChronologyGrammar
     {
         if (IsoDay().Match(cleaned) is { Success: true } dayMatch)
         {
-            var day = TryDate(Number(dayMatch, 1), Number(dayMatch, 2), Number(dayMatch, 3));
-            return day is { } value ? new TemporalInterval(value, value, TemporalPrecision.Day, uncertain) : null;
+            return IsoDayOf(dayMatch, uncertain);
         }
 
         if (IsoMonth().Match(cleaned) is { Success: true } monthMatch)
         {
-            var year = Number(monthMatch, 1);
-            var month = Number(monthMatch, 2);
-            return month is >= 1 and <= 12 && TryDate(year, month, 1) is { } start
-                ? new TemporalInterval(start, MonthEnd(year, month), TemporalPrecision.Month, uncertain)
-                : null;
+            return IsoMonthOf(monthMatch, uncertain);
         }
 
         if (YearRange().Match(cleaned) is { Success: true } yearRangeMatch)
         {
-            var from = Number(yearRangeMatch, 1);
-            var to = Number(yearRangeMatch, 2);
-            return from <= to && TryDate(from, 1, 1) is { } start && TryDate(to, 12, 31) is { } end
-                ? new TemporalInterval(start, end, TemporalPrecision.Year, uncertain)
-                : null;
+            return YearRangeOf(yearRangeMatch, uncertain);
         }
 
         if (YearOnly().Match(cleaned) is { Success: true } yearMatch)
         {
-            var year = Number(yearMatch, 1);
-            return TryDate(year, 1, 1) is { } start && TryDate(year, 12, 31) is { } end
-                ? new TemporalInterval(start, end, TemporalPrecision.Year, uncertain)
-                : null;
+            return YearOnlyOf(yearMatch, uncertain);
         }
 
         if (MonthRange().Match(cleaned) is { Success: true } monthRangeMatch)
         {
-            var first = MonthNumber(monthRangeMatch.Groups[1].Value);
-            var last = MonthNumber(monthRangeMatch.Groups[2].Value);
-            var year = Number(monthRangeMatch, 3);
-
-            return first is { } from
-                && last is { } to
-                && from <= to
-                && TryDate(year, from, 1) is { } start
-                    ? new TemporalInterval(start, MonthEnd(year, to), TemporalPrecision.Month, uncertain)
-                    : null;
+            return MonthRangeOf(monthRangeMatch, uncertain);
         }
 
         if (MonthDayYear().Match(cleaned) is { Success: true } monthDayMatch)
@@ -122,15 +101,93 @@ public static partial class ChronologyGrammar
             var month = MonthNumber(monthYearMatch.Groups[1].Value);
             var year = Number(monthYearMatch, 2);
 
-            return month is { } value && TryDate(year, value, 1) is { } start
-                ? new TemporalInterval(start, MonthEnd(year, value), TemporalPrecision.Month, uncertain)
-                : null;
+            return MonthYearOf(month, year, uncertain);
         }
 
         return Season().Match(cleaned) is { Success: true } seasonMatch
             ? ParseSeason(seasonMatch.Groups[1].Value, Number(seasonMatch, 2))
             : null;
     }
+
+    /// <summary>Reads an ISO day as the single day it names.</summary>
+    /// <param name="match">The day's match.</param>
+    /// <param name="uncertain">Whether the value carried a hedge.</param>
+    /// <returns>The day, or <see langword="null"/> when it is not a day the calendar has.</returns>
+    private static TemporalInterval? IsoDayOf(Match match, bool uncertain)
+    {
+        var day = TryDate(Number(match, 1), Number(match, 2), Number(match, 3));
+
+        return day is { } value ? new TemporalInterval(value, value, TemporalPrecision.Day, uncertain) : null;
+    }
+
+    /// <summary>Reads an ISO month as the month it names, to its last day.</summary>
+    /// <param name="match">The month's match.</param>
+    /// <param name="uncertain">Whether the value carried a hedge.</param>
+    /// <returns>The month, or <see langword="null"/> when it is not a month the calendar has.</returns>
+    private static TemporalInterval? IsoMonthOf(Match match, bool uncertain)
+    {
+        var year = Number(match, 1);
+        var month = Number(match, 2);
+
+        return month is >= 1 and <= 12 && TryDate(year, month, 1) is { } start
+            ? new TemporalInterval(start, MonthEnd(year, month), TemporalPrecision.Month, uncertain)
+            : null;
+    }
+
+    /// <summary>Reads a year range as the span between its two years.</summary>
+    /// <param name="match">The range's match.</param>
+    /// <param name="uncertain">Whether the value carried a hedge.</param>
+    /// <returns>The span, or <see langword="null"/> when it runs backwards or off the calendar.</returns>
+    private static TemporalInterval? YearRangeOf(Match match, bool uncertain)
+    {
+        var from = Number(match, 1);
+        var to = Number(match, 2);
+
+        return from <= to && TryDate(from, 1, 1) is { } start && TryDate(to, 12, 31) is { } end
+            ? new TemporalInterval(start, end, TemporalPrecision.Year, uncertain)
+            : null;
+    }
+
+    /// <summary>Reads a year as the whole year it names.</summary>
+    /// <param name="match">The year's match.</param>
+    /// <param name="uncertain">Whether the value carried a hedge.</param>
+    /// <returns>The year, or <see langword="null"/> when the calendar does not have it.</returns>
+    private static TemporalInterval? YearOnlyOf(Match match, bool uncertain)
+    {
+        var year = Number(match, 1);
+
+        return TryDate(year, 1, 1) is { } start && TryDate(year, 12, 31) is { } end
+            ? new TemporalInterval(start, end, TemporalPrecision.Year, uncertain)
+            : null;
+    }
+
+    /// <summary>Reads a month range as the span between the two months it names.</summary>
+    /// <param name="match">The range's match.</param>
+    /// <param name="uncertain">Whether the value carried a hedge.</param>
+    /// <returns>The span, or <see langword="null"/> when it runs backwards or off the calendar.</returns>
+    private static TemporalInterval? MonthRangeOf(Match match, bool uncertain)
+    {
+        var first = MonthNumber(match.Groups[1].Value);
+        var last = MonthNumber(match.Groups[2].Value);
+        var year = Number(match, 3);
+
+        return first is { } from
+            && last is { } to
+            && from <= to
+            && TryDate(year, from, 1) is { } start
+                ? new TemporalInterval(start, MonthEnd(year, to), TemporalPrecision.Month, uncertain)
+                : null;
+    }
+
+    /// <summary>Reads a month number and a year as the month it names, to its last day.</summary>
+    /// <param name="month">The month number, or <see langword="null"/> when the name is not a month.</param>
+    /// <param name="year">The year.</param>
+    /// <param name="uncertain">Whether the value carried a hedge.</param>
+    /// <returns>The month, or <see langword="null"/> when the calendar does not have it.</returns>
+    private static TemporalInterval? MonthYearOf(int? month, int year, bool uncertain) =>
+        month is { } value && TryDate(year, value, 1) is { } start
+            ? new TemporalInterval(start, MonthEnd(year, value), TemporalPrecision.Month, uncertain)
+            : null;
 
     /// <summary>
     /// Resolves the last day of a month.

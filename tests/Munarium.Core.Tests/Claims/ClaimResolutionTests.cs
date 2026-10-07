@@ -15,7 +15,7 @@ public class ClaimResolutionTests
         var current = ClaimResolution.Resolve(
             [
                 ClaimFixture.Create("c1", 1, "hero", "eyes", "green"),
-                ClaimFixture.Create("c2", 2, "hero", "eyes", "blue", supersedes: "c1"),
+                ClaimFixture.Create("c2", 2, "hero", "eyes", "blue", shape: new(Supersedes: "c1")),
             ]);
 
         var claim = Assert.Single(current);
@@ -32,7 +32,7 @@ public class ClaimResolutionTests
         var current = ClaimResolution.Resolve(
             [
                 ClaimFixture.Create("c1", 1, "hero", "eyes", "green"),
-                ClaimFixture.Create("c2", 5, "hero", "eyes", "blue", supersedes: "c1"),
+                ClaimFixture.Create("c2", 5, "hero", "eyes", "blue", shape: new(Supersedes: "c1")),
             ],
             new ClaimQuery { AsOfSequence = new SequenceNumber(3) });
 
@@ -51,7 +51,7 @@ public class ClaimResolutionTests
         var current = ClaimResolution.Resolve(
             [
                 ClaimFixture.Create("c1", 1, "hero", "eyes", "green"),
-                ClaimFixture.Create("c2", 2, "hero", "eyes", "blue", supersedes: "c1", status: ClaimStatus.Disputed),
+                ClaimFixture.Create("c2", 2, "hero", "eyes", "blue", shape: new(Supersedes: "c1", Status: ClaimStatus.Disputed)),
             ]);
 
         Assert.Empty(current);
@@ -62,9 +62,9 @@ public class ClaimResolutionTests
     {
         var current = ClaimResolution.Resolve(
             [
-                ClaimFixture.Create("a", 1, "s", "k1", "v", scope: "book.ch1"),
-                ClaimFixture.Create("b", 2, "s", "k2", "v", scope: "book.ch1.scene2"),
-                ClaimFixture.Create("c", 3, "s", "k3", "v", scope: "book.ch10"),
+                ClaimFixture.Create("a", 1, "s", "k1", "v", shape: new(Scope: "book.ch1")),
+                ClaimFixture.Create("b", 2, "s", "k2", "v", shape: new(Scope: "book.ch1.scene2")),
+                ClaimFixture.Create("c", 3, "s", "k3", "v", shape: new(Scope: "book.ch10")),
             ],
             new ClaimQuery { ScopePrefix = "book.ch1" });
 
@@ -75,7 +75,7 @@ public class ClaimResolutionTests
     public void AScopePrefixExcludesClaimsWithNoScope()
     {
         var current = ClaimResolution.Resolve(
-            [ClaimFixture.Create("a", 1, "s", "k", "v", scope: null)],
+            [ClaimFixture.Create("a", 1, "s", "k", "v", shape: new(Scope: null))],
             new ClaimQuery { ScopePrefix = "book.ch1" });
 
         Assert.Empty(current);
@@ -97,7 +97,7 @@ public class ClaimResolutionTests
     [Fact]
     public void ADisputedClaimIsHiddenByDefaultAndVisibleOnRequest()
     {
-        var disputed = ClaimFixture.Create("d", 1, "s", "k", "v", status: ClaimStatus.Disputed);
+        var disputed = ClaimFixture.Create("d", 1, "s", "k", "v", shape: new(Status: ClaimStatus.Disputed));
 
         Assert.Empty(ClaimResolution.Resolve([disputed]));
         Assert.Single(ClaimResolution.Resolve([disputed], new ClaimQuery { Statuses = [ClaimStatus.Disputed] }));
@@ -108,7 +108,7 @@ public class ClaimResolutionTests
     {
         Claim[] claims =
         [
-            ClaimFixture.Create("c2", 2, "hero", "eyes", "blue", supersedes: "c1"),
+            ClaimFixture.Create("c2", 2, "hero", "eyes", "blue", shape: new(Supersedes: "c1")),
             ClaimFixture.Create("c1", 1, "hero", "eyes", "green"),
             ClaimFixture.Create("c3", 3, "hero", "home", "harbor"),
         ];

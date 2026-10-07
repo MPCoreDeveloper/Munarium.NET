@@ -1,7 +1,6 @@
 namespace Munarium.Evidence;
 
 using Munarium.Providers;
-using Munarium.Retrieval;
 
 /// <summary>
 /// What a turn is asked to do.
@@ -97,6 +96,46 @@ public sealed record TurnOutcome
 public readonly union TurnResult(TurnOutcome, RequiredLayerUnavailable);
 
 /// <summary>
+/// Everything one answer is made from: the prompt to send, what it was rendered from, and what the checks read the
+/// answer back against.
+/// </summary>
+/// <remarks>
+/// Gathered rather than passed one at a time, because a turn that disagreed with itself about any of these would be
+/// checking a different answer than the one it asked for.
+/// </remarks>
+internal sealed record AnswerMaterial
+{
+    /// <summary>Gets what the turn is asked to do.</summary>
+    public required TurnRequest Request { get; init; }
+
+    /// <summary>Gets the prompt the model is asked, already rendered.</summary>
+    public required string Prompt { get; init; }
+
+    /// <summary>Gets the composed context the prompt was rendered from.</summary>
+    public required string Context { get; init; }
+
+    /// <summary>Gets the layers whose blocks did not fit the budget.</summary>
+    public required IReadOnlyList<string> LayersDropped { get; init; }
+
+    /// <summary>Gets the blocks the turn was composed from.</summary>
+    public required IReadOnlyList<LayerBlock> Blocks { get; init; }
+
+    /// <summary>
+    /// Gets what the hierarchy decided, or <see langword="null"/> when the turn ran outside any profile.
+    /// </summary>
+    public EvidenceHierarchyDecision? Decision { get; init; }
+
+    /// <summary>Gets every text the answer may quote.</summary>
+    public required IReadOnlyList<string> ServedTexts { get; init; }
+
+    /// <summary>Gets every label the answer may cite.</summary>
+    public required IReadOnlyList<string> Labels { get; init; }
+
+    /// <summary>Gets the model to answer with.</summary>
+    public required AnsweringModel Model { get; init; }
+}
+
+/// <summary>
 /// Runs one turn: the hierarchy, the context, the completion, and the checks over the answer.
 /// </summary>
 /// <remarks>
@@ -130,52 +169,28 @@ public static class TurnPipeline
     /// <summary>
     /// Runs a turn.
     /// </summary>
-    /// <param name="plan">The plan to execute.</param>
-    /// <param name="request">What the turn is asked to do.</param>
-    /// <param name="providers">The evidence providers, in trust order.</param>
-    /// <param name="documentLayer">Runs the document path for a layer.</param>
-    /// <param name="servedLabels">Reads the citable labels out of a document retrieval.</param>
-    /// <param name="model">The model to answer with.</param>
-    /// <param name="modelId">The model to ask for, as the provider names it.</param>
-    /// <param name="contextBudget">How many characters of composed context the prompt may carry.</param>
-    /// <param name="onProgress">An optional listener; the turn's result never depends on one being present.</param>
+    /// <param name="execution">What the turn is given to work with.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>What the turn produced, or the required layer that could not answer.</returns>
     public static async ValueTask<TurnResult> ExecuteAsync(
-        EvidencePlan plan,
-        TurnRequest request,
-        IReadOnlyList<IEvidenceProvider> providers,
-        Func<EvidenceLayer, CancellationToken, ValueTask<RetrievalResult>> documentLayer,
-        Func<RetrievalResult, IReadOnlyList<string>> servedLabels,
-        IModelProvider model,
-        string modelId,
-        int contextBudget = DefaultContextBudget,
-        Action<TurnProgress>? onProgress = null,
+        TurnExecution execution,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(plan);
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(providers);
-        ArgumentNullException.ThrowIfNull(documentLayer);
-        ArgumentNullException.ThrowIfNull(servedLabels);
-        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(execution);
 
         var executed = await HierarchyRunner
-            .ExecuteAsync(plan, providers, documentLayer, hierarchy => onProgress?.Invoke(hierarchy), cancellationToken)
+            .ExecuteAsync(
+                execution.Plan,
+                execution.Providers,
+                execution.DocumentLayer,
+                hierarchy => execution.OnProgress?.Invoke(hierarchy),
+                cancellationToken)
             .ConfigureAwait(false);
 
         return executed switch
         {
-            HierarchyOutcome collected => await ComposeThenAnswerAsync(
-                plan,
-                request,
-                collected,
-                servedLabels,
-                model,
-                modelId,
-                contextBudget,
-                onProgress,
-                cancellationToken).ConfigureAwait(false),
+            HierarchyOutcome collected => await ComposeThenAnswerAsync(execution, collected, cancellationToken)
+                .ConfigureAwait(false),
             RequiredLayerUnavailable unavailable => unavailable,
         };
     }
@@ -183,39 +198,39 @@ public static class TurnPipeline
     /// <summary>
     /// Composes the hierarchy's context into a prompt and answers over it.
     /// </summary>
+    /// <param name="execution">What the turn is given to work with.</param>
+    /// <param name="collected">What the hierarchy collected.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The answer, what it cost, and what was checked.</returns>
     private static async ValueTask<TurnOutcome> ComposeThenAnswerAsync(
-        EvidencePlan plan,
-        TurnRequest request,
+        TurnExecution execution,
         HierarchyOutcome collected,
-        Func<RetrievalResult, IReadOnlyList<string>> servedLabels,
-        IModelProvider model,
-        string modelId,
-        int contextBudget,
-        Action<TurnProgress>? onProgress,
         CancellationToken cancellationToken)
     {
-        var composed = HierarchyComposer.Compose(plan, collected.Blocks, contextBudget);
+        var composed = HierarchyComposer.Compose(execution.Plan, collected.Blocks, execution.ContextBudget);
         var documents = collected.Documents;
-        var labels = documents is null ? [] : servedLabels(documents);
+        var labels = documents is null ? [] : execution.ServedLabels(documents);
         var texts = documents is null ? [] : documents.Chunks.Select(chunk => chunk.Text).ToList();
 
-        onProgress?.Invoke(new TurnComposed(
+        execution.OnProgress?.Invoke(new TurnComposed(
             composed.LayersUsed,
             composed.Context.Length,
             composed.LayersDropped));
 
         return await AnswerAsync(
-            request,
-            Render(request, composed.Context),
-            composed.Context,
-            composed.LayersDropped,
-            collected.Blocks,
-            collected.Decision,
-            texts,
-            labels,
-            model,
-            modelId,
-            onProgress,
+            new AnswerMaterial
+            {
+                Request = execution.Request,
+                Prompt = Render(execution.Request, composed.Context),
+                Context = composed.Context,
+                LayersDropped = composed.LayersDropped,
+                Blocks = collected.Blocks,
+                Decision = collected.Decision,
+                ServedTexts = texts,
+                Labels = labels,
+                Model = execution.Model,
+            },
+            execution.OnProgress,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -232,7 +247,6 @@ public static class TurnPipeline
     /// <param name="servedTexts">Every text the answer may quote.</param>
     /// <param name="servedLabels">Every label the answer may cite.</param>
     /// <param name="model">The model to answer with.</param>
-    /// <param name="modelId">The model to ask for, as the provider names it.</param>
     /// <param name="onProgress">An optional listener; the turn's result never depends on one being present.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The answer, what it cost, and what was checked.</returns>
@@ -241,8 +255,7 @@ public static class TurnPipeline
         string context,
         IReadOnlyList<string> servedTexts,
         IReadOnlyList<string> servedLabels,
-        IModelProvider model,
-        string modelId,
+        AnsweringModel model,
         Action<TurnProgress>? onProgress = null,
         CancellationToken cancellationToken = default)
     {
@@ -253,16 +266,18 @@ public static class TurnPipeline
         ArgumentNullException.ThrowIfNull(model);
 
         return await AnswerAsync(
-            request,
-            Render(request, context),
-            context,
-            [],
-            [],
-            null,
-            servedTexts,
-            servedLabels,
-            model,
-            modelId,
+            new AnswerMaterial
+            {
+                Request = request,
+                Prompt = Render(request, context),
+                Context = context,
+                LayersDropped = [],
+                Blocks = [],
+                Decision = null,
+                ServedTexts = servedTexts,
+                Labels = servedLabels,
+                Model = model,
+            },
             onProgress,
             cancellationToken).ConfigureAwait(false);
     }
@@ -276,44 +291,42 @@ public static class TurnPipeline
     /// because a ceiling is not spend. The corrective retries fire on a failed check and re-ask with the violations
     /// attached, riding whatever ceiling is current so a repaired answer gets the same headroom.
     /// </remarks>
+    /// <param name="material">What the answer is made from.</param>
+    /// <param name="onProgress">An optional listener; the turn's result never depends on one being present.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The answer, what it cost, and what was checked.</returns>
     private static async ValueTask<TurnOutcome> AnswerAsync(
-        TurnRequest request,
-        string prompt,
-        string context,
-        IReadOnlyList<string> layersDropped,
-        IReadOnlyList<LayerBlock> blocks,
-        EvidenceHierarchyDecision? decision,
-        IReadOnlyList<string> servedTexts,
-        IReadOnlyList<string> labels,
-        IModelProvider model,
-        string modelId,
+        AnswerMaterial material,
         Action<TurnProgress>? onProgress,
         CancellationToken cancellationToken)
     {
-        var budget = request.MaxTokens;
-        var answer = await CompleteAsync(model, modelId, prompt, budget, cancellationToken).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(material);
+
+        var model = material.Model;
+        var budget = material.Request.MaxTokens;
+        var answer = await CompleteAsync(model, material.Prompt, budget, cancellationToken).ConfigureAwait(false);
         var completions = 1;
         var inputTokens = answer.Usage.InputTokens;
         var outputTokens = answer.Usage.OutputTokens;
         var retriedForTruncation = answer.IsTruncated;
 
-        onProgress?.Invoke(Completed(0, model, answer));
+        onProgress?.Invoke(Completed(0, model.Provider, answer));
 
         if (retriedForTruncation)
         {
-            budget = request.MaxTokens * 4;
-            answer = await CompleteAsync(model, modelId, prompt, budget, cancellationToken).ConfigureAwait(false);
+            budget = material.Request.MaxTokens * 4;
+            answer = await CompleteAsync(model, material.Prompt, budget, cancellationToken).ConfigureAwait(false);
             completions++;
             inputTokens += answer.Usage.InputTokens;
             outputTokens += answer.Usage.OutputTokens;
 
             // The re-ask is attempt zero as well, because it is the same attempt: the model stopped early rather than
             // answer badly, and numbering it apart would make a stream look like a turn that retried a wrong answer.
-            onProgress?.Invoke(Completed(0, model, answer));
+            onProgress?.Invoke(Completed(0, model.Provider, answer));
         }
 
-        var checks = request.Verification;
-        var violations = Check(answer.Text, checks, servedTexts, labels);
+        var checks = material.Request.Verification;
+        var violations = Check(answer.Text, checks, material.ServedTexts, material.Labels);
         var firstPass = violations;
 
         onProgress?.Invoke(new TurnVerified(0, checks.Names, violations.Count));
@@ -327,29 +340,29 @@ public static class TurnPipeline
             retries++;
 
             var corrective = TurnVerification.CorrectivePrompt(
-                prompt,
+                material.Prompt,
                 answer.Text,
                 QuotesOf(violations),
                 CitationsOf(violations));
 
-            answer = await CompleteAsync(model, modelId, corrective, budget, cancellationToken).ConfigureAwait(false);
+            answer = await CompleteAsync(model, corrective, budget, cancellationToken).ConfigureAwait(false);
             completions++;
             inputTokens += answer.Usage.InputTokens;
             outputTokens += answer.Usage.OutputTokens;
 
-            onProgress?.Invoke(Completed(retries, model, answer));
+            onProgress?.Invoke(Completed(retries, model.Provider, answer));
 
-            violations = Check(answer.Text, checks, servedTexts, labels);
+            violations = Check(answer.Text, checks, material.ServedTexts, material.Labels);
 
             onProgress?.Invoke(new TurnVerified(retries, checks.Names, violations.Count));
         }
 
         return new TurnOutcome
         {
-            Decision = decision,
-            Context = context,
-            LayersDropped = layersDropped,
-            Blocks = blocks,
+            Decision = material.Decision,
+            Context = material.Context,
+            LayersDropped = material.LayersDropped,
+            Blocks = material.Blocks,
             Answer = answer.Text,
             Checks = checks.Names,
             FirstPassViolations = firstPass,
@@ -373,21 +386,26 @@ public static class TurnPipeline
 
     /// <summary>Builds the event that reports one completion, with what it cost.</summary>
     /// <param name="attempt">Which attempt it was.</param>
-    /// <param name="model">The provider that answered.</param>
+    /// <param name="provider">The provider that answered.</param>
     /// <param name="answer">What it answered with.</param>
     /// <returns>The event.</returns>
-    private static TurnCompleted Completed(int attempt, IModelProvider model, CompletionResponse answer) =>
-        new(attempt, model.Id.Value, answer.Model, answer.Usage.InputTokens, answer.Usage.OutputTokens);
+    private static TurnCompleted Completed(int attempt, IModelProvider provider, CompletionResponse answer) =>
+        new(attempt, provider.Id.Value, answer.Model, answer.Usage.InputTokens, answer.Usage.OutputTokens);
 
+    /// <summary>Asks the model once, at the ceiling the turn may spend.</summary>
+    /// <param name="model">The model to answer with.</param>
+    /// <param name="prompt">The prompt to ask with.</param>
+    /// <param name="budget">The completion ceiling.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What it answered with.</returns>
     private static async ValueTask<CompletionResponse> CompleteAsync(
-        IModelProvider model,
-        string modelId,
+        AnsweringModel model,
         string prompt,
         int budget,
         CancellationToken cancellationToken) =>
-        await model
+        await model.Provider
             .CompleteAsync(
-                new CompletionRequest { Model = modelId, Prompt = prompt, MaxTokens = budget },
+                new CompletionRequest { Model = model.ModelId, Prompt = prompt, MaxTokens = budget },
                 cancellationToken)
             .ConfigureAwait(false);
 

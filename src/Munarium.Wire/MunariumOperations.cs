@@ -29,6 +29,114 @@ using Munarium.Versions;
 using Severity = Munarium.Claims.Severity;
 
 /// <summary>
+/// Everything the operations are composed from: the ledgers they read, the stores they write, and the deployment they
+/// answer for.
+/// </summary>
+/// <remarks>
+/// A settings object rather than thirty-one parameters, because the parts are one deployment: a caller that handed the
+/// catalogue of one index and the host of another would compose operations that answer from neither. The model is the
+/// one thing that may be absent, and only because an embedding-only deployment never completes anything.
+/// </remarks>
+public sealed record MunariumOperationSettings
+{
+    /// <summary>Gets the store every ledger is read and written through.</summary>
+    public required IStorageBackend Storage { get; init; }
+
+    /// <summary>Gets the claim ledger.</summary>
+    public required ClaimLedger Claims { get; init; }
+
+    /// <summary>Gets the candidate ledger.</summary>
+    public required CandidateLedger Candidates { get; init; }
+
+    /// <summary>Gets the findings ledger.</summary>
+    public required FindingsLedger Findings { get; init; }
+
+    /// <summary>Gets the anchor ledger.</summary>
+    public required AnchorLedger Anchors { get; init; }
+
+    /// <summary>Gets the promise ledger.</summary>
+    public required PromiseLedger Promises { get; init; }
+
+    /// <summary>Gets the counter ledger.</summary>
+    public required CounterLedger Counters { get; init; }
+
+    /// <summary>Gets the fact ledger the mesh is composed over.</summary>
+    public required FactLedger Facts { get; init; }
+
+    /// <summary>Gets the shapes this deployment understands.</summary>
+    public required ShapeRegistry Shapes { get; init; }
+
+    /// <summary>Gets the index host a question is retrieved through.</summary>
+    public required IIndexHost IndexHost { get; init; }
+
+    /// <summary>Gets the provider the embedding model is called on.</summary>
+    public required IModelProvider Embedder { get; init; }
+
+    /// <summary>Gets the composer that builds a snapshot.</summary>
+    public required Composer Composer { get; init; }
+
+    /// <summary>Gets the snapshot builder.</summary>
+    public required MeshSnapshotBuilder Snapshots { get; init; }
+
+    /// <summary>Gets the model the embedder is asked for.</summary>
+    public required string EmbeddingModel { get; init; }
+
+    /// <summary>Gets the runner that ingests a document.</summary>
+    public required IngestRunner Ingest { get; init; }
+
+    /// <summary>Gets the registry of ingested sources.</summary>
+    public required ISourceRegistry Sources { get; init; }
+
+    /// <summary>Gets the store a repeated write is recognised through.</summary>
+    public required IIdempotencyStore Idempotency { get; init; }
+
+    /// <summary>Gets the builder that mints and rebuilds index versions.</summary>
+    public required IndexBuilder IndexBuilder { get; init; }
+
+    /// <summary>Gets the catalogue of index versions.</summary>
+    public required IndexCatalog Catalogue { get; init; }
+
+    /// <summary>Gets the store a built version's chunks are persisted in.</summary>
+    public required IIndexVersionStore IndexVersions { get; init; }
+
+    /// <summary>Gets the evidence store.</summary>
+    public required IEvidenceStore Evidence { get; init; }
+
+    /// <summary>Gets the store the bytes of an ingested document are kept in.</summary>
+    public required ISourceStore EvidenceBytes { get; init; }
+
+    /// <summary>Gets the store runbooks are read from.</summary>
+    public required IRunbookStore Runbooks { get; init; }
+
+    /// <summary>Gets the store turns are recorded in.</summary>
+    public required ISessionStore Sessions { get; init; }
+
+    /// <summary>Gets where issued capabilities and their withdrawals are recorded.</summary>
+    public required IAccessTokenAudit AccessAudit { get; init; }
+
+    /// <summary>Gets the store authoring drafts are kept in.</summary>
+    public required IAuthoringDraftStore Authoring { get; init; }
+
+    /// <summary>Gets where published shapes are kept, or <see langword="null"/> when none are served.</summary>
+    public IShapeStore? ShapeStore { get; init; }
+
+    /// <summary>Gets the tenant this deployment answers for.</summary>
+    public required string Tenant { get; init; }
+
+    /// <summary>Gets the registry completion models are resolved through.</summary>
+    public required ProviderRegistry Providers { get; init; }
+
+    /// <summary>Gets the model a turn completes with, or <see langword="null"/> when this deployment never answers.</summary>
+    public IModelProvider? Model { get; init; }
+
+    /// <summary>Gets the model id a turn is asked for.</summary>
+    public string ModelId { get; init; } = string.Empty;
+
+    /// <summary>Gets the ceiling on a turn's completion, or <see langword="null"/> when the turn names its own.</summary>
+    public MaxTokensCeiling? Ceiling { get; init; }
+}
+
+/// <summary>
 /// The one implementation behind every transport.
 /// </summary>
 /// <remarks>
@@ -36,39 +144,7 @@ using Severity = Munarium.Claims.Severity;
 /// are adapters over this class. A behaviour is therefore fixed once, and two transports can only ever
 /// disagree about encoding, never about substance.
 /// </remarks>
-public sealed class MunariumOperations(
-    IStorageBackend storage,
-    ClaimLedger claims,
-    CandidateLedger candidates,
-    FindingsLedger findings,
-    AnchorLedger anchors,
-    PromiseLedger promises,
-    CounterLedger counters,
-    FactLedger facts,
-    ShapeRegistry shapes,
-    IIndexHost indexHost,
-    IModelProvider embedder,
-    Composer composer,
-    MeshSnapshotBuilder snapshots,
-    string embeddingModel,
-    IngestRunner ingest,
-    ISourceRegistry sources,
-    IIdempotencyStore idempotency,
-    IndexBuilder indexBuilder,
-    IndexCatalog catalogue,
-    IIndexVersionStore indexVersions,
-    IEvidenceStore evidence,
-    ISourceStore evidenceBytes,
-    IRunbookStore runbooks,
-    ISessionStore sessions,
-    IAccessTokenAudit accessAudit,
-    IAuthoringDraftStore authoring,
-    IShapeStore? shapeStore,
-    string tenant,
-    ProviderRegistry providers,
-    IModelProvider? model = null,
-    string modelId = "",
-    MaxTokensCeiling? ceiling = null)
+public sealed class MunariumOperations(MunariumOperationSettings settings)
 {
     /// <summary>The wire contract version this implementation speaks.</summary>
     public const string Contract = "mmp.v1";
@@ -166,12 +242,12 @@ public sealed class MunariumOperations(
     public const string ProviderUnavailableProblem = "https://munarium.dev/problems/provider-unavailable";
 
 
-    private readonly IStorageBackend _storage = storage ?? throw new ArgumentNullException(nameof(storage));
-    private readonly IRunbookStore _runbooks = runbooks ?? throw new ArgumentNullException(nameof(runbooks));
-    private readonly IShapeStore? _shapeStore = shapeStore;
-    private readonly ISessionStore _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
-    private readonly IModelProvider? _model = model;
-    private readonly string _modelId = modelId ?? string.Empty;
+    private readonly IStorageBackend _storage = settings.Storage;
+    private readonly IRunbookStore _runbooks = settings.Runbooks;
+    private readonly IShapeStore? _shapeStore = settings.ShapeStore;
+    private readonly ISessionStore _sessions = settings.Sessions;
+    private readonly IModelProvider? _model = settings.Model;
+    private readonly string _modelId = settings.ModelId;
 
     /// <summary>
     /// The turn runner, over the seams this surface already holds.
@@ -186,15 +262,16 @@ public sealed class MunariumOperations(
     /// </para>
     /// </remarks>
     private readonly SessionTurnRunner _turns = new(
-        sessions,
-        indexHost,
-        embedder,
-        model ?? embedder,
-        embeddingModel,
-        [],
-        tenant,
-        new CollectionIndexes(indexVersions, indexHost, tenant),
-        ceiling);
+        settings.Sessions,
+        settings.IndexHost,
+        new SessionTurnSettings(
+            settings.Embedder,
+            settings.Model ?? settings.Embedder,
+            settings.EmbeddingModel,
+            [],
+            settings.Tenant,
+            new CollectionIndexes(settings.IndexVersions, settings.IndexHost, settings.Tenant),
+            settings.Ceiling));
 
     /// <summary>The problem identifier a session nobody opened answers with.</summary>
     public const string SessionNotFoundProblem = "https://munarium.dev/problems/session-not-found";
@@ -229,33 +306,33 @@ public sealed class MunariumOperations(
     /// bound, which is where retention belongs.
     /// </remarks>
     public const int SessionTurnLimit = 200;
-    private readonly ClaimLedger _claims = claims ?? throw new ArgumentNullException(nameof(claims));
-    private readonly CandidateLedger _candidates = candidates ?? throw new ArgumentNullException(nameof(candidates));
-    private readonly FindingsLedger _findings = findings ?? throw new ArgumentNullException(nameof(findings));
-    private readonly AnchorLedger _anchors = anchors ?? throw new ArgumentNullException(nameof(anchors));
-    private readonly PromiseLedger _promises = promises ?? throw new ArgumentNullException(nameof(promises));
-    private readonly CounterLedger _counters = counters ?? throw new ArgumentNullException(nameof(counters));
-    private readonly FactLedger _facts = facts ?? throw new ArgumentNullException(nameof(facts));
-    private readonly ShapeRegistry _shapes = shapes ?? throw new ArgumentNullException(nameof(shapes));
-    private readonly IIndexHost _index = indexHost ?? throw new ArgumentNullException(nameof(indexHost));
-    private readonly IModelProvider _embedder = embedder ?? throw new ArgumentNullException(nameof(embedder));
-    private readonly Composer _composer = composer ?? throw new ArgumentNullException(nameof(composer));
-    private readonly MeshSnapshotBuilder _snapshots = snapshots ?? throw new ArgumentNullException(nameof(snapshots));
-    private readonly string _embeddingModel = embeddingModel ?? throw new ArgumentNullException(nameof(embeddingModel));
-    private readonly IngestRunner _ingest = ingest ?? throw new ArgumentNullException(nameof(ingest));
-    private readonly ISourceRegistry _sources = sources ?? throw new ArgumentNullException(nameof(sources));
-    private readonly IIdempotencyStore _idempotency = idempotency ?? throw new ArgumentNullException(nameof(idempotency));
-    private readonly IndexBuilder _builder = indexBuilder ?? throw new ArgumentNullException(nameof(indexBuilder));
-    private readonly IndexCatalog _catalogue = catalogue ?? throw new ArgumentNullException(nameof(catalogue));
-    private readonly IEvidenceStore _evidence = evidence ?? throw new ArgumentNullException(nameof(evidence));
-    private readonly ISourceStore _evidenceBytes = evidenceBytes ?? throw new ArgumentNullException(nameof(evidenceBytes));
-    private readonly IAccessTokenAudit _accessAudit = accessAudit ?? throw new ArgumentNullException(nameof(accessAudit));
-    private readonly IAuthoringDraftStore _authoring = authoring ?? throw new ArgumentNullException(nameof(authoring));
-    private readonly ProviderRegistry _providers = providers ?? throw new ArgumentNullException(nameof(providers));
-    private readonly MaxTokensCeiling? _ceiling = ceiling;
-    private readonly string _tenant = string.IsNullOrWhiteSpace(tenant)
-        ? throw new ArgumentException("The deployment's tenant must be named.", nameof(tenant))
-        : tenant;
+    private readonly ClaimLedger _claims = settings.Claims;
+    private readonly CandidateLedger _candidates = settings.Candidates;
+    private readonly FindingsLedger _findings = settings.Findings;
+    private readonly AnchorLedger _anchors = settings.Anchors;
+    private readonly PromiseLedger _promises = settings.Promises;
+    private readonly CounterLedger _counters = settings.Counters;
+    private readonly FactLedger _facts = settings.Facts;
+    private readonly ShapeRegistry _shapes = settings.Shapes;
+    private readonly IIndexHost _index = settings.IndexHost;
+    private readonly IModelProvider _embedder = settings.Embedder;
+    private readonly Composer _composer = settings.Composer;
+    private readonly MeshSnapshotBuilder _snapshots = settings.Snapshots;
+    private readonly string _embeddingModel = settings.EmbeddingModel;
+    private readonly IngestRunner _ingest = settings.Ingest;
+    private readonly ISourceRegistry _sources = settings.Sources;
+    private readonly IIdempotencyStore _idempotency = settings.Idempotency;
+    private readonly IndexBuilder _builder = settings.IndexBuilder;
+    private readonly IndexCatalog _catalogue = settings.Catalogue;
+    private readonly IEvidenceStore _evidence = settings.Evidence;
+    private readonly ISourceStore _evidenceBytes = settings.EvidenceBytes;
+    private readonly IAccessTokenAudit _accessAudit = settings.AccessAudit;
+    private readonly IAuthoringDraftStore _authoring = settings.Authoring;
+    private readonly ProviderRegistry _providers = settings.Providers;
+    private readonly MaxTokensCeiling? _ceiling = settings.Ceiling;
+    private readonly string _tenant = string.IsNullOrWhiteSpace(settings.Tenant)
+        ? throw new ArgumentException("The deployment's tenant must be named.", nameof(settings))
+        : settings.Tenant;
 
 
     /// <summary>The application patterns this deployment serves.</summary>
@@ -2516,16 +2593,18 @@ public sealed class MunariumOperations(
         }
 
         var run = await _turns
-            .RunAsync(
-                session,
-                resolved.Document,
-                request.Query,
-                request.ResearchProfile,
-                new TurnModels(_modelId, _modelId, _modelId),
-                complete,
-                request.TopK ?? 0,
-                onProgress is null ? null : progress => onProgress(Progress(progress)),
-                cancellationToken)
+            .RunAsync(new SessionTurnRequest
+            {
+                Session = session,
+                Document = resolved.Document,
+                Question = request.Query,
+                RequestedProfile = request.ResearchProfile,
+                Models = new TurnModels(_modelId, _modelId, _modelId),
+                Complete = complete,
+                TopK = request.TopK ?? 0,
+                OnProgress = onProgress is null ? null : progress => onProgress(Progress(progress)),
+                CancellationToken = cancellationToken,
+            })
             .ConfigureAwait(false);
 
         return run switch
@@ -3630,14 +3709,34 @@ public sealed class MunariumOperations(
             .ConfigureAwait(false);
 
         var columns = artifact.Manifest.Schema.Columns.Select(column => column.Name).ToList();
-        var lines = Encoding.UTF8.GetString(stored).Split('\n');
-        var rows = new List<IReadOnlyDictionary<string, string?>>();
-        long total = 0;
+        var rows = PageRows(stored, columns, start, window, out var total);
 
-        // The canonical form is a header row and then data. The header is dropped and the manifest's column NAMES are
-        // used instead: the schema is the contract, and a header that disagreed with it would be the schema drifting
-        // silently. One pass counts every data row for the total and keeps only the page's.
-        foreach (var line in lines.Skip(1))
+        return new WireEvidenceRows(evidenceId, start, start + rows.Count < total, rows, total);
+    }
+
+    /// <summary>Pages a canonical CSV's data rows, counting every one of them for the total.</summary>
+    /// <param name="stored">The artifact's bytes.</param>
+    /// <param name="columns">The columns the manifest declares.</param>
+    /// <param name="start">The first row to keep.</param>
+    /// <param name="window">How many rows to keep.</param>
+    /// <param name="total">How many data rows the artifact holds.</param>
+    /// <returns>The page's rows.</returns>
+    /// <remarks>
+    /// The canonical form is a header row and then data. The header is dropped and the manifest's column <em>names</em>
+    /// are used instead: the schema is the contract, and a header that disagreed with it would be the schema drifting
+    /// silently. One pass counts every data row for the total and keeps only the page's.
+    /// </remarks>
+    private static List<IReadOnlyDictionary<string, string?>> PageRows(
+        byte[] stored,
+        List<string> columns,
+        long start,
+        long window,
+        out long total)
+    {
+        var rows = new List<IReadOnlyDictionary<string, string?>>();
+        total = 0;
+
+        foreach (var line in Encoding.UTF8.GetString(stored).Split('\n').Skip(1))
         {
             var row = line.TrimEnd('\r');
 
@@ -3648,21 +3747,30 @@ public sealed class MunariumOperations(
 
             if (total >= start && rows.Count < window)
             {
-                var cells = CanonicalCsv.Cells(row);
-                var keyed = new Dictionary<string, string?>(StringComparer.Ordinal);
-
-                for (var column = 0; column < columns.Count; column++)
-                {
-                    keyed[columns[column]] = column < cells.Count ? cells[column] : null;
-                }
-
-                rows.Add(keyed);
+                rows.Add(KeyedRow(row, columns));
             }
 
             total++;
         }
 
-        return new WireEvidenceRows(evidenceId, start, start + rows.Count < total, rows, total);
+        return rows;
+    }
+
+    /// <summary>Keys one canonical CSV row's cells by the columns the manifest declares.</summary>
+    /// <param name="row">The row's text.</param>
+    /// <param name="columns">The columns the manifest declares.</param>
+    /// <returns>The row, keyed by column name; a cell the row does not carry is absent rather than empty.</returns>
+    private static Dictionary<string, string?> KeyedRow(string row, List<string> columns)
+    {
+        var cells = CanonicalCsv.Cells(row);
+        var keyed = new Dictionary<string, string?>(StringComparer.Ordinal);
+
+        for (var column = 0; column < columns.Count; column++)
+        {
+            keyed[columns[column]] = column < cells.Count ? cells[column] : null;
+        }
+
+        return keyed;
     }
 
     /// <summary>
@@ -3679,7 +3787,7 @@ public sealed class MunariumOperations(
     /// enumerating who read it. It reports <em>that</em> reads happened and never the rows themselves.
     /// </remarks>
     public async ValueTask<WireEvidenceAccessResult> ReadEvidenceAccessesAsync(
-    string tenant,
+        string tenant,
         string evidenceId,
         long limit = 0,
         CancellationToken cancellationToken = default)

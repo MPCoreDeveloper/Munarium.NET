@@ -106,21 +106,7 @@ public sealed class CandidateLedger(
                 .Select(claim => Fact(versionId, claim, findings, blocked))
                 .ToList();
 
-            var entries = new List<LedgerEvent>(stored.Count + 1);
-
-            entries.AddRange(stored.Select(fact => new LedgerEvent(
-                fact.IsDisputed ? FactCodec.DisputedEventType : FactCodec.AssertedEventType,
-                FactCodec.Encode(fact))));
-
-            // The findings travel in the same conditional append as the claims they judge, which is
-            // deliberately stronger than the original: it records them in a separate table and treats a
-            // failure as a warning, because failing the request would push a client into a retry that
-            // appends again. One append cannot disagree with its own response, so there is nothing to warn
-            // about - and a write that produced no findings records no event.
-            if (findings.Count > 0)
-            {
-                entries.Add(new LedgerEvent(FindingCodec.FindingsEventType, FindingCodec.Encode(findings)));
-            }
+            var entries = LedgerEntries(stored, findings);
 
             if (entries.Count == 0)
             {
@@ -159,6 +145,32 @@ public sealed class CandidateLedger(
         }
 
         return new CandidateContended(lastExpected, lastActual);
+    }
+
+    /// <summary>Builds the events one batch appends: the claims, and the findings that judged them.</summary>
+    /// <param name="stored">The claims, as the facts they were read into.</param>
+    /// <param name="findings">The findings the gates produced.</param>
+    /// <returns>The events, in the order they are appended.</returns>
+    /// <remarks>
+    /// The findings travel in the same conditional append as the claims they judge, which is deliberately stronger than
+    /// the original: it records them in a separate table and treats a failure as a warning, because failing the request
+    /// would push a client into a retry that appends again. One append cannot disagree with its own response, so there is
+    /// nothing to warn about - and a write that produced no findings records no event.
+    /// </remarks>
+    private static List<LedgerEvent> LedgerEntries(List<FactRecord> stored, List<GateFinding> findings)
+    {
+        var entries = new List<LedgerEvent>(stored.Count + 1);
+
+        entries.AddRange(stored.Select(fact => new LedgerEvent(
+            fact.IsDisputed ? FactCodec.DisputedEventType : FactCodec.AssertedEventType,
+            FactCodec.Encode(fact))));
+
+        if (findings.Count > 0)
+        {
+            entries.Add(new LedgerEvent(FindingCodec.FindingsEventType, FindingCodec.Encode(findings)));
+        }
+
+        return entries;
     }
 
     private List<GateFinding> Judge(MeshSnapshot snapshot, Candidate candidate)

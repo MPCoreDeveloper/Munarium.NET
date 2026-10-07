@@ -28,23 +28,24 @@ public class TurnPipelineTests
         var reported = new List<TurnProgress>();
         var composed = new List<TurnComposed>();
 
-        _ = Produced(await TurnPipeline.ExecuteAsync(
-            Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
-            Request(),
-            [],
-            documents.RunAsync,
-            Labels,
-            model,
-            "test-model",
-            onProgress: progress =>
-            {
-                reported.Add(progress);
+        _ = Produced(await TurnPipeline.ExecuteAsync(new TurnExecution
+        {
+            Plan = Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
+            Request = Request(),
+            Providers = [],
+            DocumentLayer = documents.RunAsync,
+            ServedLabels = Labels,
+            Model = new AnsweringModel(model, "test-model"),
+            OnProgress = progress =>
+        {
+            reported.Add(progress);
 
-                if (progress is TurnComposed value)
-                {
-                    composed.Add(value);
-                }
-            }));
+            if (progress is TurnComposed value)
+            {
+                composed.Add(value);
+            }
+        },
+        }));
 
         var composedAt = At(reported, progress => progress is TurnComposed);
         var coverageAt = AtCoverage(reported);
@@ -94,14 +95,15 @@ public class TurnPipelineTests
         var documents = new DocumentPath("doc-1");
         var model = new FakeModel(Answer("The policy holds. \"text of doc-1\" [doc-1]"));
 
-        var outcome = Produced(await TurnPipeline.ExecuteAsync(
-            Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
-            Request(),
-            [],
-            documents.RunAsync,
-            Labels,
-            model,
-            "test-model"));
+        var outcome = Produced(await TurnPipeline.ExecuteAsync(new TurnExecution
+        {
+            Plan = Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
+            Request = Request(),
+            Providers = [],
+            DocumentLayer = documents.RunAsync,
+            ServedLabels = Labels,
+            Model = new AnsweringModel(model, "test-model"),
+        }));
 
         Assert.Equal(1, outcome.Completions);
         Assert.Equal(0, outcome.Retries);
@@ -130,14 +132,15 @@ public class TurnPipelineTests
             Answer("It says \"the lighthouse was painted crimson that spring\" [docs/chunk-99]."),
             Answer("The log notes \"text of doc-1\" [doc-1]."));
 
-        var outcome = Produced(await TurnPipeline.ExecuteAsync(
-            Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
-            Request(),
-            [],
-            documents.RunAsync,
-            Labels,
-            model,
-            "test-model"));
+        var outcome = Produced(await TurnPipeline.ExecuteAsync(new TurnExecution
+        {
+            Plan = Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
+            Request = Request(),
+            Providers = [],
+            DocumentLayer = documents.RunAsync,
+            ServedLabels = Labels,
+            Model = new AnsweringModel(model, "test-model"),
+        }));
 
         Assert.Equal(
             [
@@ -171,14 +174,15 @@ public class TurnPipelineTests
             Answer(string.Empty, stopReason: "max_tokens"),
             Answer("The log notes \"text of doc-1\" [doc-1]."));
 
-        var outcome = Produced(await TurnPipeline.ExecuteAsync(
-            Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
-            Request(),
-            [],
-            documents.RunAsync,
-            Labels,
-            model,
-            "test-model"));
+        var outcome = Produced(await TurnPipeline.ExecuteAsync(new TurnExecution
+        {
+            Plan = Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
+            Request = Request(),
+            Providers = [],
+            DocumentLayer = documents.RunAsync,
+            ServedLabels = Labels,
+            Model = new AnsweringModel(model, "test-model"),
+        }));
 
         Assert.True(outcome.RetriedForTruncation);
         Assert.Equal(2, outcome.Completions);
@@ -202,14 +206,15 @@ public class TurnPipelineTests
         var documents = new DocumentPath("doc-1");
         var model = new FakeModel(Answer("It says \"the lighthouse was painted crimson that spring\" [doc-1]."));
 
-        var outcome = Produced(await TurnPipeline.ExecuteAsync(
-            Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
-            Request(),
-            [],
-            documents.RunAsync,
-            Labels,
-            model,
-            "test-model"));
+        var outcome = Produced(await TurnPipeline.ExecuteAsync(new TurnExecution
+        {
+            Plan = Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
+            Request = Request(),
+            Providers = [],
+            DocumentLayer = documents.RunAsync,
+            ServedLabels = Labels,
+            Model = new AnsweringModel(model, "test-model"),
+        }));
 
         Assert.Equal(1, outcome.Retries);
         Assert.Equal(2, outcome.Completions);
@@ -228,14 +233,15 @@ public class TurnPipelineTests
         var documents = new DocumentPath("doc-1");
         var model = new FakeModel(Answer("It says \"the lighthouse was painted crimson that spring\" [doc-1]."));
 
-        var outcome = Produced(await TurnPipeline.ExecuteAsync(
-            Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
-            Request(maxRetries: 9),
-            [],
-            documents.RunAsync,
-            Labels,
-            model,
-            "test-model"));
+        var outcome = Produced(await TurnPipeline.ExecuteAsync(new TurnExecution
+        {
+            Plan = Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
+            Request = Request(maxRetries: 9),
+            Providers = [],
+            DocumentLayer = documents.RunAsync,
+            ServedLabels = Labels,
+            Model = new AnsweringModel(model, "test-model"),
+        }));
 
         Assert.Equal(TurnPipeline.MaxCorrectiveRetries, outcome.Retries);
         Assert.Equal(TurnPipeline.MaxCorrectiveRetries + 1, outcome.Completions);
@@ -254,14 +260,15 @@ public class TurnPipelineTests
             Answer("It says \"the lighthouse was painted crimson that spring\" [doc-1]."),
             Answer("The log notes \"text of doc-1\" [doc-1]."));
 
-        var outcome = Produced(await TurnPipeline.ExecuteAsync(
-            Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
-            Request(),
-            [],
-            documents.RunAsync,
-            Labels,
-            model,
-            "test-model"));
+        var outcome = Produced(await TurnPipeline.ExecuteAsync(new TurnExecution
+        {
+            Plan = Plan(Layer("contracts", "contracts", LayerRequirement.Required, AnswerRole.Primary)),
+            Request = Request(),
+            Providers = [],
+            DocumentLayer = documents.RunAsync,
+            ServedLabels = Labels,
+            Model = new AnsweringModel(model, "test-model"),
+        }));
 
         Assert.Equal(3, outcome.Completions);
         Assert.Equal(1, outcome.Retries);
@@ -280,14 +287,15 @@ public class TurnPipelineTests
         var documents = new DocumentPath("doc-1");
         var model = new FakeModel(Answer("never reached"));
 
-        var refusal = Refused(await TurnPipeline.ExecuteAsync(
-            Plan(Layer("register", "matrix:register", LayerRequirement.Required, AnswerRole.Primary)),
-            Request(),
-            [],
-            documents.RunAsync,
-            Labels,
-            model,
-            "test-model"));
+        var refusal = Refused(await TurnPipeline.ExecuteAsync(new TurnExecution
+        {
+            Plan = Plan(Layer("register", "matrix:register", LayerRequirement.Required, AnswerRole.Primary)),
+            Request = Request(),
+            Providers = [],
+            DocumentLayer = documents.RunAsync,
+            ServedLabels = Labels,
+            Model = new AnsweringModel(model, "test-model"),
+        }));
 
         Assert.Equal("register", refusal.Layer);
         Assert.Equal(EvidenceRefusalCodes.SourceNotBound, refusal.RefusalCode);

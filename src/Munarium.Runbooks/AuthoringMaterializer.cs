@@ -75,39 +75,82 @@ public static class AuthoringMaterializer
             todos.Add("identity.description: describe the corpus and the question it answers");
         }
 
-        // Normalized rather than submitted for validation: the rule is unambiguous and a prefix without its slash binds
-        // the wrong documents, so reproducing the mistake for a validator to catch would be the wrong kind of help.
-        var root = Text(answers, "prefix.root") is { } submitted
+        var root = Root(answers, name, todos);
+        var retrieval = ReadRetrieval(answers, todos);
+        var collections = Collections(answers, name, shapeRef, root, todos);
+        var completion = ReadCompletion(answers, pattern);
+        var lifecycle = ReadLifecycle(answers);
+        RecordUnapplied(answers, todos);
+
+        var yaml = Emit(new YamlDocument(
+            new YamlMappingNode
+            {
+                { "apiVersion", "munarium.ioka.io/v1" },
+                { "kind", "Runbook" },
+                { "metadata", new YamlMappingNode { { "name", name }, { "version", Scalar(1) } } },
+                { "spec", Spec(root, retrieval, lifecycle, completion, collections) },
+            }));
+
+        // The proof the original makes, made the same way: a document is only a document if the reader a deployment
+        // applies it with can read it.
+        if (RunbookReader.Read(yaml) is (null, { } refused))
+        {
+            return (null, $"the materialized runbook does not read: {refused}");
+        }
+
+        return (
+            new Materialized(
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    [$"runbooks/{name}.yaml"] = yaml,
+                    [$"shapes/{name}-documents.json"] = Shape($"{name}-documents", answers, todos),
+                },
+                todos),
+            null);
+    }
+
+    /// <summary>Reads the path prefix, or records the open question that says one has to be chosen.</summary>
+    /// <param name="answers">The interview answers.</param>
+    /// <param name="name">The draft name, which the default is derived from.</param>
+    /// <param name="todos">Where an unanswered question is recorded.</param>
+    /// <returns>The prefix every collection is bound under.</returns>
+    /// <remarks>
+    /// Normalized rather than submitted for validation: the rule is unambiguous and a prefix without its slash binds the
+    /// wrong documents, so reproducing the mistake for a validator to catch would be the wrong kind of help.
+    /// </remarks>
+    private static string Root(IReadOnlyDictionary<string, object?> answers, string name, List<string> todos) =>
+        Text(answers, "prefix.root") is { } submitted
             ? Normalize(submitted)
             : Placeholder(
                 todos,
                 $"prefix.root: choose the path prefix, which is immutable once uploaded; defaulting to '{name}/'",
                 $"{name}/");
 
+    /// <summary>
+    /// Binds every area the interview named to its own collection, or one whole-prefix collection when none was named.
+    /// </summary>
+    /// <param name="answers">The interview answers.</param>
+    /// <param name="name">The draft name, which the collection names are derived from.</param>
+    /// <param name="shapeRef">The shape every collection binds.</param>
+    /// <param name="root">The prefix every collection is bound under.</param>
+    /// <param name="todos">Where an unanswered question is recorded.</param>
+    /// <returns>The collections.</returns>
+    /// <remarks>
+    /// Uniform defaults to true only when no per-area answer exists: an author who supplied levels and then had them
+    /// flattened to level 0 would have been told nothing.
+    /// </remarks>
+    private static YamlSequenceNode Collections(
+        IReadOnlyDictionary<string, object?> answers,
+        string name,
+        string shapeRef,
+        string root,
+        List<string> todos)
+    {
         var areas = Areas(answers);
         var levels = Map(answers, "access.area_levels");
         var compartments = Map(answers, "access.area_compartments");
         var mediaTypes = Map(answers, "extraction.media_types");
-
-        // Uniform defaults to true only when no per-area answer exists: an author who supplied levels and then had them
-        // flattened to level 0 would have been told nothing.
         var uniform = Boolean(answers, "access.uniform_public") ?? (levels is null && compartments is null);
-        var topK = Integer(answers, "retrieval.top_k") ?? 10;
-        var rrfK = Integer(answers, "retrieval.rrf_k") ?? 60;
-        var candidateN = Integer(answers, "retrieval.candidate_n") ?? 100;
-        var cutoverApproval = Boolean(answers, "lifecycle.cutover_approval") ?? true;
-        var keepVersions = Integer(answers, "lifecycle.keep_versions") ?? 2;
-        if (Integer(answers, "retrieval.max_chars") is { } chunkChars)
-        {
-            todos.Add("retrieval.max_chars: this port cuts at a kernel constant (" + chunkChars.ToString(CultureInfo.InvariantCulture) + "), so the answer is recorded but not applied");
-        }
-
-        var completionApplies = pattern?.HasCompletion != false;
-        var completionEnabled = completionApplies && (Boolean(answers, "completion.enabled") ?? true);
-        var completionTier = Text(answers, "completion.tier") ?? "capable";
-        var verifyQuotes = Boolean(answers, "completion.verification_quotes") ?? true;
-        var verifyCitations = Boolean(answers, "completion.verification_citations") ?? true;
-
         var collections = new YamlSequenceNode();
 
         if (areas.Count == 0)
@@ -140,16 +183,76 @@ public static class AuthoringMaterializer
             }
         }
 
-        var tasks = new YamlMappingNode
-        {
-            { "validation", new YamlMappingNode { { "provider", "local" }, { "tier", "fast" } } },
-        };
+        return collections;
+    }
 
-        if (completionEnabled)
+    /// <summary>The retrieval counts the spec is written from.</summary>
+    /// <param name="TopK">How many hits a query asks for.</param>
+    /// <param name="RrfK">The fusion constant.</param>
+    /// <param name="CandidateN">How many candidates the fusion ranks.</param>
+    private sealed record RetrievalAnswers(long TopK, long RrfK, long CandidateN);
+
+    /// <summary>The completion the spec is written from.</summary>
+    /// <param name="Enabled">Whether the completion step runs at all.</param>
+    /// <param name="Tier">The tier the completion task names.</param>
+    /// <param name="VerifyQuotes">Whether the completion checks the quotes it carries.</param>
+    /// <param name="VerifyCitations">Whether the completion checks the citations it carries.</param>
+    private sealed record CompletionAnswers(bool Enabled, string Tier, bool VerifyQuotes, bool VerifyCitations);
+
+    /// <summary>The lifecycle counts the spec is written from.</summary>
+    /// <param name="CutoverApproval">Whether the cutover step requires approval.</param>
+    /// <param name="KeepVersions">How many versions the retire step keeps.</param>
+    private sealed record LifecycleAnswers(bool CutoverApproval, long KeepVersions);
+
+    /// <summary>Reads the retrieval counts, once defaulted.</summary>
+    /// <param name="answers">The interview answers.</param>
+    /// <param name="todos">Where an answer that cannot be applied is recorded.</param>
+    /// <returns>The counts.</returns>
+    private static RetrievalAnswers ReadRetrieval(IReadOnlyDictionary<string, object?> answers, List<string> todos)
+    {
+        var topK = Integer(answers, "retrieval.top_k") ?? 10;
+        var rrfK = Integer(answers, "retrieval.rrf_k") ?? 60;
+        var candidateN = Integer(answers, "retrieval.candidate_n") ?? 100;
+
+        if (Integer(answers, "retrieval.max_chars") is { } chunkChars)
         {
-            tasks.Add("completion", new YamlMappingNode { { "provider", "local" }, { "tier", completionTier } });
+            todos.Add("retrieval.max_chars: this port cuts at a kernel constant (" + chunkChars.ToString(CultureInfo.InvariantCulture) + "), so the answer is recorded but not applied");
         }
 
+        return new RetrievalAnswers(topK, rrfK, candidateN);
+    }
+
+    /// <summary>Reads the completion, once defaulted.</summary>
+    /// <param name="answers">The interview answers.</param>
+    /// <param name="pattern">The chosen pattern, or <see langword="null"/> while none is chosen.</param>
+    /// <returns>The completion.</returns>
+    private static CompletionAnswers ReadCompletion(
+        IReadOnlyDictionary<string, object?> answers,
+        AuthoringPattern? pattern) =>
+        new(
+            pattern?.HasCompletion != false && (Boolean(answers, "completion.enabled") ?? true),
+            Text(answers, "completion.tier") ?? "capable",
+            Boolean(answers, "completion.verification_quotes") ?? true,
+            Boolean(answers, "completion.verification_citations") ?? true);
+
+    /// <summary>Reads the lifecycle counts, once defaulted.</summary>
+    /// <param name="answers">The interview answers.</param>
+    /// <returns>The counts.</returns>
+    private static LifecycleAnswers ReadLifecycle(IReadOnlyDictionary<string, object?> answers) =>
+        new(
+            Boolean(answers, "lifecycle.cutover_approval") ?? true,
+            Integer(answers, "lifecycle.keep_versions") ?? 2);
+
+    /// <summary>Records the answers this materializer cannot apply, so they are todos rather than silent losses.</summary>
+    /// <param name="answers">The interview answers.</param>
+    /// <param name="todos">Where an inapplicable answer is recorded.</param>
+    /// <remarks>
+    /// Both are real answers to real questions, and neither has a form here: a BYOK embedder is a measured choice this
+    /// materializer does not write yet, and permitting any provider override is not expressible at all - overrides name
+    /// the providers a caller may choose, so there is no way to say any.
+    /// </remarks>
+    private static void RecordUnapplied(IReadOnlyDictionary<string, object?> answers, List<string> todos)
+    {
         if (string.Equals(Text(answers, "retrieval.embedding"), "byok", StringComparison.Ordinal))
         {
             todos.Add("retrieval.embedding: a BYOK embedder is a measured choice this materializer does not write yet");
@@ -157,9 +260,32 @@ public static class AuthoringMaterializer
 
         if (string.Equals(Text(answers, "completion.allow_overrides"), "all", StringComparison.Ordinal))
         {
-            // Overrides here name the providers a caller may choose, so there is no way to say any: reporting that is
-            // better than writing a form that means something else.
             todos.Add("completion.allow_overrides: permitting any is not expressible here; none was named");
+        }
+    }
+
+    /// <summary>Writes the spec: the sources, the collections, the retrieval counts, the models, the steps and the completion.</summary>
+    /// <param name="root">The prefix every collection is bound under.</param>
+    /// <param name="retrieval">The retrieval counts.</param>
+    /// <param name="lifecycle">The lifecycle counts.</param>
+    /// <param name="completion">The completion.</param>
+    /// <param name="collections">The collections.</param>
+    /// <returns>The spec.</returns>
+    private static YamlMappingNode Spec(
+        string root,
+        RetrievalAnswers retrieval,
+        LifecycleAnswers lifecycle,
+        CompletionAnswers completion,
+        YamlSequenceNode collections)
+    {
+        var tasks = new YamlMappingNode
+        {
+            { "validation", new YamlMappingNode { { "provider", "local" }, { "tier", "fast" } } },
+        };
+
+        if (completion.Enabled)
+        {
+            tasks.Add("completion", new YamlMappingNode { { "provider", "local" }, { "tier", completion.Tier } });
         }
 
         var steps = new YamlSequenceNode
@@ -171,14 +297,14 @@ public static class AuthoringMaterializer
             {
                 {
                     "cutover",
-                    cutoverApproval
+                    lifecycle.CutoverApproval
                         ? new YamlMappingNode { { "approval", "required" } }
                         : NoStep
                 },
             },
             new YamlMappingNode
             {
-                { "retireOld", new YamlMappingNode { { "keep_versions", Scalar(keepVersions) } } },
+                { "retireOld", new YamlMappingNode { { "keep_versions", Scalar(lifecycle.KeepVersions) } } },
             },
         };
 
@@ -188,7 +314,7 @@ public static class AuthoringMaterializer
             { "collections", collections },
             {
                 "retrieval",
-                new YamlMappingNode { { "topK", Scalar(topK) }, { "rrfK", Scalar(rrfK) }, { "candidateN", Scalar(candidateN) } }
+                new YamlMappingNode { { "topK", Scalar(retrieval.TopK) }, { "rrfK", Scalar(retrieval.RrfK) }, { "candidateN", Scalar(retrieval.CandidateN) } }
             },
             {
                 "models",
@@ -202,7 +328,7 @@ public static class AuthoringMaterializer
             { "steps", steps },
         };
 
-        if (completionEnabled)
+        if (completion.Enabled)
         {
             spec.Add(
                 "completion",
@@ -213,39 +339,15 @@ public static class AuthoringMaterializer
                         "verification",
                         new YamlMappingNode
                         {
-                            { "quotes", Scalar(verifyQuotes) },
-                            { "citations", Scalar(verifyCitations) },
+                            { "quotes", Scalar(completion.VerifyQuotes) },
+                            { "citations", Scalar(completion.VerifyCitations) },
                             { "maxRetries", Scalar(1) },
                         }
                     },
                 });
         }
 
-        var yaml = Emit(new YamlDocument(
-            new YamlMappingNode
-            {
-                { "apiVersion", "munarium.ioka.io/v1" },
-                { "kind", "Runbook" },
-                { "metadata", new YamlMappingNode { { "name", name }, { "version", Scalar(1) } } },
-                { "spec", spec },
-            }));
-
-        // The proof the original makes, made the same way: a document is only a document if the reader a deployment
-        // applies it with can read it.
-        if (RunbookReader.Read(yaml) is (null, { } refused))
-        {
-            return (null, $"the materialized runbook does not read: {refused}");
-        }
-
-        return (
-            new Materialized(
-                new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    [$"runbooks/{name}.yaml"] = yaml,
-                    [$"shapes/{name}-documents.json"] = Shape($"{name}-documents", answers, todos),
-                },
-                todos),
-            null);
+        return spec;
     }
 
     /// <summary>An empty step body, for a step that carries nothing.</summary>

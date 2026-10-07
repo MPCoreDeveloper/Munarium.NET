@@ -11,6 +11,42 @@ using Munarium.Evidence;
 using Munarium.Wire;
 
 /// <summary>
+/// The filter a version's findings read carries: the version the route names and the narrowing the
+/// query string adds.
+/// </summary>
+/// <remarks>
+/// A parameter object because the read binds six values at once. Gathered here, the handler keeps its
+/// own parameters to the ones this surface injects, and the filter reads as one shape: the route's
+/// version plus the four query keys that narrow it, each under the name the wire contract uses.
+/// </remarks>
+internal sealed record FindingFilter
+{
+    /// <summary>Gets the version whose findings are read.</summary>
+    [FromRoute(Name = "version_id")]
+    public string VersionId { get; init; } = string.Empty;
+
+    /// <summary>Gets the sequence boundary the read resolves as of, when it names one.</summary>
+    [FromQuery(Name = "as_of")]
+    public long? AsOf { get; init; }
+
+    /// <summary>Gets the severity to keep, when the read names one.</summary>
+    [FromQuery(Name = "severity")]
+    public string? Severity { get; init; }
+
+    /// <summary>Gets the rule to keep, when the read names one.</summary>
+    [FromQuery(Name = "rule_id")]
+    public string? RuleId { get; init; }
+
+    /// <summary>Gets the rule prefix to keep, when the read names one.</summary>
+    [FromQuery(Name = "rule_prefix")]
+    public string? RulePrefix { get; init; }
+
+    /// <summary>Gets the most findings to return, when the read names one.</summary>
+    [FromQuery(Name = "limit")]
+    public int? Limit { get; init; }
+}
+
+/// <summary>
 /// The JSON/HTTP surface of the wire contract.
 /// </summary>
 /// <remarks>
@@ -28,11 +64,56 @@ public static class MunariumEndpoints
     {
         ArgumentNullException.ThrowIfNull(app);
 
+        HealthEndpoints(app);
+        ContractEndpoints(app);
+        ProviderEndpoints(app);
+        CeilingEndpoints(app);
+        RelayEndpoints(app, kernel);
+        AccessTokenEndpoints(app);
+        VersionEndpoints(app);
+        LineageEndpoints(app);
+        ClaimEndpoints(app);
+        FindingEndpoints(app, kernel);
+        AnchorEndpoints(app);
+        PromiseEndpoints(app);
+        CounterEndpoints(app);
+        SnapshotEndpoints(app);
+        LedgerPointReadEndpoints(app);
+        RetrievalEndpoints(app);
+        SourceEndpoints(app, kernel);
+        AccessAdminEndpoints(app, kernel);
+        IndexEndpoints(app);
+        IngestEndpoints(app);
+        DraftCheckEndpoints(app);
+        DraftEndpoints(app);
+        CatalogEndpoints(app);
+        RunbookEndpoints(app);
+        SessionEndpoints(app, kernel);
+        TurnStreamEndpoints(app);
+        SessionAdminEndpoints(app);
+        EvidenceWriteEndpoints(app, kernel);
+        EvidenceCommitEndpoints(app, kernel);
+        EvidenceReadEndpoints(app, kernel);
+        EvidenceAdminEndpoints(app);
+
+        return app;
+    }
+
+    /// <summary>Maps liveness and the deployment version.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void HealthEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapGet("/healthz", () => TypedResults.Ok(MunariumOperations.Health()));
         app.MapGet(
             "/version",
             () => TypedResults.Json(MunariumOperations.Version(), WireJson.Default.WireDeploymentVersion));
 
+    }
+
+    /// <summary>Maps readiness, which is not liveness, and the contract itself.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void ContractEndpoints(IEndpointRouteBuilder app)
+    {
         // Readiness, which is not liveness: this one answers only when the store answers, and says so on the status
         // line for a caller that routes on that alone. The body carries the same status and the contract, so a caller
         // that reads it reads the shape /healthz answers.
@@ -54,6 +135,12 @@ public static class MunariumEndpoints
         // this deployment's.
         app.MapGet("/openapi.json", () => TypedResults.Text(MunariumOperations.OpenApi(), "application/json"));
 
+    }
+
+    /// <summary>Maps the provider plane: declarations and probes.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void ProviderEndpoints(IEndpointRouteBuilder app)
+    {
         // The provider plane: declarations and probes. Applying records a dialect, an endpoint, the models it serves and
         // where the credential lives - never the credential - and a probe answers over whatever adapter this deployment
         // holds for that family, naming the absence when it holds none.
@@ -116,6 +203,12 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps the paid-call ceiling, read and replaced as one set.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void CeilingEndpoints(IEndpointRouteBuilder app)
+    {
         // The ceiling: what every paid call is held to, read and replaced as one set. It is read by the operations that
         // make the calls rather than reported from somewhere else, which is what makes the number an operator sees the
         // number a turn, an assist, an advisory, a probe and a relayed completion are actually held to.
@@ -147,6 +240,13 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps the relay, which spends this deployment's own credential.</summary>
+    /// <param name="app">The application to map onto.</param>
+    /// <param name="kernel">The deployment whose gate and audit the plane resolves through.</param>
+    private static void RelayEndpoints(IEndpointRouteBuilder app, MunariumKernel kernel)
+    {
         // The relay. These routes make this deployment spend its own credential on a caller's behalf, so the access
         // capability is resolved before a provider is chosen - the same gate the ingestion plane uses, in front of the
         // same kind of decision.
@@ -202,6 +302,12 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps the capability plane: asserted authority exchanged for a credential.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void AccessTokenEndpoints(IEndpointRouteBuilder app)
+    {
         // The capability plane: the identity provider in front authenticates people, and this is where the authority it
         // asserts is exchanged for a short-lived credential. Nothing here decides anything about the ledger; it mints what
         // the contract asks for, or refuses by naming the rule that refused.
@@ -232,6 +338,12 @@ public static class MunariumEndpoints
             });
 
 
+    }
+
+    /// <summary>Maps the version plane: what a version is, and where its head is.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void VersionEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapPost(
             "/v1/versions",
             async (
@@ -259,6 +371,12 @@ public static class MunariumEndpoints
                 CancellationToken cancellationToken) =>
                 await operations.GetHeadAsync(versionId, cancellationToken).ConfigureAwait(false));
 
+    }
+
+    /// <summary>Maps a version's lineage.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void LineageEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapGet(
             "/v1/versions/{version_id}/lineage",
             async (
@@ -285,6 +403,12 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps claim batches into the candidate ledger.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void ClaimEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapPost(
             "/v1/versions/{version_id}/claims",
             async (
@@ -335,15 +459,17 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps a version's findings.</summary>
+    /// <param name="app">The application to map onto.</param>
+    /// <param name="kernel">The deployment whose gate and audit the plane resolves through.</param>
+    private static void FindingEndpoints(IEndpointRouteBuilder app, MunariumKernel kernel)
+    {
         app.MapGet(
             "/v1/versions/{version_id}/findings",
             async (
-                [FromRoute(Name = "version_id")] string versionId,
-                [FromQuery(Name = "as_of")] long? asOf,
-                [FromQuery(Name = "severity")] string? severity,
-                [FromQuery(Name = "rule_id")] string? ruleId,
-                [FromQuery(Name = "rule_prefix")] string? rulePrefix,
-                [FromQuery(Name = "limit")] int? limit,
+                [AsParameters] FindingFilter filter,
                 HttpContext context,
                 MunariumOperations operations,
                 CancellationToken cancellationToken) =>
@@ -372,12 +498,12 @@ public static class MunariumEndpoints
                 IResult answer = TypedResults.Json(
                     await operations
                         .ListFindingsAsync(
-                            versionId,
-                            asOf ?? 0,
-                            severity,
-                            ruleId,
-                            rulePrefix,
-                            limit ?? 0,
+                            filter.VersionId,
+                            filter.AsOf ?? 0,
+                            filter.Severity,
+                            filter.RuleId,
+                            filter.RulePrefix,
+                            filter.Limit ?? 0,
                             cancellationToken)
                         .ConfigureAwait(false),
                     WireJson.Default.WireFindingList);
@@ -385,6 +511,12 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps anchors and their release.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void AnchorEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapPost(
             "/v1/versions/{version_id}/anchors",
             async (
@@ -439,6 +571,12 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps promises and their fulfilment.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void PromiseEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapPost(
             "/v1/versions/{version_id}/promises",
             async (
@@ -497,6 +635,12 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps counters.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void CounterEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapPost(
             "/v1/versions/{version_id}/counters",
             async (
@@ -528,6 +672,12 @@ public static class MunariumEndpoints
                     .ListCountersAsync(versionId, asOf ?? 0, cancellationToken)
                     .ConfigureAwait(false));
 
+    }
+
+    /// <summary>Maps snapshots and facts.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void SnapshotEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapGet(
             "/v1/snapshots",
             async (
@@ -552,6 +702,12 @@ public static class MunariumEndpoints
                     .SliceFactsAsync(asOf ?? 0, versionId ?? string.Empty, cancellationToken)
                     .ConfigureAwait(false));
 
+    }
+
+    /// <summary>Maps the ledger's point read: what a claim says now.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void LedgerPointReadEndpoints(IEndpointRouteBuilder app)
+    {
         // The ledger's point read. A caller holding a claim's identity - out of a snapshot, a finding, a report -
         // asks what that claim says now and whether something later holds its lineage in its place; a claim nobody
         // recorded is a 404 rather than an empty state, because those are two different answers.
@@ -574,6 +730,12 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps context composition and search.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void RetrievalEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapPost(
             "/v1/context",
             async (
@@ -601,6 +763,13 @@ public static class MunariumEndpoints
                 CancellationToken cancellationToken) =>
                 await operations.SearchAsync(query, cancellationToken).ConfigureAwait(false));
 
+    }
+
+    /// <summary>Maps the source plane: what a source is, and its bytes.</summary>
+    /// <param name="app">The application to map onto.</param>
+    /// <param name="kernel">The deployment whose gate and audit the plane resolves through.</param>
+    private static void SourceEndpoints(IEndpointRouteBuilder app, MunariumKernel kernel)
+    {
         app.MapPut(
             "/v1/sources",
             async (
@@ -664,6 +833,13 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps the issuance audit, and the withdrawal that reaches a credential after it was handed out.</summary>
+    /// <param name="app">The application to map onto.</param>
+    /// <param name="kernel">The deployment whose gate and audit the plane resolves through.</param>
+    private static void AccessAdminEndpoints(IEndpointRouteBuilder app, MunariumKernel kernel)
+    {
         // The issuance audit: what this deployment handed out, and what it has ended. Never a token - the row is an
         // identity and the claims it carried - and it takes the access scope, which is the one scope that says reading
         // credentials is administrative work rather than governance's.
@@ -742,6 +918,12 @@ public static class MunariumEndpoints
 
                 return answer;
             });
+    }
+
+    /// <summary>Maps the index plane: what serves, and what may.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void IndexEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapPost(
             "/v1/indexes",
             async (
@@ -845,6 +1027,12 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps the ingestion plane: sources resolved and an index built.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void IngestEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapGet(
             "/v1/sources",
             async (
@@ -865,6 +1053,12 @@ public static class MunariumEndpoints
                     .ListIndexVersionsAsync(collectionId, cancellationToken)
                     .ConfigureAwait(false));
 
+    }
+
+    /// <summary>Maps the authoring checks: validate, apply, export and assist.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void DraftCheckEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapPost(
             "/v1/authoring/drafts/{draft_id}/validate",
             async (
@@ -968,6 +1162,12 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps the authoring drafts, and the questions their patterns ask.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void DraftEndpoints(IEndpointRouteBuilder app)
+    {
         // The authoring drafts: what an author is in the middle of, with the questions its pattern asks and what is still
         // open. Read and write, and no decisions of its own - every rule it applies is the kernel own.
         app.MapPost(
@@ -1036,6 +1236,12 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps the authoring catalog: the patterns an author can start from.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void CatalogEndpoints(IEndpointRouteBuilder app)
+    {
         // The authoring catalog: the patterns an author can start from. Read-only, and the same list the interview
         // offers, so a client that shows the patterns offers exactly what a draft would accept.
         app.MapGet("/v1/authoring/patterns", () => MunariumOperations.ListAuthoringPatterns());
@@ -1059,6 +1265,12 @@ public static class MunariumEndpoints
 
         app.MapGet("/v1/shapes", (MunariumOperations operations) => operations.ListShapes());
 
+    }
+
+    /// <summary>Maps the runbook plane.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void RunbookEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapPost(
             "/v1/runbooks/{name}/remove-request",
             async (
@@ -1145,6 +1357,13 @@ public static class MunariumEndpoints
                     .ListRunbooksAsync(includeRemoved ?? false, cancellationToken)
                     .ConfigureAwait(false));
 
+    }
+
+    /// <summary>Maps sessions and their turns.</summary>
+    /// <param name="app">The application to map onto.</param>
+    /// <param name="kernel">The deployment whose gate and audit the plane resolves through.</param>
+    private static void SessionEndpoints(IEndpointRouteBuilder app, MunariumKernel kernel)
+    {
         app.MapPost(
             "/v1/runbooks/{name}/sessions",
             async (
@@ -1210,6 +1429,12 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps the streamed turn, whose progress is reported as it happens.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void TurnStreamEndpoints(IEndpointRouteBuilder app)
+    {
         // The streamed turn: the same operation as the route above, with the kernel's progress reported as it happens.
         // The frame names are the original's - `progress`, then exactly one of `done` or `error` - and the terminal frame
         // carries what the unary route would have answered, because a stream that ends without saying how it ended is no
@@ -1273,6 +1498,12 @@ public static class MunariumEndpoints
                 await TurnFrames.WriteFrameAsync(http.Response, name, data).ConfigureAwait(false);
             });
 
+    }
+
+    /// <summary>Maps reading a session and closing it.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void SessionAdminEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapGet(
             "/v1/sessions/{session_id}",
             async (
@@ -1311,6 +1542,13 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps sealing evidence, and reading the bytes it was sealed from.</summary>
+    /// <param name="app">The application to map onto.</param>
+    /// <param name="kernel">The deployment whose gate and audit the plane resolves through.</param>
+    private static void EvidenceWriteEndpoints(IEndpointRouteBuilder app, MunariumKernel kernel)
+    {
         app.MapPost(
             "/v1/evidence",
             async (
@@ -1402,6 +1640,13 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps committing a sealed artifact.</summary>
+    /// <param name="app">The application to map onto.</param>
+    /// <param name="kernel">The deployment whose gate the commit resolves through.</param>
+    private static void EvidenceCommitEndpoints(IEndpointRouteBuilder app, MunariumKernel kernel)
+    {
         app.MapPost(
             "/v1/evidence/{evidence_id}/commit",
             async (
@@ -1444,6 +1689,13 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps reading an artifact, its manifest and a window over its rows.</summary>
+    /// <param name="app">The application to map onto.</param>
+    /// <param name="kernel">The deployment whose gate and audit the plane resolves through.</param>
+    private static void EvidenceReadEndpoints(IEndpointRouteBuilder app, MunariumKernel kernel)
+    {
         app.MapGet(
             "/v1/evidence/{evidence_id}",
             async (
@@ -1528,6 +1780,12 @@ public static class MunariumEndpoints
                 return answer;
             });
 
+    }
+
+    /// <summary>Maps the access audit, deletion and legal hold.</summary>
+    /// <param name="app">The application to map onto.</param>
+    private static void EvidenceAdminEndpoints(IEndpointRouteBuilder app)
+    {
         app.MapGet(
             "/v1/evidence/{evidence_id}/accesses",
             async (
@@ -1590,8 +1848,6 @@ public static class MunariumEndpoints
 
                 return answer;
             });
-
-        return app;
     }
 
     /// <summary>Decodes the base64 a JSON surface carries bytes in.</summary>

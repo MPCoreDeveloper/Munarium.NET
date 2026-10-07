@@ -252,7 +252,7 @@ public class SharpCoreDbEvidenceStoreTests
         await fixture.Evidence.RecordAccessAsync(
             Access("ev-read", "alice", "manifest", "ok", "2026-09-17T00:00:01Z"));
         await fixture.Evidence.RecordAccessAsync(
-            Access("ev-read", "bob", "rows", "denied", "2026-09-17T00:00:02Z", rowFrom: 10, rowLimit: 5));
+            Access("ev-read", "bob", "rows", "denied", "2026-09-17T00:00:02Z", new(10, 5)));
         await fixture.Evidence.RecordAccessAsync(
             Access("ev-read", "carol", "rows", "ok", "2026-09-17T00:00:03Z"));
         await fixture.Evidence.RecordAccessAsync(
@@ -351,22 +351,26 @@ public class SharpCoreDbEvidenceStoreTests
             ExpiresAt = expiresAt,
         };
 
+    /// <summary>The row window an access row names, when the test narrows one.</summary>
+    /// <param name="From">The first row, when the access names one.</param>
+    /// <param name="Limit">How many rows, when the access names a count.</param>
+    private readonly record struct RowWindow(long? From = null, long? Limit = null);
+
     private static EvidenceAccess Access(
         string evidenceId,
         string uid,
         string kind,
         string outcome,
         string at,
-        long? rowFrom = null,
-        long? rowLimit = null,
+        RowWindow window = default,
         string tenant = "acme") => new()
         {
             EvidenceId = evidenceId,
             Tenant = tenant,
             Uid = uid,
             Kind = kind,
-            RowFrom = rowFrom,
-            RowLimit = rowLimit,
+            RowFrom = window.From,
+            RowLimit = window.Limit,
             Outcome = outcome,
             At = at,
         };

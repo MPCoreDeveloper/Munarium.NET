@@ -383,25 +383,7 @@ public static class RunbookValidation
             return;
         }
 
-        const string Path = RetrievalPath;
-
-        if (retrieval.TopK is 0 or > 100)
-        {
-            findings.Add(Error("retrieval.top-k-range", $"topK {retrieval.TopK} outside 1..=100", $"{Path}.topK"));
-        }
-
-        if (retrieval.RrfK is < 1.0 or > 1000.0 || !double.IsFinite(retrieval.RrfK))
-        {
-            findings.Add(Error("retrieval.rrf-k-range", $"rrfK {retrieval.RrfK} outside 1..=1000", $"{Path}.rrfK"));
-        }
-
-        if (retrieval.CandidateN is < 1 or > 1000)
-        {
-            findings.Add(Error(
-                "retrieval.candidate-n-range",
-                $"candidateN {retrieval.CandidateN} outside 1..=1000",
-                $"{Path}.candidateN"));
-        }
+        ValidateRetrievalRanges(retrieval, findings);
 
         if (retrieval.CandidateN < retrieval.TopK)
         {
@@ -409,15 +391,55 @@ public static class RunbookValidation
                 Severity.Warn,
                 "retrieval.candidates-below-top-k",
                 "candidateN < topK - fusion can never fill topK hits",
-                Path));
+                RetrievalPath));
         }
 
+        ValidateRetrievalWeights(retrieval, findings);
+        ValidateRetrievalExecution(retrieval, findings);
+
+        ValidateCollectionSelection(retrieval, findings);
+        ValidateFusion(retrieval, findings);
+        ValidateModelExpansion(retrieval, findings);
+        ValidateRoutes(spec, retrieval, findings);
+        ValidateExpansions(retrieval, findings);
+        ValidateDemotions(spec, retrieval, findings);
+    }
+
+    /// <summary>Checks the three retrieval counts against their ranges, in the order the document writes them.</summary>
+    /// <param name="retrieval">The retrieval spec.</param>
+    /// <param name="findings">The findings so far.</param>
+    private static void ValidateRetrievalRanges(RetrievalSpec retrieval, List<ValidationFinding> findings)
+    {
+        if (retrieval.TopK is 0 or > 100)
+        {
+            findings.Add(Error("retrieval.top-k-range", $"topK {retrieval.TopK} outside 1..=100", $"{RetrievalPath}.topK"));
+        }
+
+        if (retrieval.RrfK is < 1.0 or > 1000.0 || !double.IsFinite(retrieval.RrfK))
+        {
+            findings.Add(Error("retrieval.rrf-k-range", $"rrfK {retrieval.RrfK} outside 1..=1000", $"{RetrievalPath}.rrfK"));
+        }
+
+        if (retrieval.CandidateN is < 1 or > 1000)
+        {
+            findings.Add(Error(
+                "retrieval.candidate-n-range",
+                $"candidateN {retrieval.CandidateN} outside 1..=1000",
+                $"{RetrievalPath}.candidateN"));
+        }
+    }
+
+    /// <summary>Checks the two retrieval fractions, either of which can collapse the candidate set.</summary>
+    /// <param name="retrieval">The retrieval spec.</param>
+    /// <param name="findings">The findings so far.</param>
+    private static void ValidateRetrievalWeights(RetrievalSpec retrieval, List<ValidationFinding> findings)
+    {
         if (!double.IsFinite(retrieval.QueryExpansionWeight) || retrieval.QueryExpansionWeight is < 0.0 or > 1.0)
         {
             findings.Add(Error(
                 "retrieval.query-expansion-weight-range",
                 "queryExpansionWeight must be finite and in 0..=1",
-                $"{Path}.queryExpansionWeight"));
+                $"{RetrievalPath}.queryExpansionWeight"));
         }
 
         if (!double.IsFinite(retrieval.StopTermFraction)
@@ -426,15 +448,21 @@ public static class RunbookValidation
             findings.Add(Error(
                 "retrieval.stop-term-fraction-range",
                 "stopTermFraction must be 0 (off) or in 0.05..=0.9",
-                $"{Path}.stopTermFraction"));
+                $"{RetrievalPath}.stopTermFraction"));
         }
+    }
 
+    /// <summary>Checks how the query is executed: how many of its words must match, and how many searches may be in flight.</summary>
+    /// <param name="retrieval">The retrieval spec.</param>
+    /// <param name="findings">The findings so far.</param>
+    private static void ValidateRetrievalExecution(RetrievalSpec retrieval, List<ValidationFinding> findings)
+    {
         if (retrieval.MinimumShouldMatch is < 1 or > 2)
         {
             findings.Add(Error(
                 "retrieval.minimum-should-match-range",
                 "minimumShouldMatch must be 1 (any query word) or 2 (at least two)",
-                $"{Path}.minimumShouldMatch"));
+                $"{RetrievalPath}.minimumShouldMatch"));
         }
 
         if (retrieval.SearchConcurrency is < 1 or > 16)
@@ -442,15 +470,8 @@ public static class RunbookValidation
             findings.Add(Error(
                 "retrieval.search-concurrency-range",
                 "searchConcurrency must be in 1..=16 (each in-flight search holds a pooled connection)",
-                $"{Path}.searchConcurrency"));
+                $"{RetrievalPath}.searchConcurrency"));
         }
-
-        ValidateCollectionSelection(retrieval, findings);
-        ValidateFusion(retrieval, findings);
-        ValidateModelExpansion(retrieval, findings);
-        ValidateRoutes(spec, retrieval, findings);
-        ValidateExpansions(retrieval, findings);
-        ValidateDemotions(spec, retrieval, findings);
     }
 
     private static void ValidateCollectionSelection(RetrievalSpec retrieval, List<ValidationFinding> findings)
@@ -576,14 +597,12 @@ public static class RunbookValidation
     /// </summary>
     private static void ValidateRoutes(RunbookSpec spec, RetrievalSpec retrieval, List<ValidationFinding> findings)
     {
-        const string Path = RetrievalPath;
-
         if (retrieval.CollectionRoutes.Count > 32)
         {
             findings.Add(Error(
                 "retrieval.too-many-collection-routes",
                 $"{retrieval.CollectionRoutes.Count} collectionRoutes exceeds the maximum of 32",
-                $"{Path}.collectionRoutes"));
+                $"{RetrievalPath}.collectionRoutes"));
         }
 
         var declared = new HashSet<string>(
@@ -592,45 +611,58 @@ public static class RunbookValidation
 
         for (var index = 0; index < retrieval.CollectionRoutes.Count; index++)
         {
-            var route = retrieval.CollectionRoutes[index];
-            var path = $"{Path}.collectionRoutes[{index}]";
+            ValidateRoute(retrieval.CollectionRoutes[index], index, declared, findings);
+        }
+    }
 
-            if (route.WhenAll.Count == 0)
+    /// <summary>Checks one collection route: a trigger that names nothing, or a collection nobody binds, can never apply.</summary>
+    /// <param name="route">The route.</param>
+    /// <param name="index">Its position, which is how the findings name it.</param>
+    /// <param name="declared">The collections this runbook binds.</param>
+    /// <param name="findings">The findings so far.</param>
+    private static void ValidateRoute(
+        CollectionRouteSpec route,
+        int index,
+        HashSet<string> declared,
+        List<ValidationFinding> findings)
+    {
+        var path = $"{RetrievalPath}.collectionRoutes[{index}]";
+
+        if (route.WhenAll.Count == 0)
+        {
+            findings.Add(Error(
+                "retrieval.collection-route-no-trigger",
+                "whenAll must contain at least one trigger term",
+                $"{path}.whenAll"));
+        }
+
+        if (route.Collections.Count == 0)
+        {
+            findings.Add(Error(
+                "retrieval.collection-route-no-collections",
+                "collections must contain at least one runbook collection",
+                $"{path}.collections"));
+        }
+
+        for (var term = 0; term < route.WhenAll.Count; term++)
+        {
+            if (route.WhenAll[term].Trim().Length == 0 || route.WhenAll[term].Length > 80)
             {
                 findings.Add(Error(
-                    "retrieval.collection-route-no-trigger",
-                    "whenAll must contain at least one trigger term",
-                    $"{path}.whenAll"));
+                    "retrieval.collection-route-bad-term",
+                    "terms must be non-empty and at most 80 bytes",
+                    $"{path}.whenAll[{term}]"));
             }
+        }
 
-            if (route.Collections.Count == 0)
+        for (var collection = 0; collection < route.Collections.Count; collection++)
+        {
+            if (!declared.Contains(route.Collections[collection]))
             {
                 findings.Add(Error(
-                    "retrieval.collection-route-no-collections",
-                    "collections must contain at least one runbook collection",
-                    $"{path}.collections"));
-            }
-
-            for (var term = 0; term < route.WhenAll.Count; term++)
-            {
-                if (route.WhenAll[term].Trim().Length == 0 || route.WhenAll[term].Length > 80)
-                {
-                    findings.Add(Error(
-                        "retrieval.collection-route-bad-term",
-                        "terms must be non-empty and at most 80 bytes",
-                        $"{path}.whenAll[{term}]"));
-                }
-            }
-
-            for (var collection = 0; collection < route.Collections.Count; collection++)
-            {
-                if (!declared.Contains(route.Collections[collection]))
-                {
-                    findings.Add(Error(
-                        "retrieval.collection-route-unknown-collection",
-                        $"collection '{route.Collections[collection]}' is not bound by this runbook",
-                        $"{path}.collections[{collection}]"));
-                }
+                    "retrieval.collection-route-unknown-collection",
+                    $"collection '{route.Collections[collection]}' is not bound by this runbook",
+                    $"{path}.collections[{collection}]"));
             }
         }
     }
@@ -704,14 +736,12 @@ public static class RunbookValidation
     /// </summary>
     private static void ValidateDemotions(RunbookSpec spec, RetrievalSpec retrieval, List<ValidationFinding> findings)
     {
-        const string Path = RetrievalPath;
-
         if (retrieval.ContentDemotions.Count > 32)
         {
             findings.Add(Error(
                 "retrieval.too-many-content-demotions",
                 $"{retrieval.ContentDemotions.Count} contentDemotions exceeds the maximum of 32",
-                $"{Path}.contentDemotions"));
+                $"{RetrievalPath}.contentDemotions"));
         }
 
         var declared = new HashSet<string>(
@@ -720,67 +750,94 @@ public static class RunbookValidation
 
         for (var index = 0; index < retrieval.ContentDemotions.Count; index++)
         {
-            var rule = retrieval.ContentDemotions[index];
-            var path = $"{Path}.contentDemotions[{index}]";
+            ValidateDemotion(retrieval.ContentDemotions[index], index, declared, spec.Collections.Count, findings);
+        }
+    }
 
-            if (rule.Contains.Trim().Length == 0 || rule.Contains.Length > 512)
+    /// <summary>Checks one content marker: a marker of nothing, or one that excepts every collection, says nothing.</summary>
+    /// <param name="rule">The marker.</param>
+    /// <param name="index">Its position, which is how the findings name it.</param>
+    /// <param name="declared">The collections this runbook binds.</param>
+    /// <param name="collections">How many collections this runbook binds.</param>
+    /// <param name="findings">The findings so far.</param>
+    private static void ValidateDemotion(
+        ContentDemotionSpec rule,
+        int index,
+        HashSet<string> declared,
+        int collections,
+        List<ValidationFinding> findings)
+    {
+        var path = $"{RetrievalPath}.contentDemotions[{index}]";
+
+        if (rule.Contains.Trim().Length == 0 || rule.Contains.Length > 512)
+        {
+            findings.Add(Error(
+                "retrieval.content-demotion-bad-marker",
+                "contains must be non-empty and at most 512 bytes",
+                $"{path}.contains"));
+        }
+
+        ValidateDemotionMultipliers(rule, path, findings);
+
+        for (var name = 0; name < rule.ExceptCollections.Count; name++)
+        {
+            if (!declared.Contains(rule.ExceptCollections[name]))
             {
                 findings.Add(Error(
-                    "retrieval.content-demotion-bad-marker",
-                    "contains must be non-empty and at most 512 bytes",
-                    $"{path}.contains"));
+                    "retrieval.content-demotion-unknown-collection",
+                    $"exceptCollections names '{rule.ExceptCollections[name]}', which spec.collections does not "
+                        + "declare",
+                    $"{path}.exceptCollections[{name}]"));
             }
+        }
 
-            if (!double.IsFinite(rule.LexicalMultiplier) || rule.LexicalMultiplier is < 0.0 or > 1.0)
-            {
-                findings.Add(Error(
-                    "retrieval.content-demotion-bad-lexical-multiplier",
-                    "lexicalMultiplier must be finite and in 0..=1",
-                    $"{path}.lexicalMultiplier"));
-            }
+        if (rule.ExceptCollections.Count > 0 && rule.ExceptCollections.Count >= collections)
+        {
+            findings.Add(new ValidationFinding(
+                Severity.Warn,
+                "retrieval.content-demotion-excepts-all",
+                "exceptCollections covers every collection - the rule never applies",
+                $"{path}.exceptCollections"));
+        }
+    }
 
-            if (!double.IsFinite(rule.VectorDistancePenalty) || rule.VectorDistancePenalty is < 0.0 or > 10.0)
-            {
-                findings.Add(Error(
-                    "retrieval.content-demotion-bad-vector-penalty",
-                    "vectorDistancePenalty must be finite and in 0..=10",
-                    $"{path}.vectorDistancePenalty"));
-            }
+    /// <summary>Checks the two multipliers a content marker scales its scores with.</summary>
+    /// <param name="rule">The marker.</param>
+    /// <param name="path">Where the findings say it is.</param>
+    /// <param name="findings">The findings so far.</param>
+    private static void ValidateDemotionMultipliers(
+        ContentDemotionSpec rule,
+        string path,
+        List<ValidationFinding> findings)
+    {
+        if (!double.IsFinite(rule.LexicalMultiplier) || rule.LexicalMultiplier is < 0.0 or > 1.0)
+        {
+            findings.Add(Error(
+                "retrieval.content-demotion-bad-lexical-multiplier",
+                "lexicalMultiplier must be finite and in 0..=1",
+                $"{path}.lexicalMultiplier"));
+        }
 
-            for (var name = 0; name < rule.ExceptCollections.Count; name++)
-            {
-                if (!declared.Contains(rule.ExceptCollections[name]))
-                {
-                    findings.Add(Error(
-                        "retrieval.content-demotion-unknown-collection",
-                        $"exceptCollections names '{rule.ExceptCollections[name]}', which spec.collections does not "
-                            + "declare",
-                        $"{path}.exceptCollections[{name}]"));
-                }
-            }
+        if (!double.IsFinite(rule.VectorDistancePenalty) || rule.VectorDistancePenalty is < 0.0 or > 10.0)
+        {
+            findings.Add(Error(
+                "retrieval.content-demotion-bad-vector-penalty",
+                "vectorDistancePenalty must be finite and in 0..=10",
+                $"{path}.vectorDistancePenalty"));
+        }
 
-            if (rule.ExceptCollections.Count > 0 && rule.ExceptCollections.Count >= spec.Collections.Count)
-            {
-                findings.Add(new ValidationFinding(
-                    Severity.Warn,
-                    "retrieval.content-demotion-excepts-all",
-                    "exceptCollections covers every collection - the rule never applies",
-                    $"{path}.exceptCollections"));
-            }
-
-            // The document writes literal defaults, so this is an exact comparison on purpose: an operator who writes
-            // 1.0 means exactly the default, and an epsilon would call 0.9999999999 the same thing - which is not what
-            // a configuration file says.
+        // The document writes literal defaults, so this is an exact comparison on purpose: an operator who writes
+        // 1.0 means exactly the default, and an epsilon would call 0.9999999999 the same thing - which is not what
+        // a configuration file says.
 #pragma warning disable S1244
-            if (rule.LexicalMultiplier == 1.0 && rule.VectorDistancePenalty == 0.0)
+        if (rule.LexicalMultiplier == 1.0 && rule.VectorDistancePenalty == 0.0)
 #pragma warning restore S1244
-            {
-                findings.Add(new ValidationFinding(
-                    Severity.Warn,
-                    "retrieval.content-demotion-no-op",
-                    "content demotion has no effect",
-                    path));
-            }
+        {
+            findings.Add(new ValidationFinding(
+                Severity.Warn,
+                "retrieval.content-demotion-no-op",
+                "content demotion has no effect",
+                path));
         }
     }
 

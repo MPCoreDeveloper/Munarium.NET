@@ -216,8 +216,7 @@ public class IndexBuilderTests
             fixture.Provider,
             fixture.Host,
             new IndexCatalog(fixture.Versions),
-            new EmbedderRef("local", "test-model", 4),
-            maxChunkChars: 0));
+            new IndexBuildSettings(new EmbedderRef("local", "test-model", 4), MaxChunkChars: 0)));
 
         await Task.CompletedTask;
     }
@@ -385,9 +384,10 @@ public class IndexBuilderTests
             provider,
             host,
             new IndexCatalog(versions),
-            new EmbedderRef("local", "test-model", 4),
-            maxChunkChars: 30,
-            chunkStore: chunks);
+            new IndexBuildSettings(
+                new EmbedderRef("local", "test-model", 4),
+                ChunkStore: chunks,
+                MaxChunkChars: 30));
 
         return (builder, host, store, registry, versions, provider, chunks);
     }

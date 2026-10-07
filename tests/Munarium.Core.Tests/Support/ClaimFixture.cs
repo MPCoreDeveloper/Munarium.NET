@@ -5,6 +5,25 @@ using Munarium.Facts;
 using Munarium.Ledger;
 
 /// <summary>
+/// The parts of a fixture claim that a test says nothing about most of the time: whether it corrects
+/// another claim, the scope it sits in, and how it was decided.
+/// </summary>
+/// <param name="Supersedes">The claim this one supersedes, when it does.</param>
+/// <param name="Scope">The scope, or <see langword="null"/> for none.</param>
+/// <param name="Status">The status.</param>
+internal readonly record struct ClaimShape(
+    string? Supersedes = null,
+    string? Scope = ClaimFixture.Scope,
+    ClaimStatus Status = ClaimStatus.Accepted)
+{
+    /// <summary>
+    /// Gets the shape a test that says nothing about the shaping gets: no correction, the fixture's
+    /// scope, accepted.
+    /// </summary>
+    internal static ClaimShape Unshaped { get; } = new(null, Scope: ClaimFixture.Scope);
+}
+
+/// <summary>
 /// Builds the claim-model fixtures the kernel tests share: claims, proposals and the pinned snapshot
 /// they are judged against.
 /// </summary>
@@ -27,9 +46,7 @@ internal static class ClaimFixture
     /// <param name="subject">The subject.</param>
     /// <param name="key">The property.</param>
     /// <param name="value">The value.</param>
-    /// <param name="supersedes">The claim this one supersedes, when it does.</param>
-    /// <param name="scope">The scope, or <see langword="null"/> for none.</param>
-    /// <param name="status">The status.</param>
+    /// <param name="shape">How the claim corrects, is scoped or was decided, when the test says.</param>
     /// <returns>The claim.</returns>
     internal static Claim Create(
         string id,
@@ -37,21 +54,24 @@ internal static class ClaimFixture
         string subject,
         string key,
         string value,
-        string? supersedes = null,
-        string? scope = Scope,
-        ClaimStatus status = ClaimStatus.Accepted) => new()
+        ClaimShape? shape = null)
+    {
+        var shaped = shape ?? ClaimShape.Unshaped;
+
+        return new()
         {
             Id = id,
             VersionId = VersionId,
             Sequence = new SequenceNumber(sequence),
-            ClaimType = supersedes is null ? ClaimType.Fact : ClaimType.Correction,
+            ClaimType = shaped.Supersedes is null ? ClaimType.Fact : ClaimType.Correction,
             Subject = subject,
             Key = key,
             Value = value,
-            ScopePath = scope,
-            Status = status,
-            SupersedesId = supersedes,
+            ScopePath = shaped.Scope,
+            Status = shaped.Status,
+            SupersedesId = shaped.Supersedes,
         };
+    }
 
     /// <summary>Builds a proposed claim.</summary>
     /// <param name="subject">The subject.</param>

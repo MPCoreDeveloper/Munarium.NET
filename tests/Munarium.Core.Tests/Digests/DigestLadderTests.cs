@@ -74,7 +74,7 @@ public class DigestLadderTests
     [Fact]
     public void FactsWithNoScopeStillGetAScopeRung() =>
         Assert.Contains(
-            DigestLadder.Tier0(ClaimFixture.VersionId, [ClaimFixture.Create("d", 1, "hero", "eyes", "green", scope: null)]),
+            DigestLadder.Tier0(ClaimFixture.VersionId, [ClaimFixture.Create("d", 1, "hero", "eyes", "green", shape: new(Scope: null))]),
             rung => rung.ScopePath.Length == 0 && rung.Content.Contains('['));
 
     /// <summary>
@@ -99,9 +99,9 @@ public class DigestLadderTests
 
     private static Claim[] Facts() =>
     [
-        ClaimFixture.Create("a", 1, "hero", "eyes", "green", scope: "book.ch1"),
-        ClaimFixture.Create("b", 2, "hero", "home", "harbor", scope: "book.ch2"),
-        ClaimFixture.Create("c", 3, "villain", "name", "Mora", scope: "notes"),
+        ClaimFixture.Create("a", 1, "hero", "eyes", "green", shape: new(Scope: "book.ch1")),
+        ClaimFixture.Create("b", 2, "hero", "home", "harbor", shape: new(Scope: "book.ch2")),
+        ClaimFixture.Create("c", 3, "villain", "name", "Mora", shape: new(Scope: "notes")),
     ];
 
     private static string Describe(IReadOnlyList<Digest> ladder) =>

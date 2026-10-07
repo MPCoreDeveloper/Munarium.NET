@@ -125,6 +125,27 @@ public static class MatrixResult
         bool truncated,
         string? evidenceId)
     {
+        var rows = RowsOf(body, out var rowIds);
+
+        return new TableBlock
+        {
+            Columns = ColumnsOf(manifest),
+            Rows = rows,
+            RowIds = rowIds,
+            Truncated = truncated,
+            EvidenceId = evidenceId,
+        };
+    }
+
+    /// <summary>Reads the table's columns out of the sealed manifest's schema.</summary>
+    /// <param name="manifest">The sealed manifest, when one was sealed.</param>
+    /// <returns>The declared column names, or none.</returns>
+    /// <remarks>
+    /// Nothing is defaulted here: a table whose manifest declares no columns is read as a table with no columns, because
+    /// a column name invented by this reader would be indistinguishable from one the producing plane sealed.
+    /// </remarks>
+    private static List<string> ColumnsOf(JsonElement? manifest)
+    {
         var columns = new List<string>();
 
         if (manifest is { } declared
@@ -138,8 +159,17 @@ public static class MatrixResult
             }
         }
 
+        return columns;
+    }
+
+    /// <summary>Reads the table's rows and their ids, in the order they were sealed.</summary>
+    /// <param name="body">The payload body.</param>
+    /// <param name="rowIds">The row ids, read or minted.</param>
+    /// <returns>The rows' cells.</returns>
+    private static List<IReadOnlyList<string?>> RowsOf(JsonElement body, out List<string> rowIds)
+    {
         var rows = new List<IReadOnlyList<string?>>();
-        var rowIds = new List<string>();
+        rowIds = [];
 
         if (body.TryGetProperty("rows", out var declaredRows) && declaredRows.ValueKind == JsonValueKind.Array)
         {
@@ -148,29 +178,30 @@ public static class MatrixResult
                 rowIds.Add(PayloadJson.Text(row, "row_id")
                     ?? string.Create(CultureInfo.InvariantCulture, $"r{rows.Count + 1:0000}"));
 
-                var cells = new List<string?>();
-
-                if (row.TryGetProperty("cells", out var declaredCells)
-                    && declaredCells.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var cell in declaredCells.EnumerateArray())
-                    {
-                        cells.Add(CellText(cell));
-                    }
-                }
-
-                rows.Add(cells);
+                rows.Add(CellsOf(row));
             }
         }
 
-        return new TableBlock
+        return rows;
+    }
+
+    /// <summary>Reads one row's cells.</summary>
+    /// <param name="row">The row.</param>
+    /// <returns>The cells as canonical text.</returns>
+    private static List<string?> CellsOf(JsonElement row)
+    {
+        var cells = new List<string?>();
+
+        if (row.TryGetProperty("cells", out var declaredCells)
+            && declaredCells.ValueKind == JsonValueKind.Array)
         {
-            Columns = columns,
-            Rows = rows,
-            RowIds = rowIds,
-            Truncated = truncated,
-            EvidenceId = evidenceId,
-        };
+            foreach (var cell in declaredCells.EnumerateArray())
+            {
+                cells.Add(CellText(cell));
+            }
+        }
+
+        return cells;
     }
 
     /// <summary>

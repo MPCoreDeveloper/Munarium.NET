@@ -5,6 +5,19 @@ using Munarium.Sources;
 using Munarium.Text;
 
 /// <summary>
+/// The identity and extraction settings a build is held to.
+/// </summary>
+/// <param name="Embedder">The embedder a manifest records, which is identity material.</param>
+/// <param name="Extraction">Local extraction first, and the document-intelligence provider only if it found nothing.</param>
+/// <param name="ChunkStore">Where a version's chunks are kept, or <see langword="null"/> for none.</param>
+/// <param name="MaxChunkChars">The largest a chunk may be, which is identity material too.</param>
+public sealed record IndexBuildSettings(
+    EmbedderRef Embedder,
+    SourceExtraction? Extraction = null,
+    IIndexChunkStore? ChunkStore = null,
+    int MaxChunkChars = IngestRunner.DefaultChunkChars);
+
+/// <summary>
 /// Builds an index version from the sources a deployment already has, and serves it only when asked to.
 /// </summary>
 /// <remarks>
@@ -30,20 +43,14 @@ using Munarium.Text;
 /// <param name="provider">The model seam the vectors come from.</param>
 /// <param name="host">The index instances: one live, and the ones a build creates.</param>
 /// <param name="catalogue">Where the version is recorded, and activated when the plan asks for it.</param>
-/// <param name="embedder">The embedder a manifest records, which is identity material.</param>
-/// <param name="maxChunkChars">The largest a chunk may be, which is identity material too.</param>
-/// <param name="extraction">Local extraction first, and the document-intelligence provider only if it found nothing.</param>
-/// <param name="chunkStore">Where a version chunks are kept, or <see langword="null"/> for none.</param>
+/// <param name="settings">The identity and extraction settings the build is held to.</param>
 public sealed class IndexBuilder(
     ISourceStore sources,
     ISourceRegistry registry,
     IModelProvider provider,
     IIndexHost host,
     IndexCatalog catalogue,
-    EmbedderRef embedder,
-    SourceExtraction? extraction = null,
-    IIndexChunkStore? chunkStore = null,
-    int maxChunkChars = IngestRunner.DefaultChunkChars)
+    IndexBuildSettings settings)
 {
     /// <summary>
     /// The extractors this port reads with, as a version.
@@ -56,15 +63,16 @@ public sealed class IndexBuilder(
 
     private readonly ISourceStore _sources = sources ?? throw new ArgumentNullException(nameof(sources));
     private readonly ISourceRegistry _registry = registry ?? throw new ArgumentNullException(nameof(registry));
-    private readonly SourceExtraction _extraction = extraction ?? new SourceExtraction();
-    private readonly IIndexChunkStore? _chunks = chunkStore;
     private readonly IModelProvider _provider = provider ?? throw new ArgumentNullException(nameof(provider));
     private readonly IIndexHost _host = host ?? throw new ArgumentNullException(nameof(host));
     private readonly IndexCatalog _catalogue = catalogue ?? throw new ArgumentNullException(nameof(catalogue));
-    private readonly EmbedderRef _embedder = embedder ?? throw new ArgumentNullException(nameof(embedder));
-    private readonly int _maxChunkChars = maxChunkChars > 0
-        ? maxChunkChars
-        : throw new ArgumentOutOfRangeException(nameof(maxChunkChars), maxChunkChars, "Must be positive.");
+    private readonly SourceExtraction _extraction =
+        (settings ?? throw new ArgumentNullException(nameof(settings))).Extraction ?? new SourceExtraction();
+    private readonly IIndexChunkStore? _chunks = settings.ChunkStore;
+    private readonly EmbedderRef _embedder = settings.Embedder;
+    private readonly int _maxChunkChars = settings.MaxChunkChars > 0
+        ? settings.MaxChunkChars
+        : throw new ArgumentOutOfRangeException(nameof(settings), settings.MaxChunkChars, "Must be positive.");
 
     /// <summary>Gets the versioned engine reference the host will build with.</summary>
     public string Engine => _host.Engine;

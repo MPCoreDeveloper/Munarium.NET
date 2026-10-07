@@ -158,36 +158,48 @@ public static class ChronologyGate
         {
             if (fact.Subject.Length > 0 || fact.Key.Length > 0)
             {
-                Consider(timeline, absoluteTargets, rules, fact.Subject, fact.Key, fact.Value, fact.Id, ChronoOrigin.Ledger);
+                Consider(
+                    timeline,
+                    absoluteTargets,
+                    rules,
+                    new Assertion(fact.Subject, fact.Key, fact.Value, fact.Id, ChronoOrigin.Ledger));
             }
         }
 
         foreach (var proposed in candidate.Claims.Concat(candidate.Corrections))
         {
-            Consider(timeline, absoluteTargets, rules, proposed.Subject, proposed.Key, proposed.Value, null, ChronoOrigin.Candidate);
+            Consider(
+                timeline,
+                absoluteTargets,
+                rules,
+                new Assertion(proposed.Subject, proposed.Key, proposed.Value, null, ChronoOrigin.Candidate));
         }
 
         return [.. timeline.Values];
     }
 
+    /// <summary>One assertion as the timeline reads it: what it says, and who said it.</summary>
+    /// <param name="Subject">The subject.</param>
+    /// <param name="Key">The key.</param>
+    /// <param name="Value">The asserted value, which may or may not parse as a date.</param>
+    /// <param name="ClaimId">Its identity in the ledger, or <see langword="null"/> for a candidate's own claim.</param>
+    /// <param name="Origin">Which side of the gate asserted it.</param>
+    private sealed record Assertion(string Subject, string Key, string Value, string? ClaimId, ChronoOrigin Origin);
+
     private static void Consider(
         SortedDictionary<string, ChronoEvent> timeline,
         IReadOnlyList<string> absoluteTargets,
         ChronologyRules rules,
-        string subject,
-        string key,
-        string value,
-        string? claimId,
-        ChronoOrigin origin)
+        Assertion assertion)
     {
-        var claimKey = string.Concat(subject, ".", key);
+        var claimKey = string.Concat(assertion.Subject, ".", assertion.Key);
 
-        if (!rules.IsTemporalKey(key) && !absoluteTargets.Contains(claimKey.ToLowerInvariant()))
+        if (!rules.IsTemporalKey(assertion.Key) && !absoluteTargets.Contains(claimKey.ToLowerInvariant()))
         {
             return;
         }
 
-        if (ChronologyGrammar.Parse(value) is not { } when)
+        if (ChronologyGrammar.Parse(assertion.Value) is not { } when)
         {
             timeline.Remove(claimKey);
             return;
@@ -195,12 +207,12 @@ public static class ChronologyGate
 
         timeline[claimKey] = new ChronoEvent
         {
-            Subject = subject,
-            Key = key,
-            Value = value,
+            Subject = assertion.Subject,
+            Key = assertion.Key,
+            Value = assertion.Value,
             Interval = when,
-            ClaimId = claimId,
-            Origin = origin,
+            ClaimId = assertion.ClaimId,
+            Origin = assertion.Origin,
         };
     }
 }

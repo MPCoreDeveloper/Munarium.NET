@@ -79,7 +79,7 @@ public class AnchorAndConflictGateTests
         var findings = LedgerConflict.Evaluate(
             ClaimFixture.Snapshot(
                 ClaimFixture.Create("c1", 1, "hero", "eyes", "green"),
-                ClaimFixture.Create("c2", 5, "hero", "eyes", "blue", supersedes: "c1")),
+                ClaimFixture.Create("c2", 5, "hero", "eyes", "blue", shape: new(Supersedes: "c1"))),
             new Candidate { Claims = [ClaimFixture.Propose("hero", "eyes", "hazel")] });
 
         Assert.Equal("c2", Assert.Single(findings).Detail!["canon_claim_id"]!.GetValue<string>());

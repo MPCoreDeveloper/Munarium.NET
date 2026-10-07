@@ -8,6 +8,44 @@ using Munarium.Retrieval;
 using Munarium.Runbooks;
 
 /// <summary>
+/// What one turn is asked to do, and which session is asking.
+/// </summary>
+/// <remarks>
+/// Gathered rather than passed one at a time, because a turn is one request: the session it runs in, the runbook that
+/// session pinned, the question, and what the caller wants done with it. Every turn carries the same things, and a
+/// caller that supplied one of them for a different session would be answering a question nobody asked.
+/// </remarks>
+public sealed record SessionTurnRequest
+{
+    /// <summary>Gets the session, which has to be open.</summary>
+    public required SessionRecord Session { get; init; }
+
+    /// <summary>Gets the runbook the session pinned.</summary>
+    public required RunbookDocument Document { get; init; }
+
+    /// <summary>Gets the question as asked.</summary>
+    public required string Question { get; init; }
+
+    /// <summary>Gets the profile the caller named, if any.</summary>
+    public string? RequestedProfile { get; init; }
+
+    /// <summary>Gets the models each paid step uses.</summary>
+    public required TurnModels Models { get; init; }
+
+    /// <summary>Gets a value indicating whether the runbook's completion step runs, when it declares one.</summary>
+    public bool Complete { get; init; }
+
+    /// <summary>Gets how many chunks the answer may carry, or zero for the runbook's own.</summary>
+    public int TopK { get; init; }
+
+    /// <summary>Gets an optional listener; the turn's result never depends on one being present.</summary>
+    public Action<TurnProgress>? OnProgress { get; init; }
+
+    /// <summary>Gets the cancellation token.</summary>
+    public CancellationToken CancellationToken { get; init; }
+}
+
+/// <summary>
 /// What one search of a turn produced: the merged hits, and one envelope per collection that answered.
 /// </summary>
 /// <remarks>
@@ -118,38 +156,20 @@ public readonly union SessionTurnResult(
 /// </remarks>
 /// <param name="sessions">Where the turn is recorded.</param>
 /// <param name="index">The index that answers.</param>
-/// <param name="embedder">The model that embeds the question.</param>
-/// <param name="model">The model that classifies and answers.</param>
-/// <param name="embeddingModel">The embedding model to ask for.</param>
-/// <param name="providers">The evidence providers, in trust order.</param>
-/// <param name="tenant">The deployment's tenant.</param>
-/// <param name="collections">
-/// The collections this deployment can search one at a time, or <see langword="null"/> when it built one corpus.
-/// </param>
-/// <param name="ceiling">
-/// The deployment's paid-call ceilings, or <see langword="null"/> for the built-ins. The turn reads its completion, its
-/// expansion and its classifier ceilings here, because a runbook that declares none has to be held to what the
-/// deployment says rather than to a constant compiled into the kernel.
-/// </param>
+/// <param name="settings">The deployment's serving configuration.</param>
 public sealed class SessionTurnRunner(
     ISessionStore sessions,
     IIndexHost index,
-    IModelProvider embedder,
-    IModelProvider model,
-    string embeddingModel,
-    IReadOnlyList<IEvidenceProvider> providers,
-    string tenant,
-    ICollectionIndexes? collections = null,
-    MaxTokensCeiling? ceiling = null)
+    SessionTurnSettings settings)
 {
     private readonly ISessionStore _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
     private readonly IIndexHost _index = index ?? throw new ArgumentNullException(nameof(index));
-    private readonly IModelProvider _embedder = embedder ?? throw new ArgumentNullException(nameof(embedder));
-    private readonly IModelProvider _model = model ?? throw new ArgumentNullException(nameof(model));
-    private readonly string _embeddingModel = embeddingModel ?? throw new ArgumentNullException(nameof(embeddingModel));
-    private readonly IReadOnlyList<IEvidenceProvider> _providers =
-        providers ?? throw new ArgumentNullException(nameof(providers));
-    private readonly string _tenant = tenant ?? throw new ArgumentNullException(nameof(tenant));
+    private readonly IModelProvider _embedder =
+        (settings ?? throw new ArgumentNullException(nameof(settings))).Embedder;
+    private readonly IModelProvider _model = settings.Model;
+    private readonly string _embeddingModel = settings.EmbeddingModel;
+    private readonly IReadOnlyList<IEvidenceProvider> _providers = settings.Providers;
+    private readonly string _tenant = settings.Tenant;
 
     /// <summary>
     /// Gets the collections this deployment can search one at a time, or <see langword="null"/> when it built one corpus.
@@ -159,8 +179,8 @@ public sealed class SessionTurnRunner(
     /// is concerned, and every turn before this seam existed worked that way. When it is present, a turn searches each
     /// permitted collection's own live version; when it is not, it searches the one that serves.
     /// </remarks>
-    private readonly ICollectionIndexes? _collections = collections;
-    private readonly MaxTokensCeiling? _ceiling = ceiling;
+    private readonly ICollectionIndexes? _collections = settings.Collections;
+    private readonly MaxTokensCeiling? _ceiling = settings.Ceiling;
 
     /// <summary>
     /// The completion ceiling a runbook that names none gets, when the deployment composed none either.
@@ -186,197 +206,245 @@ public sealed class SessionTurnRunner(
     /// <summary>
     /// Runs a turn.
     /// </summary>
-    /// <param name="session">The session, which has to be open.</param>
-    /// <param name="document">The runbook the session pinned.</param>
-    /// <param name="question">The question as asked.</param>
-    /// <param name="requestedProfile">The profile the caller named, if any.</param>
-    /// <param name="models">The models each paid step uses.</param>
-    /// <param name="complete">Whether the runbook's completion step runs, when it declares one.</param>
-    /// <param name="topK">How many chunks the answer may carry, or zero for the runbook's own.</param>
-    /// <param name="onProgress">An optional listener; the turn's result never depends on one being present.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="request">What the turn is asked to do, and which session is asking.</param>
     /// <returns>What the turn produced, or why nothing was produced.</returns>
-    public async ValueTask<SessionTurnResult> RunAsync(
-        SessionRecord session,
-        RunbookDocument document,
-        string question,
-        string? requestedProfile,
-        TurnModels models,
-        bool complete,
-        int topK = 0,
-        Action<TurnProgress>? onProgress = null,
-        CancellationToken cancellationToken = default)
+    public async ValueTask<SessionTurnResult> RunAsync(SessionTurnRequest request)
     {
-        ArgumentNullException.ThrowIfNull(session);
-        ArgumentNullException.ThrowIfNull(document);
-        ArgumentNullException.ThrowIfNull(models);
-        ArgumentException.ThrowIfNullOrWhiteSpace(question);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.Question);
 
-        if (session.State is not SessionState.Open)
+        if (request.Session.State is not SessionState.Open)
         {
             return new SessionRefusal(
                 SessionRefusalCodes.SessionClosed,
-                $"session '{session.Id}' is {session.State.ToWireName()} and accepts no further turns");
+                $"session '{request.Session.Id}' is {request.Session.State.ToWireName()} and accepts no further turns");
         }
 
-        var budgets = await CeilingAsync(cancellationToken).ConfigureAwait(false);
+        var budgets = await CeilingAsync(request.CancellationToken).ConfigureAwait(false);
 
         var intent = await IntentResolution
             .ResolveAsync(
-                document,
-                question,
+                request.Document,
+                request.Question,
                 _model,
-                models.Intent,
+                request.Models.Intent,
                 maxTokens: budgets.HierarchyClassifier,
-                cancellationToken: cancellationToken)
+                cancellationToken: request.CancellationToken)
             .ConfigureAwait(false);
 
         var (profile, problem) = ResearchProfiles.Resolve(
-            document.Spec.Retrieval?.ResearchProfiles ?? [],
-            requestedProfile,
-            document.Spec.Retrieval?.DefaultResearchProfile);
+            request.Document.Spec.Retrieval?.ResearchProfiles ?? [],
+            request.RequestedProfile,
+            request.Document.Spec.Retrieval?.DefaultResearchProfile);
 
         return problem is not null
             ? problem
-            : await AnswerAsync(
-                    session,
-                    document,
-                    question,
-                    intent,
-                    profile,
-                    models,
-                    budgets,
-                    complete,
-                    topK,
-                    onProgress,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            : await AnswerAsync(request, new ResolvedTurn(intent, profile, budgets)).ConfigureAwait(false);
     }
 
+    /// <summary>What a turn resolved before any evidence was gathered.</summary>
+    /// <param name="Intent">The intent the classifier resolved, or the pinned one when none was asked for.</param>
+    /// <param name="Profile">The research profile the turn runs, or <see langword="null"/> when none was named.</param>
+    /// <param name="Budgets">The deployment's ceilings, as this turn reads them.</param>
+    private sealed record ResolvedTurn(QueryIntent Intent, ResearchProfile? Profile, MaxTokensBudget Budgets);
+
+    /// <summary>What the evidence stage produced: a refusal that ends the turn, or an answer and the decision it made.</summary>
+    /// <param name="Outcome">The answer, when a model was asked and answered it.</param>
+    /// <param name="Decision">The hierarchy's decision, when one ran.</param>
+    /// <param name="Refusal">The required layer that could not answer, which ends the turn.</param>
+    private sealed record EvidenceStage(
+        TurnOutcome? Outcome,
+        EvidenceHierarchyDecision? Decision,
+        SessionTurnResult? Refusal);
+
     /// <summary>
-    /// Gathers the evidence, asks the model when the turn asked for an answer, and records the turn.
+    /// One turn's search, made once however many layers ask for it.
     /// </summary>
-    private async ValueTask<SessionTurnResult> AnswerAsync(
-        SessionRecord session,
-        RunbookDocument document,
-        string question,
-        QueryIntent intent,
-        ResearchProfile? profile,
-        TurnModels models,
+    /// <remarks>
+    /// The evidence hierarchy composes what the retrieval returned; it does not retrieve once per layer, so the first
+    /// layer to ask makes the search and every later one is served the same result - and the merge is reported where the
+    /// retrieval returns rather than where the turn reads it, because that is the boundary.
+    /// </remarks>
+    /// <param name="runner">The runner the search asks.</param>
+    /// <param name="turn">What the turn is asked to do.</param>
+    /// <param name="budgets">The ceilings the search is held to.</param>
+    /// <param name="searched">The collections the clearance permits, in the runbook's order.</param>
+    private sealed class TurnSearch(
+        SessionTurnRunner runner,
+        SessionTurnRequest turn,
         MaxTokensBudget budgets,
-        bool complete,
-        int topK,
-        Action<TurnProgress>? onProgress,
-        CancellationToken cancellationToken)
+        IReadOnlyList<string> searched)
     {
-        // The clearance is the session's rather than the caller's, which is the whole point of the snapshot: a turn
-        // reads what the conversation was opened to read.
-        var searched = SessionCreation.PermittedCollections(document, session.Access);
-        var plan = profile is null ? null : ResearchProfiles.BuildPlan(profile, intent);
-        var request = Completion(document, complete, question, budgets.TurnCompletion);
-        SessionTurnSearch? hits = null;
+        private SessionTurnSearch? _hits;
 
-        // Which model is about to answer is known before anything is paid for, which is the only moment a stream can
-        // say it. A turn that runs no completion resolves none, so it reports none.
-        if (request is not null)
+        /// <summary>Searches once, and answers the same result to every later caller.</summary>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>The merged hits, and one envelope per collection that answered.</returns>
+        public async ValueTask<SessionTurnSearch> OnceAsync(CancellationToken cancellationToken)
         {
-            onProgress?.Invoke(new TurnModelResolved(_model.Id.Value, models.Completion, Tier: null, WasOverride: false));
-        }
-
-        // One search per turn, however many layers ask for it: the evidence hierarchy composes what the retrieval
-        // returned, it does not retrieve once per layer.
-        async ValueTask<SessionTurnSearch> SearchOnceAsync(CancellationToken token)
-        {
-            if (hits is { } already)
+            if (_hits is { } already)
             {
                 return already;
             }
 
-            var widened = await WidenAsync(document, question, models.Expansion, budgets.QueryExpansion, onProgress, token)
+            var widened = await runner
+                .WidenAsync(
+                    turn.Document,
+                    turn.Question,
+                    turn.Models.Expansion,
+                    budgets.QueryExpansion,
+                    turn.OnProgress,
+                    cancellationToken)
                 .ConfigureAwait(false);
 
             // The fan-out when the deployment has an index per collection, and the one serving index otherwise - which
             // is what a deployment that built a single corpus has, and what every turn did before collections could be
             // searched one at a time.
-            hits = _collections is null || !await HasOwnIndexesAsync(searched, token).ConfigureAwait(false)
-                ? SessionTurnSearch.Of(await SearchAsync(document, widened, topK, token).ConfigureAwait(false))
-                : await SearchCollectionsAsync(document, searched, question, widened, topK, onProgress, token)
-                    .ConfigureAwait(false);
+            _hits = runner._collections is null
+                || !await runner.HasOwnIndexesAsync(searched, cancellationToken).ConfigureAwait(false)
+                    ? SessionTurnSearch.Of(
+                        await runner.SearchAsync(turn.Document, widened, turn.TopK, cancellationToken).ConfigureAwait(false))
+                    : await runner
+                        .SearchCollectionsAsync(
+                            turn.Document,
+                            searched,
+                            turn.Question,
+                            widened,
+                            turn.TopK,
+                            turn.OnProgress,
+                            cancellationToken)
+                        .ConfigureAwait(false);
 
-            // Reported where the retrieval returns rather than where the turn reads it: that is the boundary, and a
-            // layer that asks second is served the same search rather than a second one.
-            onProgress?.Invoke(new TurnMerged(hits.Chunks.Count));
+            turn.OnProgress?.Invoke(new TurnMerged(_hits.Chunks.Count));
 
-            return hits;
+            return _hits;
         }
 
-        // What a document layer takes: one retrieval, whose chunks are the merged hits. Its envelope is a shape rather
-        // than the turn's provenance, which is recorded per collection - see SessionTurnSearch.AsOne.
-        async ValueTask<RetrievalResult> DocumentsAsync(CancellationToken token) =>
-            (await SearchOnceAsync(token).ConfigureAwait(false)).AsOne();
+        /// <summary>What a document layer takes: one retrieval, whose chunks are the merged hits.</summary>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>The retrieval.</returns>
+        public async ValueTask<RetrievalResult> DocumentsAsync(CancellationToken cancellationToken) =>
+            (await OnceAsync(cancellationToken).ConfigureAwait(false)).AsOne();
+    }
 
-        TurnOutcome? outcome = null;
-        EvidenceHierarchyDecision? decision = null;
-
-        if (plan is not null)
+    /// <summary>
+    /// Runs the profile's hierarchy over the turn's search, or answers straight over it when the turn runs none.
+    /// </summary>
+    /// <remarks>
+    /// Evidence first, then an answer, and the order is the design: a required layer that cannot answer stops the turn
+    /// <em>before</em> a model is paid for, which is the one place a refusal is fatal rather than disclosed.
+    /// </remarks>
+    /// <param name="plan">The plan to execute, or <see langword="null"/> when no profile was named.</param>
+    /// <param name="request">The completion request, or <see langword="null"/> when the turn runs no completion.</param>
+    /// <param name="turn">What the turn is asked to do.</param>
+    /// <param name="search">The turn's search, made once for however many layers ask.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The answer and the decision, or the refusal that ended the turn.</returns>
+    private async ValueTask<EvidenceStage> EvidenceAsync(
+        EvidencePlan? plan,
+        TurnRequest? request,
+        SessionTurnRequest turn,
+        TurnSearch search,
+        CancellationToken cancellationToken)
+    {
+        if (plan is null)
         {
-            if (request is null)
-            {
-                // Evidence without an answer: the hierarchy still decides, and the decision is still what the turn
-                // records, because the caller who asked for hits only may ask why it got those.
-                var run = await HierarchyRunner
-                    .ExecuteAsync(
-                        plan,
-                        _providers,
-                        (_, token) => DocumentsAsync(token),
-                        hierarchy => onProgress?.Invoke(hierarchy),
-                        cancellationToken: cancellationToken)
-                    .ConfigureAwait(false);
-
-                if (run is RequiredLayerUnavailable refusal)
-                {
-                    return refusal;
-                }
-
-                if (run is HierarchyOutcome hierarchy)
-                {
-                    decision = hierarchy.Decision;
-                }
-            }
-            else
-            {
-                var result = await TurnPipeline
-                    .ExecuteAsync(
-                        plan,
-                        request,
-                        _providers,
-                        (_, token) => DocumentsAsync(token),
-                        served => Labels(served.Chunks),
-                        _model,
-                        models.Completion,
-                        document.Spec.Completion?.ContextCharBudget ?? TurnPipeline.DefaultContextBudget,
-                        onProgress,
-                        cancellationToken: cancellationToken)
-                    .ConfigureAwait(false);
-
-                if (result is RequiredLayerUnavailable refusal)
-                {
-                    return refusal;
-                }
-
-                if (result is TurnOutcome answered)
-                {
-                    outcome = answered;
-                    decision = answered.Decision;
-                }
-            }
+            return new EvidenceStage(null, null, null);
         }
 
-        var retrieved = await SearchOnceAsync(cancellationToken).ConfigureAwait(false);
+        if (request is null)
+        {
+            // Evidence without an answer: the hierarchy still decides, and the decision is still what the turn records,
+            // because the caller who asked for hits only may ask why it got those.
+            var run = await HierarchyRunner
+                .ExecuteAsync(
+                    plan,
+                    _providers,
+                    (_, token) => search.DocumentsAsync(token),
+                    hierarchy => turn.OnProgress?.Invoke(hierarchy),
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+
+            return run switch
+            {
+                RequiredLayerUnavailable refusal => new EvidenceStage(null, null, refusal),
+                HierarchyOutcome hierarchy => new EvidenceStage(null, hierarchy.Decision, null),
+                _ => new EvidenceStage(null, null, null),
+            };
+        }
+
+        var answered = await TurnPipeline
+            .ExecuteAsync(
+                new TurnExecution
+                {
+                    Plan = plan,
+                    Request = request,
+                    Providers = _providers,
+                    DocumentLayer = (_, token) => search.DocumentsAsync(token),
+                    ServedLabels = served => Labels(served.Chunks),
+                    Model = new AnsweringModel(_model, turn.Models.Completion),
+                    ContextBudget = turn.Document.Spec.Completion?.ContextCharBudget
+                        ?? TurnPipeline.DefaultContextBudget,
+                    OnProgress = turn.OnProgress,
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return answered switch
+        {
+            RequiredLayerUnavailable refusal => new EvidenceStage(null, null, refusal),
+            TurnOutcome outcome => new EvidenceStage(outcome, outcome.Decision, null),
+            _ => new EvidenceStage(null, null, null),
+        };
+    }
+
+    /// <summary>
+    /// Gathers the evidence, asks the model when the turn asked for an answer, and records the turn.
+    /// </summary>
+    /// <param name="turn">What the turn is asked to do.</param>
+    /// <param name="resolved">What the turn resolved before any evidence was gathered.</param>
+    /// <returns>What the turn produced, or why nothing was produced.</returns>
+    private async ValueTask<SessionTurnResult> AnswerAsync(SessionTurnRequest turn, ResolvedTurn resolved)
+    {
+        var session = turn.Session;
+        var document = turn.Document;
+        var question = turn.Question;
+        var cancellationToken = turn.CancellationToken;
+
+        // The clearance is the session's rather than the caller's, which is the whole point of the snapshot: a turn
+        // reads what the conversation was opened to read.
+        var searched = SessionCreation.PermittedCollections(document, session.Access);
+        var plan = resolved.Profile is null ? null : ResearchProfiles.BuildPlan(resolved.Profile, resolved.Intent);
+        var request = Completion(document, turn.Complete, question, resolved.Budgets.TurnCompletion);
+        var search = new TurnSearch(this, turn, resolved.Budgets, searched);
+
+        // Which model is about to answer is known before anything is paid for, which is the only moment a stream can
+        // say it. A turn that runs no completion resolves none, so it reports none.
+        if (request is not null)
+        {
+            turn.OnProgress?.Invoke(
+                new TurnModelResolved(_model.Id.Value, turn.Models.Completion, Tier: null, WasOverride: false));
+        }
+
+        var evidence = await EvidenceAsync(plan, request, turn, search, cancellationToken).ConfigureAwait(false);
+
+        if (evidence.Refusal is { } refusal)
+        {
+            return refusal;
+        }
+
+        var outcome = evidence.Outcome;
+        var decision = evidence.Decision;
+        var retrieved = await search.OnceAsync(cancellationToken).ConfigureAwait(false);
 
         if (outcome is null && request is not null)
         {
-            outcome = await AnswerOverHitsAsync(request, retrieved.Chunks, models, onProgress, cancellationToken)
+            outcome = await AnswerOverHitsAsync(
+                    request,
+                    retrieved.Chunks,
+                    turn.Models,
+                    turn.OnProgress,
+                    cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -401,7 +469,7 @@ public sealed class SessionTurnRunner(
         {
             Ordinal = ordinal,
             Question = question,
-            Intent = intent,
+            Intent = resolved.Intent,
             CollectionsSearched = searched,
             Hits = retrieved.Chunks,
             Envelopes = retrieved.Envelopes,
@@ -615,86 +683,25 @@ public sealed class SessionTurnRunner(
         var indexes = _collections!;
         var selection = document.Spec.Retrieval?.CollectionSelection;
         var wanted = Math.Max(Wanted(document, topK), 1);
-        var pools = new List<CollectionPool>();
-        List<string> chosen;
-        var unselected = new List<IReadOnlyList<RetrievedChunk>>();
+        var selected = await SelectAsync(document, permitted, question, onProgress, cancellationToken)
+            .ConfigureAwait(false);
 
-        // One envelope per collection whose chunks reach the answer, which is what an envelope is for: a chunk whose
-        // provenance is not recorded is a chunk nobody can explain later. A collection that was probed and lost the
-        // selection contributes its pool to the merge, so its envelope belongs in the record too - which is why the
-        // probe's envelopes are kept and not just its chunks.
-        var contributions = new Dictionary<string, ProvenanceEnvelope>(StringComparer.Ordinal);
-        var probed = new Dictionary<string, ProvenanceEnvelope>(StringComparer.Ordinal);
-
-        var probeVector = selection is null
-            ? (ReadOnlyMemory<float>?)null
-            : await EmbedAsync(question, cancellationToken).ConfigureAwait(false);
-
-        if (selection is null)
-        {
-            // Without a declared selection there is no probe: every permitted collection gets the deep search, and the
-            // events that follow are the retrieval ones.
-            chosen = [.. permitted];
-        }
-        else
-        {
-            var probeK = (int)Math.Clamp(selection.ProbeCandidateN, 1, int.MaxValue);
-
-            foreach (var collection in permitted)
-            {
-                var reader = await indexes.ReaderForAsync(collection, cancellationToken).ConfigureAwait(false);
-
-                if (reader is null)
-                {
-                    onProgress?.Invoke(new TurnProbed(collection, 0, Skipped: true));
-
-                    continue;
-                }
-
-                var probe = await AskAsync(reader, question, probeVector!.Value, probeK, cancellationToken)
-                    .ConfigureAwait(false);
-
-                onProgress?.Invoke(new TurnProbed(collection, probe.Chunks.Count, Skipped: false));
-                pools.Add(new CollectionPool(collection, probe.Chunks));
-                probed[collection] = probe.Envelope;
-            }
-
-            var ranked = CollectionSelection.Rank(pools, question, selection.PhraseBoost);
-            var strongest = ranked
-                .Take(Math.Max(0, selection.MaxCollections))
-                .Select(index => pools[index].Collection)
-                .ToHashSet(StringComparer.Ordinal);
-
-            chosen = [.. permitted.Where(strongest.Contains)];
-
-            // An all-empty probe is not evidence that no collection can answer, so the selection falls back to every
-            // permitted collection - and the probe pools are dropped with it, because nothing is merged twice.
-            if (chosen.Count == 0)
-            {
-                chosen = [.. permitted];
-            }
-            else
-            {
-                foreach (var pool in pools.Where(pool => !strongest.Contains(pool.Collection)))
-                {
-                    unselected.Add(pool.Hits);
-                    contributions[pool.Collection] = probed[pool.Collection];
-                }
-            }
-
-            onProgress?.Invoke(new TurnSelected(pools.Count, chosen.Count, chosen));
-        }
+        // The envelopes the answer's chunks are explained by, one per collection that contributes to it: the pools that
+        // lost the selection carry theirs already, and the deep search adds one as each chosen collection answers. That
+        // is why the probe's envelopes are kept and not just its chunks - a chunk whose provenance is not recorded is a
+        // chunk nobody can explain later.
+        var contributions = selected.Envelopes;
 
         // The widened question is usually the question itself, and then the probe's own vector is the deep search's: one
         // embedding, exactly as the probe shares one across every collection it probes.
-        var deepVector = probeVector is { } original && string.Equals(widened, question, StringComparison.Ordinal)
+        var deepVector = selected.ProbeVector is { } original && string.Equals(widened, question, StringComparison.Ordinal)
             ? original
             : await EmbedAsync(widened, cancellationToken).ConfigureAwait(false);
 
         var deepK = selection is null ? wanted : Math.Max(wanted, selection.CandidatePoolPerCollection);
         var deep = new List<IReadOnlyList<RetrievedChunk>>();
 
-        foreach (var collection in chosen)
+        foreach (var collection in selected.Chosen)
         {
             var reader = await indexes.ReaderForAsync(collection, cancellationToken).ConfigureAwait(false);
 
@@ -720,7 +727,108 @@ public sealed class SessionTurnRunner(
             .Select(collection => contributions[collection])
             .ToArray();
 
-        return new SessionTurnSearch(ReciprocalRankFusion.Fuse([.. deep, .. unselected], wanted), envelopes);
+        return new SessionTurnSearch(ReciprocalRankFusion.Fuse([.. deep, .. selected.Unselected], wanted), envelopes);
+    }
+
+    /// <summary>What the probe decided, before the deep search runs.</summary>
+    /// <param name="ProbeVector">The question's vector, or <see langword="null"/> when no selection was declared.</param>
+    /// <param name="Chosen">The collections the deep search gets, in the runbook's order.</param>
+    /// <param name="Unselected">The probe pools of the collections that lost the selection.</param>
+    /// <param name="Envelopes">The envelopes of the collections that lost the selection.</param>
+    private sealed record Selection(
+        ReadOnlyMemory<float>? ProbeVector,
+        List<string> Chosen,
+        List<IReadOnlyList<RetrievedChunk>> Unselected,
+        Dictionary<string, ProvenanceEnvelope> Envelopes);
+
+    /// <summary>
+    /// Probes every collection the session may read, and selects the strongest few for the deep search.
+    /// </summary>
+    /// <remarks>
+    /// The original's two stages, in its order. Every permitted collection is <em>probed</em> with the question as asked -
+    /// the original query's vector, not the widened one - and the strongest few get the deep search. Selection spends the
+    /// deep search rather than narrowing the answer: a collection that lost the selection still contributes its probe pool
+    /// to the merge, which is why the collections recorded as searched are all of them.
+    /// <para>
+    /// One difference from the original, and it is a real one: it fans the probe out under a concurrency setting and this
+    /// port asks one collection at a time. The events still stream per collection as each answers, which is what the
+    /// bounded fan-out was for, but a wide runbook pays the sum of the probes rather than their maximum.
+    /// </para>
+    /// </remarks>
+    /// <param name="document">The runbook.</param>
+    /// <param name="permitted">The collections the clearance permits, in the runbook's order.</param>
+    /// <param name="question">The question as asked.</param>
+    /// <param name="onProgress">An optional listener.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What the probe decided.</returns>
+    private async ValueTask<Selection> SelectAsync(
+        RunbookDocument document,
+        IReadOnlyList<string> permitted,
+        string question,
+        Action<TurnProgress>? onProgress,
+        CancellationToken cancellationToken)
+    {
+        var indexes = _collections!;
+        var selection = document.Spec.Retrieval?.CollectionSelection;
+        var pools = new List<CollectionPool>();
+        var probed = new Dictionary<string, ProvenanceEnvelope>(StringComparer.Ordinal);
+
+        if (selection is null)
+        {
+            // Without a declared selection there is no probe: every permitted collection gets the deep search, and the
+            // events that follow are the retrieval ones.
+            return new Selection(null, [.. permitted], [], []);
+        }
+
+        var probeK = (int)Math.Clamp(selection.ProbeCandidateN, 1, int.MaxValue);
+        var probeVector = await EmbedAsync(question, cancellationToken).ConfigureAwait(false);
+
+        foreach (var collection in permitted)
+        {
+            var reader = await indexes.ReaderForAsync(collection, cancellationToken).ConfigureAwait(false);
+
+            if (reader is null)
+            {
+                onProgress?.Invoke(new TurnProbed(collection, 0, Skipped: true));
+
+                continue;
+            }
+
+            var probe = await AskAsync(reader, question, probeVector, probeK, cancellationToken).ConfigureAwait(false);
+
+            onProgress?.Invoke(new TurnProbed(collection, probe.Chunks.Count, Skipped: false));
+            pools.Add(new CollectionPool(collection, probe.Chunks));
+            probed[collection] = probe.Envelope;
+        }
+
+        var ranked = CollectionSelection.Rank(pools, question, selection.PhraseBoost);
+        var strongest = ranked
+            .Take(Math.Max(0, selection.MaxCollections))
+            .Select(index => pools[index].Collection)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var chosen = permitted.Where(strongest.Contains).ToList();
+        var unselected = new List<IReadOnlyList<RetrievedChunk>>();
+        var envelopes = new Dictionary<string, ProvenanceEnvelope>(StringComparer.Ordinal);
+
+        // An all-empty probe is not evidence that no collection can answer, so the selection falls back to every
+        // permitted collection - and the probe pools are dropped with it, because nothing is merged twice.
+        if (chosen.Count == 0)
+        {
+            onProgress?.Invoke(new TurnSelected(pools.Count, permitted.Count, [.. permitted]));
+
+            return new Selection(probeVector, [.. permitted], [], envelopes);
+        }
+
+        foreach (var pool in pools.Where(pool => !strongest.Contains(pool.Collection)))
+        {
+            unselected.Add(pool.Hits);
+            envelopes[pool.Collection] = probed[pool.Collection];
+        }
+
+        onProgress?.Invoke(new TurnSelected(pools.Count, chosen.Count, chosen));
+
+        return new Selection(probeVector, chosen, unselected, envelopes);
     }
 
     /// <summary>
@@ -749,8 +857,7 @@ public sealed class SessionTurnRunner(
                 RenderHits(chunks),
                 [.. chunks.Select(chunk => chunk.Text)],
                 Labels(chunks),
-                _model,
-                models.Completion,
+                new AnsweringModel(_model, models.Completion),
                 onProgress,
                 cancellationToken)
             .ConfigureAwait(false);

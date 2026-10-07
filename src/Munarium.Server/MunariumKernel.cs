@@ -22,6 +22,46 @@ using SharpCoreDB.EventSourcing;
 using SharpCoreDB.Interfaces;
 
 /// <summary>
+/// The parts one kernel is composed from: what it stores to, what it serves, and what it answers with.
+/// </summary>
+/// <remarks>
+/// Gathered rather than passed one at a time, because they are one composition: a kernel whose operations were built
+/// over a different catalogue than the one it rebuilds from would be two deployments sharing a process.
+/// </remarks>
+internal sealed record KernelComposition
+{
+    /// <summary>Gets the container the parts were resolved from.</summary>
+    public required ServiceProvider Provider { get; init; }
+
+    /// <summary>Gets the database the kernel reads and writes.</summary>
+    public required IDatabase Database { get; init; }
+
+    /// <summary>Gets the index host the deployment serves from.</summary>
+    public required SharpCoreDbIndexHost Host { get; init; }
+
+    /// <summary>Gets the builder that rebuilds a version.</summary>
+    public required IndexBuilder Builder { get; init; }
+
+    /// <summary>Gets the catalogue of index versions.</summary>
+    public required IndexCatalog Catalogue { get; init; }
+
+    /// <summary>Gets the ledger the mesh is composed over.</summary>
+    public required FactLedger Facts { get; init; }
+
+    /// <summary>Gets the one implementation behind both transports.</summary>
+    public required MunariumOperations Operations { get; init; }
+
+    /// <summary>Gets the shapes this deployment understands.</summary>
+    public required ShapeRegistry Shapes { get; init; }
+
+    /// <summary>Gets where issued capabilities and their withdrawals are recorded.</summary>
+    public required IAccessTokenAudit AccessAudit { get; init; }
+
+    /// <summary>Gets where the chunks of each built version are persisted.</summary>
+    public required IIndexChunkStore Chunks { get; init; }
+}
+
+/// <summary>
 /// A composed Munarium: the ledger, the shapes, the retriever and the one operation surface.
 /// </summary>
 /// <remarks>
@@ -94,28 +134,20 @@ public sealed class MunariumKernel : IAsyncDisposable
 
     // Internal rather than public: a kernel is composed through Create, so a caller cannot build one
     // without the ledger, the shapes and the index host that make it work.
-    internal MunariumKernel(
-        ServiceProvider provider,
-        IDatabase database,
-        SharpCoreDbIndexHost host,
-        IndexBuilder builder,
-        IndexCatalog catalogue,
-        FactLedger facts,
-        MunariumOperations operations,
-        ShapeRegistry shapes,
-        IAccessTokenAudit audit,
-        IIndexChunkStore chunks)
+    internal MunariumKernel(KernelComposition composition)
     {
-        _provider = provider;
-        _database = database;
-        _host = host;
-        _builder = builder;
-        _catalogue = catalogue;
-        _facts = facts;
-        _chunks = chunks;
-        Operations = operations;
-        Shapes = shapes;
-        AccessAudit = audit;
+        ArgumentNullException.ThrowIfNull(composition);
+
+        _provider = composition.Provider;
+        _database = composition.Database;
+        _host = composition.Host;
+        _builder = composition.Builder;
+        _catalogue = composition.Catalogue;
+        _facts = composition.Facts;
+        _chunks = composition.Chunks;
+        Operations = composition.Operations;
+        Shapes = composition.Shapes;
+        AccessAudit = composition.AccessAudit;
 
         // Authorization is a deployment property: read once here rather than per request, so no request can turn it on.
         Gate = new AccessGate(
@@ -125,7 +157,7 @@ public sealed class MunariumKernel : IAsyncDisposable
                 "true",
                 StringComparison.OrdinalIgnoreCase),
             Principal,
-            audit);
+            composition.AccessAudit);
     }
 
     /// <summary>Gets the one implementation behind both transports.</summary>
@@ -258,46 +290,60 @@ public sealed class MunariumKernel : IAsyncDisposable
             embedder,
             host,
             catalogue,
-            new EmbedderRef(
-                ProviderId.Local.Value,
-                DeterministicEmbeddingProvider.ModelName,
-                EmbeddingDimensions),
-            chunkStore: chunkStore);
+            new IndexBuildSettings(
+                new EmbedderRef(
+                    ProviderId.Local.Value,
+                    DeterministicEmbeddingProvider.ModelName,
+                    EmbeddingDimensions),
+                ChunkStore: chunkStore));
 
-        var operations = new MunariumOperations(
-            storage,
-            claims,
-            candidates,
-            findings,
-            anchors,
-            promises,
-            counters,
-            facts,
-            shapes,
-            host,
-            embedder,
-            new Composer(facts),
-            snapshots,
-            DeterministicEmbeddingProvider.ModelName,
-            ingest,
-            sourceRegistry,
-            idempotency,
-            builder,
-            catalogue,
-            versionStore,
-            evidence,
-            sourceStore,
-            runbooks,
-            sessions,
-            audit,
-            draftStore,
-            shapeStore,
-            Tenant,
-            providers,
-            ceiling: ceiling);
+        var operations = new MunariumOperations(new MunariumOperationSettings
+        {
+            Storage = storage,
+            Claims = claims,
+            Candidates = candidates,
+            Findings = findings,
+            Anchors = anchors,
+            Promises = promises,
+            Counters = counters,
+            Facts = facts,
+            Shapes = shapes,
+            IndexHost = host,
+            Embedder = embedder,
+            Composer = new Composer(facts),
+            Snapshots = snapshots,
+            EmbeddingModel = DeterministicEmbeddingProvider.ModelName,
+            Ingest = ingest,
+            Sources = sourceRegistry,
+            Idempotency = idempotency,
+            IndexBuilder = builder,
+            Catalogue = catalogue,
+            IndexVersions = versionStore,
+            Evidence = evidence,
+            EvidenceBytes = sourceStore,
+            Runbooks = runbooks,
+            Sessions = sessions,
+            AccessAudit = audit,
+            Authoring = draftStore,
+            ShapeStore = shapeStore,
+            Tenant = Tenant,
+            Providers = providers,
+            Ceiling = ceiling,
+        });
 
-
-        return new MunariumKernel(provider, database, host, builder, catalogue, facts, operations, shapes, audit, chunkStore);
+        return new MunariumKernel(new KernelComposition
+        {
+            Provider = provider,
+            Database = database,
+            Host = host,
+            Builder = builder,
+            Catalogue = catalogue,
+            Facts = facts,
+            Operations = operations,
+            Shapes = shapes,
+            AccessAudit = audit,
+            Chunks = chunkStore,
+        });
     }
 
     /// <summary>

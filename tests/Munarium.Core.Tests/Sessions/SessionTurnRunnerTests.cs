@@ -106,14 +106,17 @@ public class SessionTurnRunnerTests
         Runner(sessions, model, new StubIndexHost());
 
     private static SessionTurnRunner Runner(ISessionStore sessions, IModelProvider model, StubIndexHost index) =>
-        new(sessions, index, model, model, "test-embedder", [], "acme");
+        new(sessions, index, new SessionTurnSettings(model, model, "test-embedder", [], "acme"));
 
     private static SessionTurnRunner Runner(
         ISessionStore sessions,
         IModelProvider model,
         StubIndexHost index,
         ICollectionIndexes collections) =>
-        new(sessions, index, model, model, "test-embedder", [], "acme", collections);
+        new(
+            sessions,
+            index,
+            new SessionTurnSettings(model, model, "test-embedder", [], "acme", collections));
 
     /// <summary>
     /// A turn reports the stages it crosses, in the order it crosses them - and reports nothing it did not do.
@@ -133,15 +136,17 @@ public class SessionTurnRunnerTests
         var model = new StubModel("The policy holds. \"text of doc-1\" [doc-1]");
         var reported = new List<TurnProgress>();
 
-        _ = Executed(await Runner(sessions, model).RunAsync(
-            session,
-            Document(),
-            "how many contracts lapse?",
-            requestedProfile: null,
-            new TurnModels("small-model", "small-model", "big-model"),
-            complete: true,
-            topK: 0,
-            onProgress: reported.Add));
+        _ = Executed(await Runner(sessions, model).RunAsync(new SessionTurnRequest
+        {
+            Session = session,
+            Document = Document(),
+            Question = "how many contracts lapse?",
+            RequestedProfile = null,
+            Models = new TurnModels("small-model", "small-model", "big-model"),
+            Complete = true,
+            TopK = 0,
+            OnProgress = reported.Add,
+        }));
 
         var stages = reported.Select(StageOf).ToList();
 
@@ -168,15 +173,17 @@ public class SessionTurnRunnerTests
         var model = new StubModel("The register is the source.");
         var reported = new List<TurnProgress>();
 
-        _ = Refused(await Runner(sessions, model).RunAsync(
-            session,
-            Document(withProfile: true),
-            "what does the register say?",
-            requestedProfile: null,
-            new TurnModels("small-model", "small-model", "big-model"),
-            complete: true,
-            topK: 0,
-            onProgress: reported.Add));
+        _ = Refused(await Runner(sessions, model).RunAsync(new SessionTurnRequest
+        {
+            Session = session,
+            Document = Document(withProfile: true),
+            Question = "what does the register say?",
+            RequestedProfile = null,
+            Models = new TurnModels("small-model", "small-model", "big-model"),
+            Complete = true,
+            TopK = 0,
+            OnProgress = reported.Add,
+        }));
 
         var stages = reported.Select(StageOf).ToList();
 
@@ -210,15 +217,16 @@ public class SessionTurnRunnerTests
         var reported = new List<TurnProgress>();
         var expanded = new List<TurnExpanded>();
 
-        _ = Executed(await Runner(sessions, model, index).RunAsync(
-            session,
-            Document(expansion: new ModelQueryExpansionSpec { MaxTerms = 3 }),
-            "how many contracts lapse?",
-            requestedProfile: null,
-            new TurnModels("small-model", "small-model", "big-model"),
-            complete: false,
-            topK: 0,
-            onProgress: progress =>
+        _ = Executed(await Runner(sessions, model, index).RunAsync(new SessionTurnRequest
+        {
+            Session = session,
+            Document = Document(expansion: new ModelQueryExpansionSpec { MaxTerms = 3 }),
+            Question = "how many contracts lapse?",
+            RequestedProfile = null,
+            Models = new TurnModels("small-model", "small-model", "big-model"),
+            Complete = false,
+            TopK = 0,
+            OnProgress = progress =>
             {
                 reported.Add(progress);
 
@@ -226,7 +234,8 @@ public class SessionTurnRunnerTests
                 {
                     expanded.Add(value);
                 }
-            }));
+            },
+        }));
 
         Assert.Equal("how many contracts lapse? expire renew lapsed", Assert.Single(index.Queries));
 
@@ -256,15 +265,17 @@ public class SessionTurnRunnerTests
         var index = new StubIndexHost();
         var reported = new List<TurnProgress>();
 
-        _ = Executed(await Runner(sessions, new FailingModel(), index).RunAsync(
-            session,
-            Document(expansion: new ModelQueryExpansionSpec()),
-            "how many contracts lapse?",
-            requestedProfile: null,
-            new TurnModels("small-model", "small-model", "big-model"),
-            complete: false,
-            topK: 0,
-            onProgress: reported.Add));
+        _ = Executed(await Runner(sessions, new FailingModel(), index).RunAsync(new SessionTurnRequest
+        {
+            Session = session,
+            Document = Document(expansion: new ModelQueryExpansionSpec()),
+            Question = "how many contracts lapse?",
+            RequestedProfile = null,
+            Models = new TurnModels("small-model", "small-model", "big-model"),
+            Complete = false,
+            TopK = 0,
+            OnProgress = reported.Add,
+        }));
 
         Assert.Equal("how many contracts lapse?", Assert.Single(index.Queries));
         Assert.DoesNotContain("expansion", reported.Select(StageOf));
@@ -283,14 +294,16 @@ public class SessionTurnRunnerTests
         var index = new StubIndexHost();
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await Runner(sessions, new FailingModel(), index).RunAsync(
-                session,
-                Document(expansion: new ModelQueryExpansionSpec { Required = true }),
-                "how many contracts lapse?",
-                requestedProfile: null,
-                new TurnModels("small-model", "small-model", "big-model"),
-                complete: false,
-                topK: 0));
+            await Runner(sessions, new FailingModel(), index).RunAsync(new SessionTurnRequest
+            {
+                Session = session,
+                Document = Document(expansion: new ModelQueryExpansionSpec { Required = true }),
+                Question = "how many contracts lapse?",
+                RequestedProfile = null,
+                Models = new TurnModels("small-model", "small-model", "big-model"),
+                Complete = false,
+                TopK = 0,
+            }));
 
         Assert.Empty(index.Queries);
     }
@@ -344,15 +357,16 @@ public class SessionTurnRunnerTests
         var reported = new List<TurnProgress>();
         var selected = new List<TurnSelected>();
 
-        var executed = Executed(await Runner(sessions, new StubModel("[]"), index, collections).RunAsync(
-            session,
-            Document(selection: new CollectionSelectionSpec { MaxCollections = 1, ProbeCandidateN = 10 }),
-            "how many contracts lapse?",
-            requestedProfile: null,
-            new TurnModels("small-model", "small-model", "big-model"),
-            complete: false,
-            topK: 5,
-            onProgress: progress =>
+        var executed = Executed(await Runner(sessions, new StubModel("[]"), index, collections).RunAsync(new SessionTurnRequest
+        {
+            Session = session,
+            Document = Document(selection: new CollectionSelectionSpec { MaxCollections = 1, ProbeCandidateN = 10 }),
+            Question = "how many contracts lapse?",
+            RequestedProfile = null,
+            Models = new TurnModels("small-model", "small-model", "big-model"),
+            Complete = false,
+            TopK = 5,
+            OnProgress = progress =>
             {
                 reported.Add(progress);
 
@@ -360,7 +374,8 @@ public class SessionTurnRunnerTests
                 {
                     selected.Add(value);
                 }
-            }));
+            },
+        }));
 
         // Probed both, deepened one, merged - in that order, which is the order the events claim.
         Assert.Equal(["probe", "probe", "selection", "retrieval", "merge"], reported.Select(StageOf));
@@ -400,21 +415,23 @@ public class SessionTurnRunnerTests
         var collections = new StubCollections("contracts");
         var probed = new List<TurnProbed>();
 
-        var executed = Executed(await Runner(sessions, new StubModel("[]"), new StubIndexHost(), collections).RunAsync(
-            session,
-            Document(selection: new CollectionSelectionSpec { MaxCollections = 2, ProbeCandidateN = 10 }),
-            "how many contracts lapse?",
-            requestedProfile: null,
-            new TurnModels("small-model", "small-model", "big-model"),
-            complete: false,
-            topK: 5,
-            onProgress: progress =>
+        var executed = Executed(await Runner(sessions, new StubModel("[]"), new StubIndexHost(), collections).RunAsync(new SessionTurnRequest
+        {
+            Session = session,
+            Document = Document(selection: new CollectionSelectionSpec { MaxCollections = 2, ProbeCandidateN = 10 }),
+            Question = "how many contracts lapse?",
+            RequestedProfile = null,
+            Models = new TurnModels("small-model", "small-model", "big-model"),
+            Complete = false,
+            TopK = 5,
+            OnProgress = progress =>
             {
                 if (progress is TurnProbed value)
                 {
                     probed.Add(value);
                 }
-            }));
+            },
+        }));
 
         var expected = new[] { ("contracts", 2, false), ("minutes", 0, true) };
 
@@ -692,14 +709,16 @@ public class SessionTurnRunnerTests
         var session = await sessions.CreateAsync(Session());
         var model = new StubModel("The policy holds. \"text of doc-1\" [doc-1]");
 
-        var executed = Executed(await Runner(sessions, model).RunAsync(
-            session,
-            Document(),
-            "how many contracts lapse?",
-            requestedProfile: null,
-            new TurnModels("small-model", "small-model", "big-model"),
-            complete: true,
-            topK: 0));
+        var executed = Executed(await Runner(sessions, model).RunAsync(new SessionTurnRequest
+        {
+            Session = session,
+            Document = Document(),
+            Question = "how many contracts lapse?",
+            RequestedProfile = null,
+            Models = new TurnModels("small-model", "small-model", "big-model"),
+            Complete = true,
+            TopK = 0,
+        }));
 
         Assert.Equal(1, executed.Ordinal);
         Assert.Equal("how many contracts lapse?", executed.Question);
@@ -747,22 +766,18 @@ public class SessionTurnRunnerTests
         var runner = new SessionTurnRunner(
             sessions,
             new StubIndexHost(),
-            model,
-            model,
-            "test-embedder",
-            [],
-            "acme",
-            collections: null,
-            ceiling);
+            new SessionTurnSettings(model, model, "test-embedder", [], "acme", Ceiling: ceiling));
 
-        Executed(await runner.RunAsync(
-            session,
-            Document(),
-            "how many contracts lapse?",
-            requestedProfile: null,
-            new TurnModels("small-model", "small-model", "big-model"),
-            complete: true,
-            topK: 0));
+        Executed(await runner.RunAsync(new SessionTurnRequest
+        {
+            Session = session,
+            Document = Document(),
+            Question = "how many contracts lapse?",
+            RequestedProfile = null,
+            Models = new TurnModels("small-model", "small-model", "big-model"),
+            Complete = true,
+            TopK = 0,
+        }));
 
         // The answer is held to the deployment's turn ceiling. This document pins no intent task, so the classifier is
         // not asked at all - and a ceiling nothing reads would be a number nobody could trust.
@@ -788,13 +803,15 @@ public class SessionTurnRunnerTests
 
         var model = new StubModel("never asked");
 
-        var refusal = Declined(await Runner(sessions, model).RunAsync(
-            closed,
-            Document(),
-            "anything",
-            requestedProfile: null,
-            new TurnModels("small-model", "small-model", "big-model"),
-            complete: true));
+        var refusal = Declined(await Runner(sessions, model).RunAsync(new SessionTurnRequest
+        {
+            Session = closed,
+            Document = Document(),
+            Question = "anything",
+            RequestedProfile = null,
+            Models = new TurnModels("small-model", "small-model", "big-model"),
+            Complete = true,
+        }));
 
         Assert.Equal(SessionRefusalCodes.SessionClosed, refusal.Code);
         Assert.Contains("is closed", refusal.Message, StringComparison.Ordinal);
@@ -813,13 +830,15 @@ public class SessionTurnRunnerTests
         var session = await sessions.CreateAsync(Session());
         var model = new StubModel("never asked");
 
-        var executed = Executed(await Runner(sessions, model).RunAsync(
-            session,
-            Document(),
-            "how many contracts lapse?",
-            requestedProfile: null,
-            new TurnModels("small-model", "small-model", "big-model"),
-            complete: false));
+        var executed = Executed(await Runner(sessions, model).RunAsync(new SessionTurnRequest
+        {
+            Session = session,
+            Document = Document(),
+            Question = "how many contracts lapse?",
+            RequestedProfile = null,
+            Models = new TurnModels("small-model", "small-model", "big-model"),
+            Complete = false,
+        }));
 
         Assert.Null(executed.Completion);
         Assert.Single(executed.Hits);
@@ -842,13 +861,15 @@ public class SessionTurnRunnerTests
         var session = await sessions.CreateAsync(Session());
         var model = new StubModel("never asked");
 
-        var refusal = Refused(await Runner(sessions, model).RunAsync(
-            session,
-            Document(withProfile: true),
-            "how many contracts lapse?",
-            requestedProfile: null,
-            new TurnModels("small-model", "small-model", "big-model"),
-            complete: true));
+        var refusal = Refused(await Runner(sessions, model).RunAsync(new SessionTurnRequest
+        {
+            Session = session,
+            Document = Document(withProfile: true),
+            Question = "how many contracts lapse?",
+            RequestedProfile = null,
+            Models = new TurnModels("small-model", "small-model", "big-model"),
+            Complete = true,
+        }));
 
         Assert.Equal("register", refusal.Layer);
         Assert.Equal(EvidenceRefusalCodes.SourceNotBound, refusal.RefusalCode);

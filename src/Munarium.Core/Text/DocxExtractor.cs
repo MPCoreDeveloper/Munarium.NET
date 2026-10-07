@@ -107,33 +107,7 @@ public static class DocxExtractor
         {
             if (reader.NodeType is XmlNodeType.Element)
             {
-                switch (reader.LocalName)
-                {
-                    case "p":
-                        paragraph.Clear();
-                        hasText = false;
-                        break;
-
-                    case "t":
-                        inTextRun = true;
-                        break;
-
-                    case "instrText":
-                        inInstruction = true;
-                        break;
-
-                    case "br" when reader.IsEmptyElement:
-                        paragraph.Append('\n');
-                        break;
-
-                    case "tab" when reader.IsEmptyElement:
-                        paragraph.Append('\t');
-                        break;
-
-                    default:
-                        break;
-                }
-
+                StartElement(reader, paragraph, ref hasText, ref inTextRun, ref inInstruction);
                 continue;
             }
 
@@ -148,31 +122,88 @@ public static class DocxExtractor
                 continue;
             }
 
-            if (reader.NodeType is not XmlNodeType.EndElement)
+            if (reader.NodeType is XmlNodeType.EndElement)
             {
-                continue;
-            }
-
-            switch (reader.LocalName)
-            {
-                case "t":
-                    inTextRun = false;
-                    break;
-
-                case "instrText":
-                    inInstruction = false;
-                    break;
-
-                case "p":
-                    Append(body, paragraph, hasText);
-                    break;
-
-                default:
-                    break;
+                EndElement(reader, body, paragraph, hasText, ref inTextRun, ref inInstruction);
             }
         }
 
         return body.ToString();
+    }
+
+    /// <summary>Applies a start tag's effect, opening the paragraph or the run it begins.</summary>
+    /// <param name="reader">The reader, positioned on the start tag.</param>
+    /// <param name="paragraph">The paragraph being built.</param>
+    /// <param name="hasText">Whether any run in it contributed text.</param>
+    /// <param name="inTextRun">Whether a text run is open.</param>
+    /// <param name="inInstruction">Whether a field instruction is open.</param>
+    private static void StartElement(
+        XmlReader reader,
+        StringBuilder paragraph,
+        ref bool hasText,
+        ref bool inTextRun,
+        ref bool inInstruction)
+    {
+        switch (reader.LocalName)
+        {
+            case "p":
+                paragraph.Clear();
+                hasText = false;
+                break;
+
+            case "t":
+                inTextRun = true;
+                break;
+
+            case "instrText":
+                inInstruction = true;
+                break;
+
+            case "br" when reader.IsEmptyElement:
+                paragraph.Append('\n');
+                break;
+
+            case "tab" when reader.IsEmptyElement:
+                paragraph.Append('\t');
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    /// <summary>Applies an end tag's effect, closing the paragraph when its own tag closes.</summary>
+    /// <param name="reader">The reader, positioned on the end tag.</param>
+    /// <param name="body">The text so far.</param>
+    /// <param name="paragraph">The paragraph being built.</param>
+    /// <param name="hasText">Whether any run in it contributed text.</param>
+    /// <param name="inTextRun">Whether a text run is open.</param>
+    /// <param name="inInstruction">Whether a field instruction is open.</param>
+    private static void EndElement(
+        XmlReader reader,
+        StringBuilder body,
+        StringBuilder paragraph,
+        bool hasText,
+        ref bool inTextRun,
+        ref bool inInstruction)
+    {
+        switch (reader.LocalName)
+        {
+            case "t":
+                inTextRun = false;
+                break;
+
+            case "instrText":
+                inInstruction = false;
+                break;
+
+            case "p":
+                Append(body, paragraph, hasText);
+                break;
+
+            default:
+                break;
+        }
     }
 
     /// <summary>Appends one paragraph as a block, when it has anything to say.</summary>
