@@ -88,63 +88,91 @@ public sealed class CandidateLedger(
 
         for (var attempt = 1; attempt <= _maxReGateAttempts; attempt++)
         {
-            var head = await _storage.HeadAsync(stream, cancellationToken).ConfigureAwait(false);
-
-            if (expectedHead is { } callerPin && callerPin != head)
-            {
-                return new CandidateContended(callerPin, head);
-            }
-
-            var snapshot = await _snapshots
-                .BuildAsync(versionId, pin: null, cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
-            var candidate = CandidateOf(claims, candidateText);
-            var findings = Judge(snapshot, candidate);
-            var blocked = DeterministicGates.BlockedClaimKeys(findings);
-
-            var stored = claims
-                .Select(claim => Fact(versionId, claim, findings, blocked))
-                .ToList();
-
-            var entries = LedgerEntries(stored, findings);
-
-            if (entries.Count == 0)
-            {
-                return new CandidateRecorded([], findings, head);
-            }
-
-            // One conditional append, pinned at the head the gates read: the batch is atomic in the store,
-            // so a partial landing is not a state this can be in.
-            var result = await _storage
-                .AppendAsync(stream, head, entries, cancellationToken)
+            var outcome = await AppendAttemptAsync(
+                    versionId, claims, candidateText, expectedHead, stream, cancellationToken)
                 .ConfigureAwait(false);
 
-            if (result is Appended appended)
+            if (outcome is not CandidateContended contended)
             {
-                return new CandidateRecorded(
-                    Positioned(stored, appended.Head, entries.Count),
-                    findings,
-                    appended.Head,
-                    findings.Count > 0 ? appended.Head : null);
+                return outcome;
             }
 
-            if (result is VersionConflict conflict)
+            lastExpected = contended.Expected;
+            lastActual = contended.Actual;
+
+            // The head moved under us. Without a caller pin that is not an error - the caller asked for an
+            // append, not for a position - so the batch is re-read, re-gated and re-appended, and what ends
+            // that is the attempt budget.
+            if (expectedHead is not null || attempt >= _maxReGateAttempts)
             {
-                lastExpected = conflict.Expected;
-                lastActual = conflict.Actual;
-
-                // The head moved under us. Without a caller pin that is not an error - the caller asked for
-                // an append, not for a position - so the batch is re-read, re-gated and re-appended.
-                if (expectedHead is null && attempt < _maxReGateAttempts)
-                {
-                    continue;
-                }
-
-                return new CandidateContended(lastExpected, lastActual);
+                return contended;
             }
         }
 
+        // Every attempt was contended and the budget is spent: the caller is told the position last seen.
         return new CandidateContended(lastExpected, lastActual);
+    }
+
+    /// <summary>Runs one attempt: reads the head, gates the batch against it, and appends it there.</summary>
+    /// <param name="versionId">The version the batch belongs to.</param>
+    /// <param name="claims">The claims the batch carries.</param>
+    /// <param name="candidateText">The candidate text, when the caller sent one.</param>
+    /// <param name="expectedHead">The position the caller pinned, when it named one.</param>
+    /// <param name="stream">The stream the batch appends to.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The recorded batch, or the contention that stopped it landing.</returns>
+    private async ValueTask<CandidateOutcome> AppendAttemptAsync(
+        string versionId,
+        IReadOnlyList<ProposedClaim> claims,
+        string? candidateText,
+        SequenceNumber? expectedHead,
+        StreamId stream,
+        CancellationToken cancellationToken)
+    {
+        var head = await _storage.HeadAsync(stream, cancellationToken).ConfigureAwait(false);
+
+        if (expectedHead is { } callerPin && callerPin != head)
+        {
+            return new CandidateContended(callerPin, head);
+        }
+
+        var snapshot = await _snapshots
+            .BuildAsync(versionId, pin: null, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        var candidate = CandidateOf(claims, candidateText);
+        var findings = Judge(snapshot, candidate);
+        var blocked = DeterministicGates.BlockedClaimKeys(findings);
+
+        var stored = claims
+            .Select(claim => Fact(versionId, claim, findings, blocked))
+            .ToList();
+
+        var entries = LedgerEntries(stored, findings);
+
+        if (entries.Count == 0)
+        {
+            return new CandidateRecorded([], findings, head);
+        }
+
+        // One conditional append, pinned at the head the gates read: the batch is atomic in the store,
+        // so a partial landing is not a state this can be in.
+        var result = await _storage
+            .AppendAsync(stream, head, entries, cancellationToken)
+            .ConfigureAwait(false);
+
+        return result switch
+        {
+            Appended appended => new CandidateRecorded(
+                Positioned(stored, appended.Head, entries.Count),
+                findings,
+                appended.Head,
+                findings.Count > 0 ? appended.Head : null),
+            VersionConflict conflict => new CandidateContended(conflict.Expected, conflict.Actual),
+
+            // The store answers landing or contention and nothing else, so this is the contention case's shape:
+            // the batch did not land, and the head it was gated against is what a caller is told moved.
+            _ => new CandidateContended(head, head),
+        };
     }
 
     /// <summary>Builds the events one batch appends: the claims, and the findings that judged them.</summary>

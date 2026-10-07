@@ -1549,6 +1549,15 @@ public static class MunariumEndpoints
     /// <param name="kernel">The deployment whose gate and audit the plane resolves through.</param>
     private static void EvidenceWriteEndpoints(IEndpointRouteBuilder app, MunariumKernel kernel)
     {
+        EvidenceSealEndpoints(app, kernel);
+        EvidenceBytesEndpoints(app, kernel);
+    }
+
+    /// <summary>Maps sealing evidence.</summary>
+    /// <param name="app">The application to map onto.</param>
+    /// <param name="kernel">The deployment whose gate and audit the plane resolves through.</param>
+    private static void EvidenceSealEndpoints(IEndpointRouteBuilder app, MunariumKernel kernel)
+    {
         app.MapPost(
             "/v1/evidence",
             async (
@@ -1589,7 +1598,13 @@ public static class MunariumEndpoints
 
                 return answer;
             });
+    }
 
+    /// <summary>Maps reading the bytes evidence was sealed from.</summary>
+    /// <param name="app">The application to map onto.</param>
+    /// <param name="kernel">The deployment whose gate and audit the plane resolves through.</param>
+    private static void EvidenceBytesEndpoints(IEndpointRouteBuilder app, MunariumKernel kernel)
+    {
         app.MapPut(
             "/v1/evidence/{evidence_id}/bytes",
             async (
@@ -1639,7 +1654,6 @@ public static class MunariumEndpoints
 
                 return answer;
             });
-
     }
 
     /// <summary>Maps committing a sealed artifact.</summary>

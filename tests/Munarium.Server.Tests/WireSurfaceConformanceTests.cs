@@ -100,19 +100,43 @@ public class WireSurfaceConformanceTests(MunariumApiFactory factory) : IClassFix
     private static List<(string Method, string Pattern)> DeclaredRoutes()
     {
         var routes = new List<(string Method, string Pattern)>();
-        var inPaths = false;
         string? path = null;
 
-        foreach (var line in File.ReadAllLines(ContractPath()))
+        foreach (var line in PathsSectionLines())
         {
-            if (line.StartsWith("paths:", StringComparison.Ordinal))
+            if (DeclaredPath(line) is { } declared)
             {
-                inPaths = true;
+                path = declared;
                 continue;
             }
 
+            if (path is null)
+            {
+                continue;
+            }
+
+            if (DeclaredVerb(line) is { } verb)
+            {
+                routes.Add((verb, path));
+            }
+        }
+
+        Assert.NotEmpty(routes);
+
+        return routes;
+    }
+
+    /// <summary>Reads the document's paths section, line by line.</summary>
+    /// <returns>The lines between the paths section and the section that follows it.</returns>
+    private static IEnumerable<string> PathsSectionLines()
+    {
+        var inPaths = false;
+
+        foreach (var line in File.ReadAllLines(ContractPath()))
+        {
             if (!inPaths)
             {
+                inPaths = line.StartsWith("paths:", StringComparison.Ordinal);
                 continue;
             }
 
@@ -121,33 +145,38 @@ public class WireSurfaceConformanceTests(MunariumApiFactory factory) : IClassFix
                 break;
             }
 
-            if (line.StartsWith("  /", StringComparison.Ordinal))
-            {
-                path = Normalize(line[2..].TrimEnd(':'));
-                continue;
-            }
+            yield return line;
+        }
+    }
 
-            var trimmed = line.TrimStart();
+    /// <summary>Reads a path declaration, when the line is one.</summary>
+    /// <param name="line">The line to read.</param>
+    /// <returns>The normalized path, or <see langword="null"/> when the line declares none.</returns>
+    private static string? DeclaredPath(string line) =>
+        line.StartsWith("  /", StringComparison.Ordinal)
+            ? Normalize(line[2..].TrimEnd(':'))
+            : null;
 
-            // A verb is a bare key under a path. Nothing else inside the paths section is one, which is why the text is
-            // compared rather than the indentation: the indentation is a style the document is free to change.
-            if (path is null)
-            {
-                continue;
-            }
+    /// <summary>Reads a verb declaration, when the line is one.</summary>
+    /// <param name="line">The line to read.</param>
+    /// <returns>The upper-cased verb, or <see langword="null"/> when the line declares none.</returns>
+    /// <remarks>
+    /// A verb is a bare key under a path. Nothing else inside the paths section is one, which is why the text is
+    /// compared rather than the indentation: the indentation is a style the document is free to change.
+    /// </remarks>
+    private static string? DeclaredVerb(string line)
+    {
+        var trimmed = line.TrimStart();
 
-            foreach (var method in (string[])["get", "put", "post", "delete", "patch"])
+        foreach (var method in (string[])["get", "put", "post", "delete", "patch"])
+        {
+            if (trimmed.Equals($"{method}:", StringComparison.Ordinal))
             {
-                if (trimmed.Equals($"{method}:", StringComparison.Ordinal))
-                {
-                    routes.Add((method.ToUpperInvariant(), path));
-                }
+                return method.ToUpperInvariant();
             }
         }
 
-        Assert.NotEmpty(routes);
-
-        return routes;
+        return null;
     }
 
     /// <summary>Finds the contract document by walking up from the test binary to the repository root.</summary>
