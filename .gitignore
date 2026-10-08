@@ -506,6 +506,11 @@ test.txt
 !artifacts/packages/
 !artifacts/packages/.gitkeep
 
+# The one sibling RC package this solution consumes is carried in that folder, because the feed it comes from
+# is not reachable from a build: nuget.org's newest SharpPortico.SourceGenerator is 1.3.0-preview.1,
+# Directory.Packages.props pins 1.3.0-preview.2, and `mpcore-rc` in NuGet.config resolves to the folder above.
+!artifacts/packages/SharpPortico.SourceGenerator.*.nupkg
+
 # AOT smoke publish output
 artifacts/aot-*/
 artifacts/nugetout/
